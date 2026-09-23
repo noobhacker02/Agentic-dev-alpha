@@ -48,23 +48,37 @@ the code; every claim below has a command or a file behind it.
 - 2,983 raw SDK stream events and 45 real assistant messages were emitted across the run — this is real
   streaming API traffic, not a mock.
 
+**Live browser approval UI (real run, task: "Create a file named world.txt ... containing exactly: browser
+approval works", approval UI ON, `test/browser-approval.mjs`):**
+- A real headless Chromium (the pre-installed binary, launched via `playwright-core`, resolved by scanning
+  `/opt/pw-browsers` directly since the npm package's version doesn't reliably match the installed browser's
+  revision number) opened the actual served page, and its WebSocket client reported `live`.
+- The script clicked the real, rendered "Approve" button in the DOM — not a synthetic WebSocket message — for
+  every pending tool call across all 5 phases: **18 real approve-clicks** across the full run.
+- The pipeline produced the correct artifact (`world.txt`, exact content) and the browser's own timeline UI
+  showed 18 "Approval allow" resolution cards, confirmed by both the CLI process's own exit and by querying
+  the live DOM after the run.
+- **Found and fixed a real bug in the process, not the test**: the first two attempts at this test correctly
+  completed all 5 phases in under 3 minutes each time (confirmed via the SQLite phase timestamps) but the CLI
+  process never exited afterward — `close()` in `server.ts` called `server.close(callback)`, and Node's
+  `http.Server#close()` only fires its callback once every open connection ends *on its own*; a browser tab
+  connected via WebSocket for the run's duration never does that. This is a genuine deadlock that would affect
+  any real use of `agent-loop run` with the approval UI left open in a browser — `test/plumbing.mjs`'s
+  short-lived WS client never exposed it because it closes its own socket immediately, which is exactly why a
+  real, lingering browser connection was worth testing separately. Fixed by terminating tracked WS clients and
+  calling `server.closeAllConnections()` before closing the HTTP server, instead of waiting for a natural
+  disconnect. Re-ran after the fix: full pipeline, 18 real clicks, clean exit code 0.
+
 ## What's not yet verified
 
-- **The approval UI's browser rendering itself** — the WS round-trip is proven (see plumbing tests above), and
-  `ui/index.html` is real, functioning HTML/JS with no build step, but no one has looked at it rendered in an
-  actual browser in this session (no display available in this environment). The event schema it consumes is
-  exactly what `bus.ts`/`server.ts` emit, so this is a rendering/visual check, not a wiring risk.
-- **Retry behavior** — this run's Overseer never had a reason to retry a phase, so `pipeline.ts`'s retry loop
-  (same phase re-run with `retryFeedback` injected into the prompt) is implemented and typechecked but not
-  yet exercised by a real failing phase. Worth a deliberately-adversarial task in a follow-up run.
-- **A task that actually needs the approval UI live** (i.e. run with approval ON, on a real browser, clicking
-  Approve/Reject on real pending tool calls) — not yet run; the current smoke run used `--no-approval` to
-  finish unattended. The mechanism underneath it is proven; the live human-in-the-loop path itself is not.
+- **Retry behavior** — no run so far has had a reason to retry a phase, so `pipeline.ts`'s retry loop (same
+  phase re-run with `retryFeedback` injected into the prompt) is implemented and typechecked but not yet
+  exercised by a real failing phase. Worth a deliberately-adversarial task in a follow-up run.
 - **Windows / remote portability** — built and run only in this Linux container so far. Nothing in the code is
   platform-specific (Node + `node:sqlite` + `ws`, no shell-outs beyond what the agents themselves invoke via
   the SDK's own Bash tool), but this is an assumption, not something tested on Windows yet.
-- **Cost/token behavior at scale** — one tiny task was run. No data yet on cost or turn count for a
-  non-trivial real feature.
+- **Cost/token behavior at scale** — only tiny smoke tasks have been run. No data yet on cost or turn count for
+  a non-trivial real feature.
 
 ## Architecture decisions worth recording
 
@@ -96,14 +110,14 @@ the code; every claim below has a command or a file behind it.
 | Each phase produces a real file artifact matching its spec | pass — `PLAN.md`, `TESTPLAN.md`, `hello.txt`, `VERIFY.md`, `GATEKEEP.md` all present and correct |
 | Verifier phase actually executes checks rather than reading source | pass — caught a real byte-count bug in `TESTPLAN.md` that only shows up by running the check |
 | TypeScript build/typecheck | pass — `npm run build` and `tsc --noEmit` both clean |
-| Live approval UI in a real browser | not run — no display in this environment; WS mechanism proven, rendering unverified |
+| Live approval UI in a real browser, real Approve clicks | pass — `test/browser-approval.mjs`, 18/18 real clicks across all 5 phases, exit 0 |
+| CLI process exits cleanly after a run with the approval UI left open | pass (after fix) — was a real deadlock (`server.close()` waiting on a connection that never closes itself), fixed in `src/server.ts` |
 | Retry path (Overseer sends a phase back with feedback) | not exercised — implemented, typechecked, no failing phase occurred to trigger it |
 | Windows / non-Linux run | not run |
 
 ## Decision needed
 
-None blocking. Two things worth the user's input when convenient, not urgent:
-1. Whether to push this to a GitHub repo now that there's a real, verified milestone (per the earlier
-   agreement: ask once there's something real, not before) — no repo exists yet for this project.
-2. Whether the next real test should specifically target the approval-UI-ON path and/or a task designed to
-   force at least one retry, since those are the two verified-by-code-only areas above.
+None blocking. Pushed to https://github.com/noobhacker02/test-dev-1. Remaining open items, not urgent:
+1. A deliberately adversarial/ambiguous task to force the Overseer's retry-with-feedback path at least once.
+2. A real, non-trivial feature build rather than another smoke task, to get real cost/turn-count data.
+3. Windows/remote portability is still unverified — an assumption, not something disproven.
