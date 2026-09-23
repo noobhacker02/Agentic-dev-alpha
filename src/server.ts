@@ -67,7 +67,16 @@ export function startServer(bus: EventBus, port: number) {
         close: () =>
           new Promise<void>((res) => {
             bus.off("event", broadcast);
-            wss.close(() => server.close(() => res()));
+            // http.Server#close() only fires its callback once every open connection ends on
+            // its own — a browser tab left connected via WebSocket never does that, so without
+            // force-closing sockets here, a still-open UI tab hangs process exit indefinitely
+            // even after the pipeline itself has finished. Terminate clients and force the
+            // underlying sockets closed rather than waiting for a natural disconnect.
+            for (const client of clients) client.terminate();
+            wss.close(() => {
+              server.closeAllConnections();
+              server.close(() => res());
+            });
           }),
       });
     });
