@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>agent-loop</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    background: #0d1117; color: #c9d1d9; font-size: 13px;
+  }
+  header {
+    padding: 10px 16px; background: #161b22; border-bottom: 1px solid #30363d;
+    display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 14px; margin: 0; color: #58a6ff; }
+  #status { color: #8b949e; }
+  #pending-banner {
+    display: none; background: #3d2b00; color: #e3b341; padding: 6px 16px;
+    border-bottom: 1px solid #30363d;
+  }
+  main { padding: 12px 16px; max-width: 980px; margin: 0 auto; }
+  .card {
+    border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;
+    background: #161b22;
+  }
+  .card .meta { color: #8b949e; font-size: 11px; margin-bottom: 4px; }
+  .card.phase-start { border-left: 3px solid #58a6ff; }
+  .card.phase-end.ok { border-left: 3px solid #3fb950; }
+  .card.phase-end.fail { border-left: 3px solid #f85149; }
+  .card.tool-call { border-left: 3px solid #d29922; }
+  .card.tool-result.error { border-left: 3px solid #f85149; }
+  .card.approval { border-left: 3px solid #e3b341; background: #201a08; }
+  .card.overseer { border-left: 3px solid #a371f7; }
+  .card.text { border-left: 3px solid #388bfd33; }
+  .card.thinking { border-left: 3px solid #8b949e55; color: #8b949e; font-style: italic; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
+  .btns { margin-top: 8px; display: flex; gap: 8px; }
+  button {
+    font-family: inherit; font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid #30363d;
+    cursor: pointer;
+  }
+  .allow { background: #238636; color: white; }
+  .deny { background: #da3633; color: white; }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-loop</h1>
+  <span id="status">connecting…</span>
+</header>
+<div id="pending-banner"></div>
+<main id="timeline"></main>
+<script>
+const timeline = document.getElementById("timeline");
+const statusEl = document.getElementById("status");
+const banner = document.getElementById("pending-banner");
+let pendingCount = 0;
+
+function updateBanner() {
+  if (pendingCount > 0) {
+    banner.style.display = "block";
+    banner.textContent = pendingCount + " tool call" + (pendingCount > 1 ? "s" : "") + " waiting for your approval";
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+function card(cls, html) {
+  const div = document.createElement("div");
+  div.className = "card " + cls;
+  div.innerHTML = html;
+  timeline.appendChild(div);
+  window.scrollTo(0, document.body.scrollHeight);
+  return div;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+function meta(text) {
+  return '<div class="meta">' + esc(text) + "</div>";
+}
+
+function connect() {
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => (statusEl.textContent = "live");
+  ws.onclose = () => {
+    statusEl.textContent = "disconnected — retrying…";
+    setTimeout(connect, 1500);
+  };
+  ws.onmessage = (msg) => {
+    const ev = JSON.parse(msg.data);
+    render(ev, ws);
+  };
+}
+
+function render(ev, ws) {
+  const when = new Date(ev.ts).toLocaleTimeString();
+  switch (ev.type) {
+    case "run-start":
+      card("run", meta(when) + "<b>Run started</b><pre>" + esc(ev.task) + "</pre>");
+      break;
+    case "run-end":
+      card("run", meta(when) + "<b>Run finished:</b> " + esc(ev.status));
+      break;
+    case "phase-start":
+      card("phase-start", meta(when + " · " + ev.phase + " · attempt " + ev.attempt) + "<b>Phase started</b>");
+      break;
+    case "phase-end": {
+      const ok = ev.verdict.success;
+      card(
+        "phase-end " + (ok ? "ok" : "fail"),
+        meta(when + " · " + ev.phase + " · attempt " + ev.attempt) +
+          "<b>" + (ok ? "✓ " : "✗ ") + esc(ev.verdict.headline) + "</b>" +
+          "<pre>" + esc(ev.verdict.details) + "</pre>" +
+          (ev.verdict.concerns.length ? "<pre>concerns:\n- " + ev.verdict.concerns.map(esc).join("\n- ") + "</pre>" : "")
+      );
+      break;
+    }
+    case "overseer-decision":
+      card(
+        "overseer",
+        meta(when + " · overseer · after " + ev.phase) +
+          "<b>" + esc(ev.decision.action.toUpperCase()) + "</b> — " + esc(ev.decision.reasoning) +
+          (ev.decision.feedbackForRetry ? "<pre>feedback: " + esc(ev.decision.feedbackForRetry) + "</pre>" : "")
+      );
+      break;
+    case "assistant-text":
+      card("text", meta(when + " · " + ev.phase) + "<pre>" + esc(ev.text) + "</pre>");
+      break;
+    case "thinking":
+      card("thinking", meta(when + " · " + ev.phase + " · thinking") + "<pre>" + esc(ev.text) + "</pre>");
+      break;
+    case "tool-call":
+      card(
+        "tool-call",
+        meta(when + " · " + ev.phase) +
+          "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.toolInput, null, 2)) + "</pre>"
+      );
+      break;
+    case "tool-result":
+      card(
+        "tool-result " + (ev.isError ? "error" : ""),
+        meta(when + " · " + ev.phase) + "<pre>" + esc(ev.summary) + "</pre>"
+      );
+      break;
+    case "approval-request": {
+      pendingCount++;
+      updateBanner();
+      const el = card(
+        "approval",
+        meta(when + " · " + ev.phase + " · awaiting approval") +
+          "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.toolInput, null, 2)) + "</pre>" +
+          '<div class="btns">' +
+          '<button class="allow">Approve</button>' +
+          '<button class="deny">Reject</button>' +
+          "</div>"
+      );
+      el.querySelector(".allow").onclick = () => {
+        ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision: "allow" }));
+        el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      };
+      el.querySelector(".deny").onclick = () => {
+        const reason = prompt("Reason for rejecting (optional):") || undefined;
+        ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision: "deny", reason }));
+        el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      };
+      break;
+    }
+    case "approval-resolved":
+      pendingCount = Math.max(0, pendingCount - 1);
+      updateBanner();
+      card(
+        "overseer",
+        meta(when + " · " + ev.phase) + "Approval " + esc(ev.decision) + (ev.reason ? ": " + esc(ev.reason) : "")
+      );
+      break;
+  }
+}
+
+connect();
+</script>
+</body>
+</html>

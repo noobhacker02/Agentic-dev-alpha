@@ -1,0 +1,30 @@
+{
+  "name": "agent-loop",
+  "version": "0.1.0",
+  "description": "Multi-agent dev-loop orchestrator: an Overseer plus five specialized worker phases (Planner, Test-Designer, Builder, Verifier, Gatekeeper) built on the Claude Agent SDK, with an indexed changelog store and a live approval UI.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "agent-loop": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node --experimental-sqlite dist/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:plumbing": "node --experimental-sqlite test/plumbing.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.280",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,248 @@
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { randomUUID } from "node:crypto";
+import type { EventBus } from "./bus.js";
+import type { Store } from "./store.js";
+import { createApprovalHook, createSafetyHook } from "./hooks.js";
+import type { PhaseName, PhaseVerdict } from "./types.js";
+
+const VERDICT_INSTRUCTIONS = `
+When you are done, end your final message with a fenced json block, and nothing after it, in exactly this shape:
+
+\`\`\`json
+{
+  "success": true,
+  "headline": "one sentence, what you did or why you stopped",
+  "details": "a short paragraph: what you did, what you found, what you produced",
+  "concerns": ["short bullet", "short bullet"]
+}
+\`\`\`
+
+"success" is false only if you could not complete your part of the work at all. Set it true even if you found
+problems to report — reporting a real problem clearly is success for you; concerns is where problems go.
+`;
+
+interface PhaseSpec {
+  systemPrompt: string;
+  allowedTools: string[];
+  autoApproveTools?: string[];
+  buildPrompt(task: string, priorSummaries: string): string;
+}
+
+const PHASE_SPECS: Record<PhaseName, PhaseSpec> = {
+  planner: {
+    systemPrompt: `You are the Planner phase of a multi-agent dev loop called agent-loop. You do not write
+implementation code. Your entire job: turn a task description into a concrete, unambiguous plan that the
+Builder phase (a different agent, with no memory of this conversation) can execute without guessing.
+
+Write your plan to PLAN.md in the working directory. It must cover: a one-paragraph restatement of the task,
+the concrete files you expect to create or change, the approach/architecture in enough detail that two
+different implementers would build the same thing, and explicit out-of-scope notes for anything you're
+deliberately not doing. Look at the existing repo structure first — don't plan in a vacuum.
+${VERDICT_INSTRUCTIONS}`,
+    allowedTools: ["Read", "Glob", "Grep", "Write"],
+    autoApproveTools: ["Read", "Glob", "Grep"],
+    buildPrompt: (task) => `Task: ${task}\n\nWrite PLAN.md for this task.`,
+  },
+
+  "test-designer": {
+    systemPrompt: `You are the Test-Designer phase of agent-loop. You do not write implementation code. Your job:
+read PLAN.md (written by the Planner phase, a different agent) and design the concrete tests that will prove
+the eventual implementation is correct, AND actively look for gaps or contradictions in the plan itself —
+missing edge cases, unstated assumptions, requirements that conflict.
+
+Write your output to TESTPLAN.md: a numbered list of concrete test scenarios (inputs, expected behavior,
+how each will actually be run/checked), plus a "Gaps found in PLAN.md" section — even if it's empty, say so
+explicitly rather than omitting the section.
+${VERDICT_INSTRUCTIONS}`,
+    allowedTools: ["Read", "Glob", "Grep", "Write"],
+    autoApproveTools: ["Read", "Glob", "Grep"],
+    buildPrompt: (task, prior) =>
+      `Task: ${task}\n\nRead PLAN.md and write TESTPLAN.md.\n\nPrior phase summaries:\n${prior}`,
+  },
+
+  builder: {
+    systemPrompt: `You are the Builder phase of agent-loop. Read PLAN.md and TESTPLAN.md (written by earlier
+phases, different agents with no memory of this conversation) and implement exactly what they describe.
+Keep the diff scoped to what the plan describes — if you find the plan is wrong or incomplete, implement the
+best correct interpretation and say exactly how/why you deviated in your concerns.
+${VERDICT_INSTRUCTIONS}`,
+    allowedTools: ["Read", "Glob", "Grep", "Write", "Edit", "Bash"],
+    autoApproveTools: ["Read", "Glob", "Grep"],
+    buildPrompt: (task, prior) =>
+      `Task: ${task}\n\nRead PLAN.md and TESTPLAN.md, then implement the task.\n\nPrior phase summaries:\n${prior}`,
+  },
+
+  verifier: {
+    systemPrompt: `You are the Verifier phase of agent-loop. Read TESTPLAN.md and actually run the test
+scenarios it describes against what the Builder phase produced — execute code, run test suites, invoke CLIs,
+whatever the stack requires. Do not just read the source and reason about whether it looks right; run it.
+Check the result against the ORIGINAL task intent, not just against what the Builder claims it did.
+
+Write your findings to VERIFY.md: a table of each TESTPLAN.md scenario with pass/fail and the actual evidence
+(command run, output seen), plus whether the result matches the original task's intent.
+${VERDICT_INSTRUCTIONS}`,
+    allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
+    autoApproveTools: ["Read", "Glob", "Grep"],
+    buildPrompt: (task, prior) =>
+      `Original task: ${task}\n\nRead TESTPLAN.md, run its scenarios for real, and write VERIFY.md.\n\nPrior phase summaries:\n${prior}`,
+  },
+
+  gatekeeper: {
+    systemPrompt: `You are the Gatekeeper phase of agent-loop, the last check before this run reports back to
+the Overseer. Read PLAN.md, TESTPLAN.md, VERIFY.md, and inspect the actual changes made (git diff if this is a
+repo). Decide: is everything proper — was the plan followed or were deviations justified, did verification
+actually run rather than just claim to, is there anything that looks like a secret, a destructive command, or
+scope creep beyond the task. You do not fix anything yourself; you report.
+
+Write GATEKEEP.md: your go/no-go call and exactly why.
+${VERDICT_INSTRUCTIONS}`,
+    allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
+    autoApproveTools: ["Read", "Glob", "Grep"],
+    buildPrompt: (task, prior) =>
+      `Original task: ${task}\n\nReview everything produced so far and write GATEKEEP.md.\n\nPrior phase summaries:\n${prior}`,
+  },
+};
+
+export interface RunPhaseOptions {
+  runId: string;
+  phase: PhaseName;
+  attempt: number;
+  task: string;
+  workDir: string;
+  priorSummaries: string;
+  retryFeedback?: string;
+  bus: EventBus;
+  store: Store;
+  requireApproval: boolean;
+  model?: string;
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+}
+
+export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
+  const spec = PHASE_SPECS[opts.phase];
+  const safetyHook = createSafetyHook();
+  const approvalHook = createApprovalHook({
+    bus: opts.bus,
+    runId: opts.runId,
+    phase: opts.phase,
+    requireApproval: opts.requireApproval,
+    autoApproveTools: spec.autoApproveTools,
+  });
+
+  let userPrompt = spec.buildPrompt(opts.task, opts.priorSummaries);
+  if (opts.retryFeedback) {
+    userPrompt += `\n\nThis is a retry. Feedback from the Overseer on the previous attempt:\n${opts.retryFeedback}`;
+  }
+
+  let lastAssistantText = "";
+
+  const stream = query({
+    prompt: userPrompt,
+    options: {
+      cwd: opts.workDir,
+      systemPrompt: spec.systemPrompt,
+      allowedTools: spec.allowedTools,
+      permissionMode: "default",
+      model: opts.model,
+      effort: opts.effort,
+      env: { ...process.env },
+      hooks: {
+        PreToolUse: [{ hooks: [safetyHook, approvalHook], timeout: 3600 }],
+      },
+    },
+  });
+
+  for await (const message of stream as AsyncIterable<Record<string, any>>) {
+    if (message.type === "assistant") {
+      const content = message.message?.content ?? [];
+      for (const block of content) {
+        if (block.type === "text") {
+          lastAssistantText = block.text;
+          opts.bus.emitEvent({
+            type: "assistant-text",
+            runId: opts.runId,
+            phase: opts.phase,
+            text: block.text,
+            ts: new Date().toISOString(),
+          });
+          opts.store.indexLog(opts.runId, "assistant-text", block.text);
+        } else if (block.type === "thinking") {
+          opts.bus.emitEvent({
+            type: "thinking",
+            runId: opts.runId,
+            phase: opts.phase,
+            text: block.thinking ?? "",
+            ts: new Date().toISOString(),
+          });
+        } else if (block.type === "tool_use") {
+          opts.bus.emitEvent({
+            type: "tool-call",
+            runId: opts.runId,
+            phase: opts.phase,
+            toolUseId: block.id ?? randomUUID(),
+            toolName: block.name,
+            toolInput: block.input,
+            ts: new Date().toISOString(),
+          });
+        }
+      }
+    } else if (message.type === "user") {
+      const content = message.message?.content ?? [];
+      for (const block of content) {
+        if (block.type === "tool_result") {
+          const summary = summarizeToolResult(block.content);
+          opts.bus.emitEvent({
+            type: "tool-result",
+            runId: opts.runId,
+            phase: opts.phase,
+            toolUseId: block.tool_use_id ?? "",
+            toolName: "",
+            isError: !!block.is_error,
+            summary,
+            ts: new Date().toISOString(),
+          });
+          opts.store.indexLog(opts.runId, "tool-result", summary);
+        }
+      }
+    }
+    opts.store.logEvent(opts.runId, opts.phase, message.type ?? "unknown", {
+      subtype: message.subtype,
+    });
+  }
+
+  return parseVerdict(lastAssistantText, opts.phase);
+}
+
+function summarizeToolResult(content: unknown): string {
+  if (typeof content === "string") return content.slice(0, 2000);
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => (typeof c === "string" ? c : c?.text ?? JSON.stringify(c)))
+      .join("\n")
+      .slice(0, 2000);
+  }
+  return JSON.stringify(content).slice(0, 2000);
+}
+
+function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
+  const match = text.match(/```json\s*([\s\S]*?)```/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      return {
+        success: !!parsed.success,
+        headline: String(parsed.headline ?? "(no headline given)"),
+        details: String(parsed.details ?? ""),
+        concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String) : [],
+      };
+    } catch {
+      // fall through to the failure verdict below
+    }
+  }
+  return {
+    success: false,
+    headline: `${phase} did not return a parseable verdict block`,
+    details: text.slice(-1000),
+    concerns: ["No valid ```json verdict block found in the phase's final message."],
+  };
+}
