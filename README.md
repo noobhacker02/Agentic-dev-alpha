@@ -74,6 +74,8 @@ Overseer and a human both query the same short rows: "what did the builder phase
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
 | `src/cli.ts` | `agent-loop run "<task>"` entry point |
+| `test/plumbing.mjs` | No-LLM test of the store/bus/server/WebSocket round-trip |
+| `test/browser-approval.mjs` | Real end-to-end test: a live pipeline run with a real headless-Chromium browser clicking the actual Approve button |
 
 ## Usage
 
@@ -86,6 +88,27 @@ node dist/cli.js run "<task description>" [--dir <workDir>] [--port 4173] [--no-
 Open the printed URL to watch the run live and approve/reject tool calls as they happen. `--no-approval` skips
 the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
 unattended smoke runs.
+
+## Testing
+
+```bash
+npm run build
+
+# No LLM calls — store/bus/server/WebSocket plumbing only
+npm run test:plumbing
+
+# Real API calls — runs a small real task through the full pipeline with the
+# approval UI ON, and drives an actual headless Chromium browser to click the
+# real Approve button in the rendered page for every pending tool call
+node test/browser-approval.mjs
+```
+
+`test/browser-approval.mjs` uses `playwright-core` against the Chromium binary already present on the host
+(found by scanning `/opt/pw-browsers` for a `chromium-*` directory — the installed `playwright-core` version
+number doesn't reliably match the pre-installed browser's revision, so the package's own default download-path
+lookup can't be trusted to find it). It launches the CLI as a real child process, opens the live UI in that
+browser, and asserts the whole run actually completes and produces the expected file — not just that a click
+happened.
 
 ## Status
 
