@@ -2,14 +2,40 @@
 
 ## Summary
 
-Built and ran the full pipeline end-to-end with real Claude Agent SDK calls, not just a design/dry-run. All
-five phases (planner → test-designer → builder → verifier → gatekeeper) executed for real, produced real
-artifacts, and the Overseer's continue/retry/stop logic ran between each one. The non-LLM plumbing — SQLite
-store, event bus, WebSocket server, and the full human-approval round trip the whole project exists to enable
-— was independently verified without spending API calls on it. Nothing here is claimed to work from reading
-the code; every claim below has a command or a file behind it.
+Built and ran the full pipeline end-to-end with real Claude Agent SDK calls across four real runs: two tiny
+smoke tasks, one live-browser approval-UI run (18 real Approve clicks), and one real non-trivial feature build
+(a working CLI tool, independently re-verified by hand). All five phases (planner → test-designer → builder →
+verifier → gatekeeper) executed for real every time, and two separate real bugs were caught along the way: an
+arithmetic mistake by an earlier phase caught by a later one (twice, in two different runs), and a genuine
+process-exit deadlock in the server that only a real lingering browser connection could expose. The non-LLM
+plumbing — SQLite store, event bus, WebSocket server, the full human-approval round trip — was independently
+verified too. Nothing here is claimed to work from reading the code; every claim below has a command, a real
+run ID, or a file behind it.
 
 ## What's good — verified with evidence
+
+**Real, non-trivial feature build (task: a dependency-free Node.js `wordcount.js` CLI matching `wc`
+conventions, unattended, default retry budget):**
+- Finished `done` in ~7 minutes wall clock (19:49:50 → 19:56:49), no retries needed — every phase succeeded
+  on attempt 1 (honest finding, not forced: this run had a real retry budget available and simply didn't need
+  it, unlike the earlier smoke runs which used `--max-retries 0`).
+- `test-designer` independently caught a real arithmetic bug in `PLAN.md`: the Planner's hand-derived word
+  count for `sample1.txt` was wrong (16 vs. the correct 17); `builder` used the corrected value and confirmed
+  it with a fresh `wc` run rather than trusting either document. This is a **second, distinct instance** of a
+  later phase catching an earlier phase's real mistake (the first was the byte-count bug in the `hello.txt`
+  smoke run) — two different bugs, caught at two different phase boundaries, is stronger evidence this isn't
+  a one-off fluke.
+- **Independently re-verified outside the pipeline entirely** (not trusting the Verifier/Gatekeeper's own
+  claims): ran `wc sample1.txt sample2.txt` myself and got 17/2/86 and 10/4/67 — matches `README.md`'s
+  documented table exactly. Ran `node wordcount.js sample1.txt`/`sample2.txt`/a nonexistent path myself:
+  output matched exactly (`17\n2\n86`, `10\n4\n67`), and the missing-file case printed a clear error to
+  stderr and exited 1, as documented.
+- The one honestly-flagged gap: an EACCES/permission-denied test scenario couldn't be genuinely exercised
+  because this sandbox runs as root (permission bits don't block root) — `test-designer`, `verifier`, and
+  `gatekeeper` all independently noted this as inconclusive rather than silently passing or hiding it.
+- Resource use for one real feature: ~7 minutes wall clock, 5,845 raw SDK stream events, 59 real assistant
+  messages across all 5 phases + Overseer calls — the first real data point on what a non-trivial task costs,
+  beyond the tiny smoke tasks above.
 
 **Plumbing (no LLM calls, `npm run test:plumbing` against the built `dist/`):**
 - `Store`: run/phase/verdict creation and the summary read the Overseer depends on round-trip correctly.
@@ -71,14 +97,15 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
 
 ## What's not yet verified
 
-- **Retry behavior** — no run so far has had a reason to retry a phase, so `pipeline.ts`'s retry loop (same
-  phase re-run with `retryFeedback` injected into the prompt) is implemented and typechecked but not yet
-  exercised by a real failing phase. Worth a deliberately-adversarial task in a follow-up run.
+- **Retry behavior** — three real runs now (two trivial smoke tasks, one real non-trivial feature with the
+  full default retry budget available) and none has ever needed a retry; every phase has succeeded on attempt
+  1 every time. `pipeline.ts`'s retry loop is implemented and typechecked but genuinely unexercised — this is
+  an honest gap, not something to paper over by forcing a contrived failure. It would need either a
+  deliberately adversarial/impossible task, or real usage over enough runs that a phase eventually fails on
+  its own.
 - **Windows / remote portability** — built and run only in this Linux container so far. Nothing in the code is
   platform-specific (Node + `node:sqlite` + `ws`, no shell-outs beyond what the agents themselves invoke via
   the SDK's own Bash tool), but this is an assumption, not something tested on Windows yet.
-- **Cost/token behavior at scale** — only tiny smoke tasks have been run. No data yet on cost or turn count for
-  a non-trivial real feature.
 
 ## Architecture decisions worth recording
 
@@ -112,12 +139,16 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
 | TypeScript build/typecheck | pass — `npm run build` and `tsc --noEmit` both clean |
 | Live approval UI in a real browser, real Approve clicks | pass — `test/browser-approval.mjs`, 18/18 real clicks across all 5 phases, exit 0 |
 | CLI process exits cleanly after a run with the approval UI left open | pass (after fix) — was a real deadlock (`server.close()` waiting on a connection that never closes itself), fixed in `src/server.ts` |
-| Retry path (Overseer sends a phase back with feedback) | not exercised — implemented, typechecked, no failing phase occurred to trigger it |
+| Real non-trivial feature build (`wordcount.js` CLI, default retry budget) | pass — run `8bc5bd07-f143-4424-b987-f1ed2c8b085e`, status `done`, exit 0, ~7 min wall clock |
+| Built tool actually works, checked independently of the pipeline's own claims | pass — `wc`, `node wordcount.js sample1.txt`/`sample2.txt`/missing-file all run by hand, output matches `README.md` exactly |
+| A second, distinct instance of a later phase catching an earlier phase's real mistake | pass — test-designer caught a wrong word count in the Planner's `PLAN.md` (16 vs. correct 17), builder used the corrected value |
+| Retry path (Overseer sends a phase back with feedback) | not exercised — implemented, typechecked; 3 real runs (2 smoke, 1 real feature with full retry budget available) and none has ever needed one |
 | Windows / non-Linux run | not run |
 
 ## Decision needed
 
 None blocking. Pushed to https://github.com/noobhacker02/test-dev-1. Remaining open items, not urgent:
-1. A deliberately adversarial/ambiguous task to force the Overseer's retry-with-feedback path at least once.
-2. A real, non-trivial feature build rather than another smoke task, to get real cost/turn-count data.
-3. Windows/remote portability is still unverified — an assumption, not something disproven.
+1. The retry path is still genuinely unexercised after 3 real runs — needs either a deliberately
+   adversarial/impossible task or enough real usage that a phase eventually fails on its own; not worth
+   forcing artificially just to check a box.
+2. Windows/remote portability is still unverified — an assumption, not something disproven.
