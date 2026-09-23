@@ -7,7 +7,7 @@
 // pre-installed Chromium (see README). Spends real API tokens (a small task).
 import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
@@ -75,24 +75,34 @@ await page.waitForFunction(() => document.getElementById("status")?.textContent 
 console.log("[ok] page's WebSocket client reports 'live' (real WS connection from a real page)");
 
 let clicksPerformed = 0;
+let clickLoopRunning = true;
 const clickLoop = (async () => {
-  while (child.exitCode === null) {
+  while (clickLoopRunning) {
     const button = page.locator(".approval .btns .allow:not([disabled])").first();
-    if (await button.count()) {
-      await button.click();
+    if (await button.count().catch(() => 0)) {
+      await button.click().catch(() => {});
       clicksPerformed++;
       console.log(`[click] approved a pending tool call in the real browser (#${clicksPerformed})`);
     }
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(250).catch(() => {});
   }
 })();
 
-const TIMEOUT_MS = 5 * 60 * 1000;
-const exitCode = await Promise.race([
-  childExit,
-  new Promise((_, reject) => setTimeout(() => reject(new Error("pipeline run timed out")), TIMEOUT_MS)),
-]);
-await clickLoop;
+// A real 5-phase run with per-tool-call browser round trips (real API latency for
+// each phase's turns, plus overseer decisions between phases) reliably takes several
+// minutes — 10 minutes gives real headroom without masking an actual hang.
+const TIMEOUT_MS = 10 * 60 * 1000;
+let exitCode;
+try {
+  exitCode = await Promise.race([
+    childExit,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`pipeline run exceeded ${TIMEOUT_MS / 1000}s`)), TIMEOUT_MS)),
+  ]);
+} finally {
+  clickLoopRunning = false;
+  await clickLoop;
+  if (child.exitCode === null) child.kill("SIGTERM");
+}
 
 console.log(`[ok] pipeline process exited with code ${exitCode}, browser clicked Approve ${clicksPerformed} time(s)`);
 

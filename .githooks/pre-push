@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Installed by install-hooks.sh — do not run this file directly from outside .githooks/.
+#
+# Git calls pre-push with lines of "<local ref> <local sha1> <remote ref> <remote sha1>" on
+# stdin, one per updated ref. We turn each into a commit range and scan everything in it.
+set -euo pipefail
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="${PYTHON:-python3}"
+
+if ! command -v "$PY" >/dev/null 2>&1; then
+  echo "[dev-workflow] python3 not found — cannot run the pre-push safety checks." >&2
+  echo "[dev-workflow] Install python3, or set PYTHON=/path/to/python3, then retry." >&2
+  exit 1
+fi
+
+ZERO_SHA="0000000000000000000000000000000000000000"
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+ranges=()
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$local_sha" = "$ZERO_SHA" ]; then
+    continue # deleting a remote branch — nothing to scan
+  fi
+  if [ "$remote_sha" = "$ZERO_SHA" ]; then
+    ranges+=("$EMPTY_TREE..$local_sha") # first push of a new branch — scan everything in it
+  else
+    ranges+=("$remote_sha..$local_sha")
+  fi
+done
+
+if [ "${#ranges[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+exec "$PY" "$HOOK_DIR/check_staged.py" --mode=push "${ranges[@]}"
