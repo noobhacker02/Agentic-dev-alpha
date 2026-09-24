@@ -6,6 +6,35 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **Browser Agent Stage 1: real Playwright tools a phase can call.** First step of the Cloud
+  Browser Agent proposal, scoped to what's actually buildable without cloud infrastructure (no VM,
+  domain, or auth here — that's Stage 3 and needs real infrastructure decisions).
+  - `src/browser-tools.ts`: seven tools (`open`/`inspect`/`click`/`fill`/`press`/`wait`/`screenshot`)
+    registered as a real in-process MCP server via the SDK's own `createSdkMcpServer`/`tool()` —
+    confirmed against the installed SDK's own type definitions rather than assumed. Custom tools
+    surface as `mcp__browser__*` in `tool_name`, the same field the existing safety/path-scope/
+    sensitive-file/approval hooks already read, so a browser action gets the same treatment as
+    `Bash` or `Write` with zero new hook plumbing.
+  - `BrowserSessionManager` maps `runId` to a live Playwright browser/context/page so a session
+    survives across agent-loop's separate per-phase SDK calls (each phase is its own session; the
+    browser isn't). `close()`/`closeAll()` always emit `browser-session-ended` even after a worker
+    error, so a leaked Chromium process or temp profile past the run can't happen from an exception.
+  - Six new `AgentEvent` variants (`browser-session-started/ended`, `browser-action-started/
+    completed`, `browser-snapshot`, `browser-artifact-created`) flow through the existing bus/store
+    unchanged.
+  - `open` is restricted to `http://localhost`/`127.0.0.1` only — one safe local demo page for this
+    stage, not a domain allowlist.
+  - Screenshots are written to disk (never SQLite) and returned to the model as both a file path and
+    inline base64 image content.
+  - Tested by calling the tool handlers directly against a real local demo page
+    (`test/browser-tools.mjs`, `npm run test:browser-tools`) — deliberately not through the
+    fake-SDK harness used elsewhere, which fakes only the top-level message generator and never
+    actually dispatches a tool call to a registered MCP server, so it can't exercise real Playwright
+    side effects. 12 checks against a real launched Chromium: DOM changes verified by an independent
+    second `inspect()` call rather than trusting the tool's own success text, `wait` actually times
+    out on a selector that never appears, `screenshot` writes a real PNG (checked by magic bytes),
+    every action gets a matching started/completed event pair. Run 4 times with zero flakiness and
+    zero leaked Chromium processes afterward.
 - **The Planner can suggest skipping `test-designer` for a genuinely trivial task** — a narrow,
   bounded answer to "why is the pipeline always exactly 5 phases," deliberately not open-ended
   agent spawning. `SKIPPABLE_PHASES = ["test-designer"]` is a hard pipeline-code allowlist:
