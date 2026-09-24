@@ -154,6 +154,7 @@ unattended runs.
 npm run build
 npm run test:plumbing          # no LLM calls — store/bus/server/WebSocket wiring only
 npm run test:server            # no LLM calls — approval server access control + approval replay
+npm run test:scope             # no LLM calls — per-phase tool restriction, --dir path scoping, minimal env
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided

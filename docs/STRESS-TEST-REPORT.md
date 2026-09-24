@@ -16,7 +16,7 @@ As shipped, neither repo delivers its main promise. The "safety" layers stop the
 | CI gate is a server-side backstop | The PR can replace the scanner CI runs | Broken |
 | Every tool call needs human approval | Any website or LAN host can click Approve; reloading the tab loses pending approvals | Broken |
 | Safety net under `--no-approval` | 3 of 27 dangerous calls stopped | Broken |
-| Phases are tool-restricted | `allowedTools` doesn't restrict tools | Broken |
+| Phases are tool-restricted | `allowedTools` doesn't restrict tools | Fixed (agent-loop) |
 | Gatekeeper no-go stops the run | Only if the Overseer LLM agrees; a phase can pre-approve failures via DECISIONS.md | Weak |
 | Skill triggers without being named | 0 of 2 real runs | Unproven |
 | The loop produces better code | Same hidden-grader score as plain Claude, 4–17× cost | Unproven |
@@ -129,9 +129,9 @@ The attacker receives the `requestId` from the broadcast itself, so it needs no 
 
 ### Permissions don't do what the code assumes
 
-- `allowedTools` in the SDK means "auto-approve these", **not** "only these exist" (confirmed in `sdk.d.ts` v0.3.280: *"To restrict which tools are available, use the `tools` option"*). The "read-only" Planner and Test-Designer can still call Bash, Edit, WebFetch and more.
-- `Read`, `Glob`, `Grep` are auto-approved with no path limit. With approval **on**, `Read /root/.claude/.credentials.json` and `~/.ssh/id_rsa` were allowed with no human asked.
-- Every phase gets `env: { ...process.env }`: the API key and every other secret in your shell. A `cat .env` or `env` result is written to SQLite in plain text and broadcast to every socket client.
+- ~~`allowedTools` in the SDK means "auto-approve these", not "only these exist"~~ **Fixed.** Phases now get the SDK `tools` option (`src/phases.ts`), which removes the tool from the model's schema entirely rather than just auto-approving it. Verified with a real API call: a read-only phase given `tools: ["Read","Glob","Grep"]` was offered exactly `['Glob', 'Grep', 'Read']` at session init and never called Bash, even asked for a git commit hash (it read `.git/HEAD` instead).
+- ~~`Read`, `Glob`, `Grep` are auto-approved with no path limit~~ **Partly fixed.** A new path-scope hook (`createPathScopeHook`, `src/hooks.ts`) denies `Read`/`Write`/`Edit`/`NotebookEdit`/`Glob`/`Grep` calls whose path resolves outside `--dir`, so `Read ~/.ssh/id_rsa` is blocked regardless of the approval setting — but auto-approval for reads *inside* the workdir is unchanged (a phase can still read any file the task doesn't need without asking), and `Bash cat ~/.ssh/id_rsa` isn't covered (no path argument to check; would need a real sandbox). Covered by `npm run test:scope`.
+- ~~Every phase gets `env: { ...process.env }`~~ **Fixed.** Phases now get a minimal, allowlisted env (`src/env.ts`): `PATH`/`HOME`/etc. plus `CLAUDE_*`/`ANTHROPIC_*` vars, nothing else — a `cat .env` or `env` inside the workdir no longer surfaces the calling shell's other secrets. Covered by `npm run test:scope`.
 - The audit DB lives in `<workDir>/.agent-loop/agent-loop.db`, inside the directory the agents control. The builder can read, edit or delete its own audit trail.
 
 ### Pipeline logic (tested with a scripted fake SDK, no real API)
@@ -193,7 +193,7 @@ Work top to bottom. The first five are security holes someone could exploit toda
 
 - [x] **Lock the approval server.** *(agent-loop: fixed, covered by `npm run test:server`)* Bind to `127.0.0.1`, reject any WebSocket whose `Origin` isn't the UI's own, and require a random per-run token printed in the URL.
 - [x] **Replay pending approvals on connect** *(agent-loop: fixed, covered by `npm run test:server`)* so a reloaded tab still shows its Approve buttons.
-- [ ] **Actually restrict tools.** Use the SDK `tools` option per phase (not `allowedTools`), limit Read/Write/Edit to `--dir` in the hook, and pass agents a minimal env, not `...process.env`.
+- [x] **Actually restrict tools.** *(agent-loop: fixed, covered by `npm run test:scope`)* Use the SDK `tools` option per phase (not `allowedTools`), limit Read/Write/Edit to `--dir` in the hook, and pass agents a minimal env, not `...process.env`.
 - [ ] **Move the audit DB out of the agents' workdir** (e.g. `~/.agent-loop/`).
 - [ ] **CI gate runs the base branch's scanner**, not the PR's. Ignore `.devskill-allowlist` changes made in the same diff. Use `pull_request_target` or check out base for the script.
 - [ ] **Scanner: add unit tests first.** Turn this report's 78 cases into `tests/test_check_staged.py` and run them in CI.

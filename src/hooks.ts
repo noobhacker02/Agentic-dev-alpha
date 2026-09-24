@@ -1,3 +1,4 @@
+import { isAbsolute, resolve, sep } from "node:path";
 import type { HookCallback, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
 import type { EventBus } from "./bus.js";
 import type { PhaseName } from "./types.js";
@@ -38,6 +39,58 @@ export function createSafetyHook(): HookCallback {
           permissionDecisionReason: `agent-loop safety net: '${command}' matches a hard-denied destructive pattern and is never allowed, even with human approval.`,
         },
       };
+    }
+    return {};
+  };
+}
+
+/**
+ * File-tool argument names that name a path the tool will read or write, per built-in tool. `Glob`
+ * and `Grep`'s `path` is where they search, not a write target, but a phase pointed at it is still
+ * a phase reading outside the task's own directory, so it's scoped too.
+ */
+const PATH_ARGS: Record<string, string[]> = {
+  Read: ["file_path"],
+  Write: ["file_path"],
+  Edit: ["file_path"],
+  NotebookEdit: ["notebook_path"],
+  Glob: ["path"],
+  Grep: ["path"],
+};
+
+function isInside(workDir: string, candidate: string): boolean {
+  const abs = isAbsolute(candidate) ? candidate : resolve(workDir, candidate);
+  const resolved = resolve(abs);
+  const root = resolve(workDir);
+  return resolved === root || resolved.startsWith(root + sep);
+}
+
+/**
+ * Defense-in-depth backstop, same spirit as the safety hook: keeps the file tools' own read/write
+ * targets inside the run's `--dir`, so a phase can't touch `/root/.bashrc`, `/etc/hosts`, or climb
+ * out with `../..` regardless of what the approval UI does. It only sees named path arguments —
+ * `Bash` can still `cd` or `cat` anywhere the OS permits; containing that needs a real sandbox, not
+ * a hook, so it stays out of scope here.
+ */
+export function createPathScopeHook(workDir: string): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+    const pre = input as PreToolUseHookInput;
+    const argNames = PATH_ARGS[pre.tool_name];
+    if (!argNames) return {};
+    const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
+    for (const arg of argNames) {
+      const value = toolInput[arg];
+      if (typeof value !== "string" || value === "") continue;
+      if (!isInside(workDir, value)) {
+        return {
+          hookSpecificOutput: {
+            hookEventName: pre.hook_event_name,
+            permissionDecision: "deny",
+            permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value}') resolves outside the run's working directory (${workDir}) and is never allowed.`,
+          },
+        };
+      }
     }
     return {};
   };
