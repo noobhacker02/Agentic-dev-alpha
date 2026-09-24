@@ -4,7 +4,13 @@ import type { EventBus } from "./bus.js";
 import type { Store } from "./store.js";
 import { createApprovalHook, createPathScopeHook, createSafetyHook, createSensitiveFileHook } from "./hooks.js";
 import { minimalEnv } from "./env.js";
+import { BrowserSessionManager, createBrowserToolServer } from "./browser-tools.js";
 import { PHASE_OUTCOMES, SKIPPABLE_PHASES, type PhaseName, type PhaseVerdict } from "./types.js";
+
+/** Only these two get browser tools -- they're the phases actually likely to need to exercise a
+ * running web app (verifying a UI, checking a rendered page). Giving every phase a live Chromium
+ * instance by default would be pure overhead for tasks that never touch a browser. */
+const BROWSER_ENABLED_PHASES: readonly PhaseName[] = ["builder", "verifier"];
 
 const VERDICT_INSTRUCTIONS = `
 When you are done, end your final message with a fenced json block, and nothing after it, in exactly this shape:
@@ -149,6 +155,10 @@ export interface RunPhaseOptions {
   requireApproval: boolean;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Present only when --browser was passed; shared across every phase in the run so the same
+   * BrowserSessionManager (and therefore the same live browser) is reachable from each phase's
+   * separate query() call. Only BROWSER_ENABLED_PHASES actually get the tool registered. */
+  browser?: { sessions: BrowserSessionManager; artifactDir: string };
 }
 
 export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
@@ -175,6 +185,14 @@ through the approval UI carries that authority.`;
     userPrompt += `\n\nThis is a retry. Feedback from the Overseer on the previous attempt:\n${opts.retryFeedback}`;
   }
 
+  const browserEnabled = opts.browser && BROWSER_ENABLED_PHASES.includes(opts.phase);
+  if (browserEnabled) {
+    userPrompt += `\n\nYou have real browser tools available (mcp__browser__open/inspect/click/fill/press/wait/
+screenshot) backed by an actual headless Chromium instance, useful for exercising a running web app. Stage 1:
+open() only accepts http://localhost or http://127.0.0.1 URLs. Every browser action goes through the same
+human-approval flow as Bash or Write.`;
+  }
+
   let lastAssistantText = "";
 
   const stream = query({
@@ -190,6 +208,18 @@ through the approval UI carries that authority.`;
       hooks: {
         PreToolUse: [{ hooks: [safetyHook, pathScopeHook, sensitiveFileHook, approvalHook], timeout: 3600 }],
       },
+      ...(browserEnabled
+        ? {
+            mcpServers: {
+              browser: createBrowserToolServer({
+                runId: opts.runId,
+                bus: opts.bus,
+                sessions: opts.browser!.sessions,
+                artifactDir: opts.browser!.artifactDir,
+              }),
+            },
+          }
+        : {}),
     },
   });
 

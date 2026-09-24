@@ -6,6 +6,7 @@ import type { EventBus } from "./bus.js";
 import { Store } from "./store.js";
 import { runPhase } from "./phases.js";
 import { overseerDecide } from "./overseer.js";
+import { BrowserSessionManager } from "./browser-tools.js";
 
 /**
  * A project's DECISIONS.md (any phase may write one, following dev-workflow's convention) is
@@ -48,6 +49,14 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
   let lastSeenDecisionsLog: string | undefined;
   let totalRepairs = 0;
   const attemptCounts: Partial<Record<PhaseName, number>> = {};
+  const browserSessions = config.browser ? new BrowserSessionManager() : undefined;
+  // Scoped per run under the configured root (cli.ts passes <dataDir>/browser-artifacts as the
+  // root; server.ts serves /artifacts/<runId>/<file> from that same root) so screenshots from
+  // different runs against the same --dir don't land in one shared, unscoped folder.
+  const browserOpt =
+    browserSessions && config.browserArtifactDir
+      ? { sessions: browserSessions, artifactDir: join(config.browserArtifactDir, run.id) }
+      : undefined;
 
   try {
     let phaseIdx = 0;
@@ -82,6 +91,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           bus,
           store,
           requireApproval: config.requireApproval,
+          browser: browserOpt,
         });
       } catch (err) {
         verdict = {
@@ -219,6 +229,10 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
       ts: new Date().toISOString(),
     });
   } finally {
+    // Always close a live browser session, even after an unhandled pipeline error above -- an
+    // unclosed Chromium process and temp profile leaking past the run is exactly what
+    // BrowserSessionManager's own contract rules out (see src/browser-tools.ts).
+    if (browserSessions) await browserSessions.close(run.id, bus, finalStatus === "failed" ? "failed" : "completed");
     store.finishRun(run.id, finalStatus);
     bus.emitEvent({ type: "run-end", runId: run.id, status: finalStatus, ts: new Date().toISOString() });
   }

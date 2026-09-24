@@ -203,4 +203,10 @@ export interface PipelineConfig {
   maxTotalRepairs: number;
   /** Port for the event-bus / approval UI HTTP+WS server. */
   uiPort: number;
+  /** If true, builder and verifier get real browser tools (src/browser-tools.ts) backed by a
+   * headless Chromium instance shared across the run. Off by default -- most tasks never need it. */
+  browser?: boolean;
+  /** Where browser-tool screenshots are written when `browser` is on. Required when `browser` is
+   * true (cli.ts always supplies it alongside the flag). */
+  browserArtifactDir?: string;
 }

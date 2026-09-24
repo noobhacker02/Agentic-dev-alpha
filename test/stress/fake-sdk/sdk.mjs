@@ -2,6 +2,20 @@
 import { writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 let calls = 0;
+
+// src/browser-tools.ts imports these from the real package at module load time regardless of
+// FAKE_SCENARIO (createBrowserToolServer() runs whenever --browser is set, even though this fake
+// harness never actually dispatches a tool_use block to any MCP server) -- without stubs here,
+// loader.mjs's blanket redirect of "@anthropic-ai/claude-agent-sdk" to this file breaks every
+// scenario with a "does not provide an export named 'createSdkMcpServer'" SyntaxError, not just
+// ones that use --browser. Shape-compatible passthroughs are enough: nothing in this fake path ever
+// calls a tool's .handler() or dispatches into the "server" object.
+export function tool(name, description, inputSchema, handler, extras) {
+  return { name, description, inputSchema, handler, ...(extras ?? {}) };
+}
+export function createSdkMcpServer(opts) {
+  return { type: "sdk", name: opts.name, instance: { __fake: true, tools: opts.tools ?? [] } };
+}
 export function query({ prompt, options }) {
   calls++;
   const sc = process.env.FAKE_SCENARIO;

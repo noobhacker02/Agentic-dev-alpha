@@ -19,4 +19,6 @@ Screenshots from the Browser Agent tools (`src/browser-tools.ts`).
 
 Screenshots of the live approval UI (`ui/index.html`, served by `src/server.ts`).
 
-_(none yet — added as the dashboard evolves, e.g. Stage 2's browser panel)_
+| File | What it shows |
+| --- | --- |
+| `01-full-dashboard-with-browser-panel.png` | Full dashboard rendered by a real headless Chromium against the real server, driven by `npm run test:ui` (`test/ui-render.mjs`) with a synthetic event sequence covering every event type: run/phase lifecycle, tool calls, an Overseer repair decision, DECISIONS.md vs. a recorded trusted decision, a live-clicked approval, and the Stage 2 browser panel (live screenshot, page title, session status). Regenerated automatically every time that test runs. |

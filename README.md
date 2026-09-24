@@ -163,7 +163,7 @@ Reloading the tab re-shows any approval still waiting. `--no-approval` skips
 the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
 unattended runs.
 
-## Browser Agent (Stage 1)
+## Browser Agent (Stages 1–2)
 
 Phases can drive a real, headless Chromium instance through seven tools — `open`, `inspect`, `click`, `fill`,
 `press`, `wait`, `screenshot` (`src/browser-tools.ts`) — registered as a real in-process MCP server via the
@@ -173,10 +173,15 @@ same treatment as `Bash` or `Write`: never auto-approved, always visible in the 
 safety net. A `BrowserSessionManager` keeps one browser/page alive per run across agent-loop's separate
 per-phase SDK sessions, since the browser context needs to outlive any single phase call.
 
-Screenshot from a real run of these tools (`open` → `fill` → `click` → `screenshot`, driven by calling the tool
-handlers directly, not a canned image):
+Pass `--browser` to `agent-loop run` to give `builder` and `verifier` these tools (off by default). Screenshots
+are written outside `--dir`, under `<data dir>/browser-artifacts/<runId>/`, and served read-only at
+`/artifacts/<runId>/<file>` — gated by the same per-run token as the WebSocket — so the live UI's **Browser**
+panel can show the current page, URL/title, and screenshot as the run progresses.
+
+Real screenshots — not mockups — of both the tools themselves and the full dashboard rendering them:
 
 ![Browser Agent Stage 1 demo](docs/screenshots/browser-agent/01-open-fill-click-screenshot.png)
+![Dashboard with the browser panel](docs/screenshots/approval-ui/01-full-dashboard-with-browser-panel.png)
 
 More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
 
@@ -193,6 +198,7 @@ npm run test:server            # no LLM calls — approval server access control
 npm run test:scope             # no LLM calls — per-phase tool restriction, --dir path scoping, minimal env
 npm run test:data-dir          # no LLM calls — audit database location stays outside --dir
 npm run test:browser-tools     # no LLM calls — real Chromium, real DOM changes, real screenshot files
+npm run test:ui                # no LLM calls — real Chromium renders the real dashboard, incl. the browser panel
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided

@@ -101,5 +101,53 @@ assert.ok(srv.token.length >= 32);
 await other.close();
 console.log("[ok] each server run gets its own random token");
 
+// --- browser-tool artifacts (screenshots) are served read-only, gated by the same token
+{
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const artifactRoot = mkdtempSync(join(tmpdir(), "agent-loop-artifacts-"));
+  const runDir = join(artifactRoot, "run-123");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(runDir, { recursive: true });
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  writeFileSync(join(runDir, "shot.png"), pngBytes);
+
+  const artSrv = await startServer(new EventBus(), PORT + 2, { artifactRoot });
+
+  function httpGetFull(path, headers = {}) {
+    return new Promise((resolve, reject) => {
+      request({ host: "127.0.0.1", port: PORT + 2, path, headers }, (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode, contentType: res.headers["content-type"], body: Buffer.concat(chunks) }));
+      }).on("error", reject).end();
+    });
+  }
+
+  const noToken = await httpGetFull("/artifacts/run-123/shot.png");
+  assert.strictEqual(noToken.status, 401, "an artifact request with no token should be rejected");
+
+  const wrongToken = await httpGetFull("/artifacts/run-123/shot.png?token=wrong");
+  assert.strictEqual(wrongToken.status, 401, "an artifact request with the wrong token should be rejected");
+
+  const ok = await httpGetFull(`/artifacts/run-123/shot.png?token=${artSrv.token}`);
+  assert.strictEqual(ok.status, 200);
+  assert.strictEqual(ok.contentType, "image/png");
+  assert.ok(ok.body.equals(pngBytes), "the served bytes should exactly match the file on disk");
+
+  const missing = await httpGetFull(`/artifacts/run-123/nope.png?token=${artSrv.token}`);
+  assert.strictEqual(missing.status, 404);
+
+  await artSrv.close();
+
+  // A server started WITHOUT artifactRoot must not serve artifacts at all -- confirms the route is
+  // opt-in, not silently always-on. srv (on PORT) was started with no artifactRoot.
+  const noRouteStatus = await httpGet("/artifacts/run-123/shot.png");
+  assert.strictEqual(noRouteStatus, 404, "a server with no artifactRoot configured should 404 on /artifacts/*");
+
+  console.log("[ok] browser-tool artifacts: 401 with no/wrong token, 200 with the right one and matching bytes, 404 for a missing file or when artifactRoot isn't configured");
+}
+
 await srv.close();
 console.log("\nALL APPROVAL SERVER TESTS PASSED");

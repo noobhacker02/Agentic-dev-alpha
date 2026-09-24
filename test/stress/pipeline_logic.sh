@@ -38,6 +38,14 @@ if grep -q 'write TESTPLAN\.md' "$OUT/log-trivial-skip.jsonl" 2>/dev/null; then
 else
   echo "  OK: test-designer was never invoked"
 fi
+echo "### J: --browser wired in but no browser tool ever called   (correct: no crash, browser tools inert when unused)"
+FAKE_SCENARIO=trivial-skip timeout 60 "${NODE[@]}" run "build a thing" --dir "$OUT/ws-browser-flag" --no-approval --browser --port 5110 > "$OUT/full-browser-flag.log" 2>&1
+grep -E "finished with|Browser tools|Error" "$OUT/full-browser-flag.log" | head -3
+if pgrep -f "chrome-linux/chrome" > /dev/null 2>&1; then
+  echo "  FAIL: a Chromium process is still running (no tool call ever happened, so none should exist)"
+else
+  echo "  OK: no Chromium process running (browser tools are lazy -- none launched since none was used)"
+fi
 echo "### H: audit DB location                                  (correct: outside the agents' --dir, no .agent-loop/ left inside it)"
 DB_E="$(db_path_for injected-decisions)"
 echo "  audit db: $DB_E"

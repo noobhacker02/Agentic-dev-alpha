@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <title>agent-loop</title>
+<!-- Suppresses the browser's automatic /favicon.ico request, which this server has no route for
+     and would otherwise 404 on every load -- a standard empty-data-URI, not a missing asset. -->
+<link rel="icon" href="data:," />
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -35,6 +38,20 @@
   .card.overseer { border-left: 3px solid #a371f7; }
   .card.decisions-log { border-left: 3px solid #f778ba; background: #1a0d15; }
   .card.trusted-decision { border-left: 3px solid #3fb950; background: #0d1f13; }
+  .card.browser-action { border-left: 3px solid #56d4dd; }
+  .card.browser-action.error { border-left: 3px solid #f85149; }
+  .card.browser-session { border-left: 3px solid #56d4dd; background: #0d1a1d; }
+  #browser-panel {
+    display: none; border: 1px solid #30363d; border-radius: 6px; background: #0d1a1d;
+    margin: 0 16px 8px; padding: 10px 12px; max-width: 948px; margin-left: auto; margin-right: auto;
+  }
+  #browser-panel.live { display: block; }
+  #browser-panel .meta { color: #8b949e; font-size: 11px; }
+  #browser-panel img {
+    max-width: 100%; max-height: 280px; object-fit: contain; display: block;
+    border-radius: 4px; border: 1px solid #30363d; margin-top: 6px; cursor: zoom-in;
+    background: #0d1117;
+  }
   #decision-form {
     padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d;
     display: flex; gap: 8px;
@@ -62,6 +79,7 @@
   <span id="status">connecting…</span>
 </header>
 <div id="pending-banner"></div>
+<div id="browser-panel"></div>
 <form id="decision-form" title="This is the only kind of decision the Overseer treats as settled — a worker writing to DECISIONS.md is just a proposal.">
   <input id="decision-input" type="text" placeholder="Record a decision the Overseer should treat as settled…" />
   <button type="submit">Record</button>
@@ -97,6 +115,32 @@ function esc(s) {
 
 function meta(text) {
   return '<div class="meta">' + esc(text) + "</div>";
+}
+
+/** /artifacts/<runId>/<file> requires the same per-run token as the WebSocket -- screenshots can
+ * contain real page content, so they get the same access control as everything else here. */
+function artifactUrl(runId, filePath) {
+  const base = filePath.split(/[\\/]/).pop();
+  return "/artifacts/" + encodeURIComponent(runId) + "/" + encodeURIComponent(base) + "?token=" + encodeURIComponent(token);
+}
+
+const browserPanel = document.getElementById("browser-panel");
+function renderBrowserPanel() {
+  if (!browserPanel.dataset.active) {
+    browserPanel.classList.remove("live");
+    return;
+  }
+  browserPanel.classList.add("live");
+  const url = browserPanel.dataset.url || "";
+  const title = browserPanel.dataset.title || "";
+  const shot = browserPanel.dataset.shot || "";
+  const runId = browserPanel.dataset.runId || "";
+  const status = browserPanel.dataset.status || "active";
+  browserPanel.innerHTML =
+    '<div class="meta">Browser session — ' + esc(status) + "</div>" +
+    "<b>" + esc(title || "(no page loaded yet)") + "</b>" +
+    (url ? "<div class=\"meta\">" + esc(url) + "</div>" : "") +
+    (shot ? '<a href="' + artifactUrl(runId, shot) + '" target="_blank"><img src="' + artifactUrl(runId, shot) + '" /></a>' : "");
 }
 
 // The per-run token comes from the URL agent-loop prints (#token=…); the server refuses the
@@ -229,6 +273,46 @@ function render(ev, ws) {
         "trusted-decision",
         meta(when + " · " + ev.phase + " · decision recorded — the Overseer now treats this as settled") +
           "<pre>" + esc(ev.text) + "</pre>"
+      );
+      break;
+    case "browser-session-started":
+      browserPanel.dataset.active = "1";
+      browserPanel.dataset.runId = ev.runId;
+      browserPanel.dataset.status = "active";
+      renderBrowserPanel();
+      card("browser-session", meta(when + " · browser session started"));
+      break;
+    case "browser-session-ended":
+      browserPanel.dataset.status = ev.status;
+      renderBrowserPanel();
+      card("browser-session", meta(when + " · browser session ended: " + esc(ev.status)));
+      break;
+    case "browser-action-started":
+      card(
+        "browser-action",
+        meta(when + " · browser") + "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.input, null, 2)) + "</pre>"
+      );
+      break;
+    case "browser-action-completed":
+      card(
+        "browser-action " + (ev.isError ? "error" : ""),
+        meta(when + " · browser · " + ev.durationMs + "ms") +
+          "<b>" + (ev.isError ? "✗ " : "✓ ") + esc(ev.toolName) + "</b><pre>" + esc(ev.result) + "</pre>"
+      );
+      break;
+    case "browser-snapshot":
+      browserPanel.dataset.active = "1";
+      browserPanel.dataset.runId = ev.runId;
+      browserPanel.dataset.url = ev.url;
+      browserPanel.dataset.title = ev.title;
+      browserPanel.dataset.shot = ev.screenshotPath;
+      renderBrowserPanel();
+      break;
+    case "browser-artifact-created":
+      card(
+        "browser-session",
+        meta(when + " · browser artifact saved (" + esc(ev.kind) + ")") +
+          '<a href="' + artifactUrl(ev.runId, ev.path) + '" target="_blank">' + esc(ev.path.split(/[\\/]/).pop()) + "</a>"
       );
       break;
   }

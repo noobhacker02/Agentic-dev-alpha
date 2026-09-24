@@ -10,7 +10,7 @@ import { PHASES } from "./types.js";
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
 // must never consume the next token just because that token doesn't start with "--".
-const BOOLEAN_FLAGS = new Set(["no-approval"]);
+const BOOLEAN_FLAGS = new Set(["no-approval", "browser"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -57,7 +57,7 @@ async function main() {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
-  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>]
+  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
@@ -67,6 +67,8 @@ Usage:
                    phase (default: 4x the phase count) — bounds builder<->verifier repair loops
   --data-dir       Where the audit database lives (default: ~/.agent-loop, or $AGENT_LOOP_HOME) —
                    always outside --dir, since the agents have Write/Edit/Bash access there
+  --browser        Give builder and verifier real headless-Chromium browser tools (Stage 1:
+                   http://localhost/127.0.0.1 URLs only). Off by default.
 `);
     process.exit(cmd ? 1 : 0);
   }
@@ -88,13 +90,15 @@ Usage:
   const requireApproval = !args["no-approval"];
   const maxRetriesPerPhase = parseNonNegativeInt(args["max-retries"], "max-retries", 2);
   const maxTotalRepairs = parseNonNegativeInt(args["max-repairs"], "max-repairs", PHASES.length * 4);
+  const browser = !!args.browser;
+  const browserArtifactDir = join(dataDir, "browser-artifacts");
 
   const store = new Store(join(dataDir, "agent-loop.db"));
   const bus = new EventBus(store);
 
   let url: string, close: () => Promise<void>;
   try {
-    ({ url, close } = await startServer(bus, port));
+    ({ url, close } = await startServer(bus, port, { artifactRoot: browser ? browserArtifactDir : undefined }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
@@ -110,10 +114,11 @@ Usage:
   console.log(`Working directory: ${workDir}`);
   console.log(`Audit database:    ${join(dataDir, "agent-loop.db")}`);
   console.log(`Approval UI: ${requireApproval ? "ON — every non-read tool call waits for you" : "OFF"}`);
+  console.log(`Browser tools: ${browser ? "ON — builder/verifier get real Chromium (localhost only)" : "OFF"}`);
   console.log(`Task: ${task}\n`);
 
   const run = await runPipeline(
-    { task, workDir, requireApproval, maxRetriesPerPhase, maxTotalRepairs, uiPort: port },
+    { task, workDir, requireApproval, maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir },
     bus,
     store
   );

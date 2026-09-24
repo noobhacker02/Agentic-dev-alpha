@@ -14,6 +14,9 @@ const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
 };
 
 /**
@@ -34,6 +37,11 @@ function parseTarget(target: string | undefined): URL | null {
 export interface ServerOptions {
   /** Per-run secret the UI must present to open the WebSocket. Generated when omitted. */
   token?: string;
+  /** Base directory for browser-tool artifacts (screenshots, traces), served read-only at
+   * /artifacts/<runId>/<file> and gated by the same token as the WebSocket -- these can contain
+   * real page content the agent visited, so they get the same access control, not the UI's own
+   * token-free static files. Omit to disable artifact serving entirely. */
+  artifactRoot?: string;
 }
 
 /**
@@ -71,6 +79,26 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     const urlPath = normalize(pathname === "/" ? "/index.html" : pathname);
     if (urlPath.includes("..")) {
       res.writeHead(400).end("bad path");
+      return;
+    }
+    if (urlPath.startsWith("/artifacts/")) {
+      if (!opts.artifactRoot) {
+        res.writeHead(404).end("not found");
+        return;
+      }
+      if (!tokenOk(req)) {
+        res.writeHead(401).end("missing or wrong token");
+        return;
+      }
+      try {
+        const filePath = join(opts.artifactRoot, urlPath.slice("/artifacts/".length));
+        const body = await readFile(filePath);
+        const ext = filePath.slice(filePath.lastIndexOf("."));
+        res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" });
+        res.end(body);
+      } catch {
+        res.writeHead(404).end("not found");
+      }
       return;
     }
     try {
