@@ -5,6 +5,19 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The Planner can suggest skipping `test-designer` for a genuinely trivial task** — a narrow,
+  bounded answer to "why is the pipeline always exactly 5 phases," deliberately not open-ended
+  agent spawning. `SKIPPABLE_PHASES = ["test-designer"]` is a hard pipeline-code allowlist:
+  `builder`/`verifier`/`gatekeeper` are never skippable, and `planner` can't skip itself. A new
+  optional `suggestedSkip` field on the Planner's verdict is validated twice — once when parsed,
+  once again by `pipeline.ts` before acting on it — the same double-check pattern already used for
+  repair targets, so a suggestion is never trusted as-is. A skipped phase still gets a real,
+  explicit "Skipped" phase record in run history, not a silent gap. Verified with a new
+  `test/stress/pipeline_logic.sh` scenario: a trivial-task run drops from 10 LLM calls to 8, reaches
+  `done`, and `test-designer`'s own prompt is confirmed never invoked (searched for in the call
+  log). All 5 pre-existing unit suites and the other 8 pipeline scenarios pass unchanged.
+
 ### Fixed
 - **`validate-dev-workflow.mjs` evaluator had 5 of its own weaknesses (F5-F9)** — the meta-question
   this script exists to answer (does `dev-workflow` actually trigger and get followed) is only
