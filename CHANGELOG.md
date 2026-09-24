@@ -6,6 +6,30 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Fixed
+- **`validate-dev-workflow.mjs` evaluator had 5 of its own weaknesses (F5-F9)** — the meta-question
+  this script exists to answer (does `dev-workflow` actually trigger and get followed) is only
+  trustworthy if the checker itself is airtight; the review found it wasn't. Not yet re-run
+  end-to-end here (a full run spends real API tokens on one non-trivial session) — verified by
+  syntax check and code review against each finding's exact claim instead.
+  - **F5**: `settingSources: ["user", "project"]` loaded whoever's real personal skills into the
+    experiment, and the Skill-tool check counted *any* invocation, not specifically dev-workflow's.
+    Now `settingSources: ["project"]` only, and the check reads the actual invoked skill's identity
+    from the tool input.
+  - **F6**: the `/health` check accepted any 200 whose body loosely contained "status", "ok", or
+    "up" as a substring. Now requires valid JSON, an actual status-indicating field, a numeric
+    uptime-like field that increases across two calls a beat apart (proves live uptime, not a
+    hardcoded value), and that the pre-existing `/ping` route still works. Replaced a fixed port and
+    fixed 800ms sleep with a free-port probe and readiness polling.
+  - **F7**: `git ls-files --error-unmatch` only proved a file was in the index, not that HEAD's
+    content matched — a staged-but-uncommitted report passed. New `fileCommittedClean()` requires
+    the file to exist at HEAD *and* have zero staged/unstaged diff.
+  - **F8**: the script printed a pass count but never set a failing exit code. Now exits 2 on a
+    harness failure (SDK result subtype wasn't "success"), 1 on any failed check, 0 only if all pass.
+  - **F9**: push detection was a regex over the session's own Bash commands for "git push" —
+    evidence of one specific attempt path, not enforcement. Added a real disposable bare git remote
+    and checks its refs stay empty after the run; kept the Bash regex too, relabeled as an
+    observational-only signal alongside the real enforcement.
+
 - **Verdict/acceptance conflation, single-phase-only retries, and two terminal-state gaps** — findings
   F1–F4 of the engineering review of both projects, all confirmed live via the repo's own
   deterministic fake-SDK harness (`test/stress/pipeline_logic.sh`) before being fixed, and
