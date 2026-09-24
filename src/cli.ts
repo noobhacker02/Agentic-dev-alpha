@@ -64,6 +64,7 @@ Usage:
 
   const { url, close } = await startServer(bus, port);
   console.log(`agent-loop UI: ${url}`);
+  console.log("  (open this exact URL: the #token part is what lets the page approve tool calls)");
   console.log(`Working directory: ${workDir}`);
   console.log(`Approval UI: ${requireApproval ? "ON — every non-read tool call waits for you" : "OFF"}`);
   console.log(`Task: ${task}\n`);

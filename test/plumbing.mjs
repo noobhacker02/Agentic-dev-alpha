@@ -31,9 +31,9 @@ assert.strictEqual(hits.length, 1, "FTS5 search should find the indexed text");
 console.log("[ok] store: FTS5 log_index search finds indexed content");
 
 const PORT = 45231;
-const { close } = await startServer(bus, PORT);
+const { close, token } = await startServer(bus, PORT);
 
-const ws = new WebSocket(`ws://localhost:${PORT}/ws`);
+const ws = new WebSocket(`ws://localhost:${PORT}/ws?token=${token}`);
 await new Promise((resolve, reject) => {
   ws.on("open", resolve);
   ws.on("error", reject);

@@ -191,8 +191,8 @@ Every pipeline costs about $1 minimum, even for a one-line `--version` flag: 10 
 
 Work top to bottom. The first five are security holes someone could exploit today.
 
-- [ ] **Lock the approval server.** Bind to `127.0.0.1`, reject any WebSocket whose `Origin` isn't the UI's own, and require a random per-run token printed in the URL.
-- [ ] **Replay pending approvals on connect** so a reloaded tab still shows its Approve buttons.
+- [x] **Lock the approval server.** *(agent-loop: fixed, covered by `npm run test:server`)* Bind to `127.0.0.1`, reject any WebSocket whose `Origin` isn't the UI's own, and require a random per-run token printed in the URL.
+- [x] **Replay pending approvals on connect** *(agent-loop: fixed, covered by `npm run test:server`)* so a reloaded tab still shows its Approve buttons.
 - [ ] **Actually restrict tools.** Use the SDK `tools` option per phase (not `allowedTools`), limit Read/Write/Edit to `--dir` in the hook, and pass agents a minimal env, not `...process.env`.
 - [ ] **Move the audit DB out of the agents' workdir** (e.g. `~/.agent-loop/`).
 - [ ] **CI gate runs the base branch's scanner**, not the PR's. Ignore `.devskill-allowlist` changes made in the same diff. Use `pull_request_target` or check out base for the script.

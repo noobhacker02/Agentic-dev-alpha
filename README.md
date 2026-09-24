@@ -141,7 +141,10 @@ npm run build
 node dist/cli.js run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2]
 ```
 
-Open the printed URL to watch the run live and approve/reject tool calls as they happen. `--no-approval` skips
+Open the printed URL to watch the run live and approve/reject tool calls as they happen. Use the exact URL: it
+ends in `#token=…`, a per-run secret the page needs to connect. The server listens on `127.0.0.1` only and
+refuses WebSocket connections from any other website's page, so nothing but that tab can approve a tool call.
+Reloading the tab re-shows any approval still waiting. `--no-approval` skips
 the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
 unattended runs.
 
@@ -150,6 +153,7 @@ unattended runs.
 ```bash
 npm run build
 npm run test:plumbing          # no LLM calls — store/bus/server/WebSocket wiring only
+npm run test:server            # no LLM calls — approval server access control + approval replay
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided

@@ -39,6 +39,7 @@ console.log("== APPROVAL UI SERVER ==");
 const bus = new EventBus();
 const port = 4999;
 const srv = await startServer(bus, port);
+// Attackers below don't know the per-run token (it's only printed to the user's terminal).
 const lanIp = Object.values(os.networkInterfaces()).flat().find((n) => n.family === "IPv4" && !n.internal)?.address;
 
 // An attacker that auto-approves every request it sees.
@@ -67,7 +68,8 @@ for (const [label, host, origin] of targets) {
 // A tab opened or reloaded after the request was sent: does it see the pending approval?
 bus.requestApproval({ runId: "r", phase: "builder", toolUseId: "t", toolName: "Bash", toolInput: { command: "npm test" } });
 const seen = await new Promise((res) => {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  // The legitimate UI: right origin, right token.
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${srv.token}`, { headers: { Origin: `http://127.0.0.1:${port}` } });
   let got = false;
   ws.on("message", (m) => { if (JSON.parse(m).type === "approval-request") got = true; });
   ws.on("open", () => setTimeout(() => { ws.close(); res(got); }, 800));
