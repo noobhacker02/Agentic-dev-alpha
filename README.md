@@ -1,5 +1,7 @@
 # agent-loop
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A multi-agent dev-loop orchestrator built on the real [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk).
 A low-memory **Overseer** drives five specialized worker phases through a task, each phase its own isolated
 session, with every tool call streamed live to a browser UI where a human can approve or reject it in real time.
@@ -118,6 +120,19 @@ machine's directory layout.
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
 
+## Requirements
+
+- **Node.js 22.5+** — required for `node:sqlite` (used for the store, no native build step).
+- **git** — the test suite's skill-fetch (`test/resolve-skill-source.mjs`) and repo-seeding shell out to it;
+  `agent-loop run` itself doesn't require git unless a task's own steps use it.
+- **A working Claude Code CLI authentication.** `@anthropic-ai/claude-agent-sdk` bundles the actual `claude`
+  binary (`npm install` alone is enough — nothing extra to install), but that binary still needs to
+  authenticate: either an `ANTHROPIC_API_KEY` environment variable, or a machine already logged in via
+  `claude login`. **Honest caveat:** every real run behind this project's `STATUS.md` happened *inside* an
+  already-authenticated Claude Code session, which passes its own auth through automatically — running
+  `agent-loop` from a genuinely clean terminal with only a bare `ANTHROPIC_API_KEY` set has not been
+  independently verified here, even though it's how the SDK is documented to work.
+
 ## Usage
 
 ```bash
@@ -148,3 +163,13 @@ reading the code isn't evidence something works.
 See `STATUS.md` for the current, evidence-based state: what's been actually run and independently verified vs.
 what's still untested. Nothing here is claimed to work from reading the code — every claim has a run ID, a
 command, or a file behind it.
+
+## Related projects
+
+[**dev-workflow**](https://github.com/noobhacker02/Dev-Skill) is the general-purpose spec-first development
+skill this project exists to test and improve — see [Consuming an external
+skill](#consuming-an-external-skill-without-coupling-to-it) above for how the two stay independently versioned.
+
+## License
+
+[MIT](LICENSE)

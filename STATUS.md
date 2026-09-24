@@ -137,6 +137,13 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
 
 ## What's not yet verified
 
+- **Standalone auth outside an existing Claude Code session.** `@anthropic-ai/claude-agent-sdk` bundles the
+  real `claude` binary (confirmed: `node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude`), so
+  `npm install` alone is enough — no separate global install needed. But every real run behind every claim in
+  this file ran *inside* an already-authenticated Claude Code session, whose own auth env (a long chain of
+  `CLAUDE_CODE_*`/session-proxy variables, not a plain `ANTHROPIC_API_KEY`) gets passed through automatically
+  via `env: {...process.env}`. Running `agent-loop` from a genuinely clean terminal with only
+  `ANTHROPIC_API_KEY` set — the documented, intended standalone path — has never actually been exercised here.
 - **Retry behavior** — three real runs now (two trivial smoke tasks, one real non-trivial feature with the
   full default retry budget available) and none has ever needed a retry; every phase has succeeded on attempt
   1 every time. `pipeline.ts`'s retry loop is implemented and typechecked but genuinely unexercised — this is

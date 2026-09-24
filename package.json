@@ -4,6 +4,7 @@
   "description": "Multi-agent dev-loop orchestrator: an Overseer plus five specialized worker phases (Planner, Test-Designer, Builder, Verifier, Gatekeeper) built on the Claude Agent SDK, with an indexed changelog store and a live approval UI.",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "engines": {
     "node": ">=22.5.0"
   },
