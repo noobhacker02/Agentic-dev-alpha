@@ -130,8 +130,10 @@ const d1 = await req1.wait;
 assert.deepStrictEqual([d1.decision, d1.remember], ["allow", true], "pressing 2 approves and asks to remember");
 bus.addAllowRule("Bash(npm test:*)");
 bus.emitEvent({ type: "approval-resolved", runId, phase: "builder", requestId: req1.requestId, toolUseId: "t2", decision: "allow", auto: false, rememberedRule: "Bash(npm test:*)", ts: ts() });
+// The prompt disappears the moment the key is pressed; the rule arrives with the server's
+// approval-resolved event a moment later, so wait for the rule itself, not just the input box.
 await page.waitForSelector("#decision-input");
-assert.ok((await page.locator("#rules").innerText()).includes("Bash(npm test:*)"), "the side panel lists saved rules");
+await page.waitForFunction(() => document.getElementById("rules").innerText.includes("Bash(npm test:*)"), undefined, { timeout: 5000 });
 console.log("[ok] prompt pinned at the bottom; key 2 = approve + don't ask again; rule shows in the side panel");
 
 // --- reject with feedback
