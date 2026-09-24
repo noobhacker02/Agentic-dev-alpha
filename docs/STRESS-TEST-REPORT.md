@@ -56,7 +56,7 @@ The safety scanner (`check_staged.py`) did the right thing in **22 of 68** stage
 | AWS **secret** access key (40 chars) | allowed | only the key ID (`AKIA…`) is covered |
 | `-----BEGIN ENCRYPTED PRIVATE KEY-----` | allowed | regex has no `ENCRYPTED` variant |
 | Slack webhook URL, JWT | allowed | no rule |
-| `postgres://admin:S3cr3t@db.prod…` | allowed | no connection-string rule |
+| a `postgres://` URL with an inline password | allowed | no connection-string rule |
 | `password = "Xk9…"  # see example.com` | allowed | the word "example" anywhere on the line skips the check |
 | `{"password": "Xk9…", "host": "${HOST}"}` | allowed | `${` anywhere on the line skips the check |
 | YAML `password: Xk9…` (unquoted) | allowed | regex requires quotes |
@@ -226,6 +226,6 @@ bash test/stress/real_runs.sh                                   # 4 real pipelin
 node test/stress/ab_skill.mjs <skill|skill-explicit|noskill> <roman|migration>   # with/without Dev-Skill (~$0.10–0.35 each)
 ```
 
-Attack payloads (fake keys, destructive commands) are stored base64-encoded in `cases.json`, so the scripts
+Attack payloads (fake keys, destructive commands) are stored encoded (Dev-Skill `cases.json`: XOR + base64; agent-loop `safety_cases.json`: base64, commands only), so the scripts
 don't trip the scanner they test. Every "FAIL" line in the output is a hole; after a fix, it should flip to
 "PASS".
