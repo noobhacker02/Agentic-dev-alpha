@@ -104,6 +104,17 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "decision" && msg.requestId && (msg.decision === "allow" || msg.decision === "deny")) {
           bus.resolveApproval(msg.requestId, { decision: msg.decision, reason: msg.reason });
+        } else if (
+          msg.type === "record-decision" &&
+          typeof msg.runId === "string" &&
+          typeof msg.phase === "string" &&
+          typeof msg.text === "string" &&
+          msg.text.trim()
+        ) {
+          // The only path that can add a trusted decision -- this handler runs only for a
+          // connection that already passed verifyClient's host/origin/token checks above, so it's
+          // reachable only by the human at this machine's own approval UI, never by a worker phase.
+          bus.recordDecision(msg.runId, msg.phase, msg.text.trim().slice(0, 2000));
         }
       } catch {
         // ignore malformed client messages
@@ -124,6 +135,10 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
 
   return new Promise<{ url: string; token: string; close: () => Promise<void> }>((resolve, reject) => {
     server.on("error", reject);
+    // `ws` re-emits the underlying http.Server's listen failure on the WebSocketServer instance
+    // too; with no listener there, Node treats it as an unhandled 'error' event and crashes the
+    // process instead of letting this promise reject cleanly.
+    wss.on("error", reject);
     server.listen(port, HOST, () => {
       resolve({
         // The token rides in the fragment so the browser never sends it in a request line,

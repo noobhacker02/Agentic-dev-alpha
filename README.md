@@ -28,17 +28,23 @@ projects are independently versioned by design, one general-purpose, one agentic
         └────┬─────┴──────┬───────┴──────┬───────┴─────┬─────┘              │
              ▼                                          each phase ends in a
       short structured verdict                          fenced ```json verdict
-      {success, headline, details, concerns}            block — never a raw transcript
+      {completed, outcome, headline,                    block — never a raw transcript
+       details, concerns, blockingFindings}
              │
              ▼
    ┌───────────────────────────────────────────────────┐
    │                      Overseer                      │  reads only:
    │  reasons over the verdict + prior phase summaries  │   • this phase's verdict
-   │  + DECISIONS.md (if one exists) — never a full      │   • prior phases' short summaries (SQLite)
-   │  transcript — and returns one of:                  │   • DECISIONS.md, if present — treated as settled
+   │  + DECISIONS.md (informal) + trusted decisions      │   • prior phases' short summaries (SQLite)
+   │  (human-approved via the UI) — never a full         │   • DECISIONS.md — informal context, not settled
+   │  transcript — and returns one of:                  │   • trusted decisions — the only ones treated as settled
    └──────────────┬──────────────────┬───────────────────┘
-            continue            retry (same phase,          stop
-                                 feedback attached)
+            continue             repair (a specific        stop
+      (only if outcome           phase — same one or
+        is "pass"; pipeline      an earlier one — with
+        code enforces this       feedback attached),
+        regardless of what       bounded by a total
+        the Overseer says)       repair budget
 ```
 
 Every tool call any phase makes, meanwhile, goes through one more gate before it runs:

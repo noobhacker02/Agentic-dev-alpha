@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import type { PhaseName, PhaseRecord, PhaseVerdict, RunRecord } from "./types.js";
+import type { PhaseName, PhaseRecord, PhaseVerdict, RunRecord, TrustedDecision } from "./types.js";
 
 /**
  * The whole point of this store: the Overseer and a human can both look up
@@ -56,6 +56,17 @@ export class Store {
         kind UNINDEXED,
         content
       );
+
+      -- Controller-owned record of decisions a human actually approved through the approval UI.
+      -- Never written to by a worker phase (they can only propose, via DECISIONS.md) -- this is
+      -- what the Overseer is allowed to treat as settled. See docs/STRESS-TEST-REPORT.md's finding
+      -- on a worker being able to write "pre-approved by the user" into a file and have it believed.
+      CREATE TABLE IF NOT EXISTS trusted_decisions (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        recorded_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -105,13 +116,30 @@ export class Store {
         "UPDATE phases SET status = ?, finished_at = ?, summary = ?, verdict_json = ? WHERE id = ?"
       )
       .run(
-        verdict.success ? "ok" : "failed",
+        verdict.outcome === "pass" ? "ok" : "failed",
         new Date().toISOString(),
         verdict.headline,
         JSON.stringify(verdict),
         phaseId
       );
     this.indexLog(phaseId, "phase-verdict", `${verdict.headline}\n${verdict.details}`);
+  }
+
+  /** Record a decision a human actually approved. Only call this from the controller-mediated
+   * approval path (server.ts's WS handler) -- never from anything a worker phase can trigger. */
+  recordTrustedDecision(runId: string, text: string): TrustedDecision {
+    const decision: TrustedDecision = { id: randomUUID(), runId, text, recordedAt: new Date().toISOString() };
+    this.db
+      .prepare("INSERT INTO trusted_decisions (id, run_id, text, recorded_at) VALUES (?, ?, ?, ?)")
+      .run(decision.id, decision.runId, decision.text, decision.recordedAt);
+    return decision;
+  }
+
+  getTrustedDecisions(runId: string): TrustedDecision[] {
+    const rows = this.db
+      .prepare("SELECT id, run_id as runId, text, recorded_at as recordedAt FROM trusted_decisions WHERE run_id = ? ORDER BY recorded_at ASC")
+      .all(runId) as unknown as TrustedDecision[];
+    return rows;
   }
 
   /** Short indexed summaries only — this is what the Overseer reads, never full transcripts. */

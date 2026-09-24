@@ -5,6 +5,12 @@ import { Store } from "./store.js";
 import { startServer } from "./server.js";
 import { runPipeline } from "./pipeline.js";
 import { resolveDataDir } from "./data-dir.js";
+import { PHASES } from "./types.js";
+
+// Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
+// as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
+// must never consume the next token just because that token doesn't start with "--".
+const BOOLEAN_FLAGS = new Set(["no-approval"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -13,7 +19,7 @@ function parseArgs(argv: string[]) {
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) {
+      if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith("--")) {
         args[key] = true;
       } else {
         args[key] = next;
@@ -26,6 +32,23 @@ function parseArgs(argv: string[]) {
   return args;
 }
 
+/** A finite, non-negative integer, or the CLI exits with a clear error rather than silently
+ * producing NaN (found by pipeline_logic.sh case B: `--max-retries abc` made every retry-budget
+ * comparison `x > NaN`, which is always false, so the pipeline could never stop retrying). */
+function parseNonNegativeInt(raw: string | boolean | undefined, flagName: string, fallback: number): number {
+  if (raw === undefined) return fallback;
+  if (typeof raw === "boolean") {
+    console.error(`Error: --${flagName} requires a numeric value.`);
+    process.exit(1);
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`Error: --${flagName} must be a non-negative integer, got "${raw}".`);
+    process.exit(1);
+  }
+  return n;
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
@@ -34,12 +57,14 @@ async function main() {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
-  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--data-dir <path>]
+  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
   --no-approval    Skip the human-approval UI; only the built-in safety-pattern hook applies
-  --max-retries    Max Overseer-triggered retries per phase before forcing a stop (default: 2)
+  --max-retries    Max same-phase retries before the pipeline gives up on that phase (default: 2)
+  --max-repairs    Max total repairs across the whole run, including ones routed to an earlier
+                   phase (default: 4x the phase count) — bounds builder<->verifier repair loops
   --data-dir       Where the audit database lives (default: ~/.agent-loop, or $AGENT_LOOP_HOME) —
                    always outside --dir, since the agents have Write/Edit/Bash access there
 `);
@@ -59,14 +84,27 @@ Usage:
   const dataDir = resolveDataDir(workDir, dataDirOverride);
   mkdirSync(dataDir, { recursive: true });
 
-  const port = Number(args.port ?? 4173);
+  const port = parseNonNegativeInt(args.port, "port", 4173);
   const requireApproval = !args["no-approval"];
-  const maxRetriesPerPhase = Number(args["max-retries"] ?? 2);
+  const maxRetriesPerPhase = parseNonNegativeInt(args["max-retries"], "max-retries", 2);
+  const maxTotalRepairs = parseNonNegativeInt(args["max-repairs"], "max-repairs", PHASES.length * 4);
 
   const store = new Store(join(dataDir, "agent-loop.db"));
   const bus = new EventBus(store);
 
-  const { url, close } = await startServer(bus, port);
+  let url: string, close: () => Promise<void>;
+  try {
+    ({ url, close } = await startServer(bus, port));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      msg.includes("EADDRINUSE")
+        ? `Error: port ${port} is already in use. Pick another with --port <number>.`
+        : `Error: failed to start the UI server: ${msg}`
+    );
+    store.close();
+    process.exit(1);
+  }
   console.log(`agent-loop UI: ${url}`);
   console.log("  (open this exact URL: the #token part is what lets the page approve tool calls)");
   console.log(`Working directory: ${workDir}`);
@@ -74,7 +112,11 @@ Usage:
   console.log(`Approval UI: ${requireApproval ? "ON — every non-read tool call waits for you" : "OFF"}`);
   console.log(`Task: ${task}\n`);
 
-  const run = await runPipeline({ task, workDir, requireApproval, maxRetriesPerPhase, uiPort: port }, bus, store);
+  const run = await runPipeline(
+    { task, workDir, requireApproval, maxRetriesPerPhase, maxTotalRepairs, uiPort: port },
+    bus,
+    store
+  );
 
   console.log(`\nRun ${run.id} finished with status: ${run.status}`);
   store.close();

@@ -34,6 +34,15 @@
   .card.approval { border-left: 3px solid #e3b341; background: #201a08; }
   .card.overseer { border-left: 3px solid #a371f7; }
   .card.decisions-log { border-left: 3px solid #f778ba; background: #1a0d15; }
+  .card.trusted-decision { border-left: 3px solid #3fb950; background: #0d1f13; }
+  #decision-form {
+    padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d;
+    display: flex; gap: 8px;
+  }
+  #decision-input {
+    flex: 1; font-family: inherit; font-size: 12px; padding: 5px 8px; border-radius: 4px;
+    border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
+  }
   .card.text { border-left: 3px solid #388bfd33; }
   .card.thinking { border-left: 3px solid #8b949e55; color: #8b949e; font-style: italic; }
   pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
@@ -53,6 +62,10 @@
   <span id="status">connecting…</span>
 </header>
 <div id="pending-banner"></div>
+<form id="decision-form" title="This is the only kind of decision the Overseer treats as settled — a worker writing to DECISIONS.md is just a proposal.">
+  <input id="decision-input" type="text" placeholder="Record a decision the Overseer should treat as settled…" />
+  <button type="submit">Record</button>
+</form>
 <main id="timeline"></main>
 <script>
 const timeline = document.getElementById("timeline");
@@ -92,6 +105,9 @@ const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 // requestId -> approval card, so a request replayed on reconnect isn't shown twice and a request
 // resolved from another tab has its buttons disabled here too.
 const approvalCards = new Map();
+let activeWs = null;
+let currentRunId = null;
+let currentPhase = null;
 
 function connect() {
   if (!token) {
@@ -99,9 +115,13 @@ function connect() {
     return;
   }
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?token=" + encodeURIComponent(token));
-  ws.onopen = () => (statusEl.textContent = "live");
+  ws.onopen = () => {
+    statusEl.textContent = "live";
+    activeWs = ws;
+  };
   ws.onclose = () => {
     statusEl.textContent = "disconnected — retrying…";
+    if (activeWs === ws) activeWs = null;
     setTimeout(connect, 1500);
   };
   ws.onmessage = (msg) => {
@@ -123,12 +143,13 @@ function render(ev, ws) {
       card("phase-start", meta(when + " · " + ev.phase + " · attempt " + ev.attempt) + "<b>Phase started</b>");
       break;
     case "phase-end": {
-      const ok = ev.verdict.success;
+      const ok = ev.verdict.outcome === "pass";
       card(
         "phase-end " + (ok ? "ok" : "fail"),
-        meta(when + " · " + ev.phase + " · attempt " + ev.attempt) +
+        meta(when + " · " + ev.phase + " · attempt " + ev.attempt + " · outcome: " + ev.verdict.outcome) +
           "<b>" + (ok ? "✓ " : "✗ ") + esc(ev.verdict.headline) + "</b>" +
           "<pre>" + esc(ev.verdict.details) + "</pre>" +
+          (ev.verdict.blockingFindings?.length ? "<pre>blocking:\n- " + ev.verdict.blockingFindings.map(esc).join("\n- ") + "</pre>" : "") +
           (ev.verdict.concerns.length ? "<pre>concerns:\n- " + ev.verdict.concerns.map(esc).join("\n- ") + "</pre>" : "")
       );
       break;
@@ -137,8 +158,10 @@ function render(ev, ws) {
       card(
         "overseer",
         meta(when + " · overseer · after " + ev.phase) +
-          "<b>" + esc(ev.decision.action.toUpperCase()) + "</b> — " + esc(ev.decision.reasoning) +
-          (ev.decision.feedbackForRetry ? "<pre>feedback: " + esc(ev.decision.feedbackForRetry) + "</pre>" : "")
+          "<b>" + esc(ev.decision.action.toUpperCase()) + "</b>" +
+          (ev.decision.repairTarget ? " → " + esc(ev.decision.repairTarget) : "") +
+          " — " + esc(ev.decision.reasoning) +
+          (ev.decision.feedbackForRepair ? "<pre>feedback: " + esc(ev.decision.feedbackForRepair) + "</pre>" : "")
       );
       break;
     case "assistant-text":
@@ -197,14 +220,37 @@ function render(ev, ws) {
     case "decisions-log-updated":
       card(
         "decisions-log",
-        meta(when + " · DECISIONS.md updated — the Overseer reads this, not just this phase's own memory") +
+        meta(when + " · DECISIONS.md updated (worker-written proposal — not settled until you record it below)") +
           "<pre>" + esc(ev.content) + "</pre>"
       );
       break;
+    case "trusted-decision-recorded":
+      card(
+        "trusted-decision",
+        meta(when + " · " + ev.phase + " · decision recorded — the Overseer now treats this as settled") +
+          "<pre>" + esc(ev.text) + "</pre>"
+      );
+      break;
   }
+  if (ev.runId) currentRunId = ev.runId;
+  if (ev.phase) currentPhase = ev.phase;
 }
 
 connect();
+
+// A human-recorded decision is the only kind the Overseer treats as settled (see overseer.ts) --
+// unlike DECISIONS.md, which any worker phase can write to as an unverified proposal. This form
+// sends it straight over the already-authenticated WebSocket, so it's reachable only from this
+// page (same host/origin/token checks as every approval).
+const decisionForm = document.getElementById("decision-form");
+const decisionInput = document.getElementById("decision-input");
+decisionForm.onsubmit = (e) => {
+  e.preventDefault();
+  const text = decisionInput.value.trim();
+  if (!text || !activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+  activeWs.send(JSON.stringify({ type: "record-decision", runId: currentRunId, phase: currentPhase || "planner", text }));
+  decisionInput.value = "";
+};
 </script>
 </body>
 </html>

@@ -18,7 +18,14 @@ const run = store.createRun("smoke test task", dir);
 assert.ok(run.id, "run should have an id");
 
 const phase = store.startPhase(run.id, "planner", 1);
-store.finishPhase(phase.id, { success: true, headline: "did the thing", details: "details here", concerns: [] });
+store.finishPhase(phase.id, {
+  completed: true,
+  outcome: "pass",
+  headline: "did the thing",
+  details: "details here",
+  concerns: [],
+  blockingFindings: [],
+});
 
 const summaries = store.getPhaseSummaries(run.id);
 assert.strictEqual(summaries.length, 1);
@@ -77,6 +84,23 @@ ws.send(JSON.stringify({ type: "decision", requestId, decision: "allow" }));
 const decision = await wait;
 assert.strictEqual(decision.decision, "allow");
 console.log("[ok] WS->server->bus: human decision resolves the pending hook promise (full round trip)");
+
+// A human recording a decision through the UI's WS connection is the ONLY way to add a trusted
+// decision -- a worker phase writing to DECISIONS.md never reaches this path. See overseer.ts's
+// distinction between DECISIONS.md (informal, worker-writable) and trusted decisions (this).
+{
+  const before = received.length;
+  ws.send(JSON.stringify({ type: "record-decision", runId: run.id, phase: "planner", text: "Use SQLite, not Postgres." }));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(
+    received.slice(before).some((e) => e.type === "trusted-decision-recorded" && e.text === "Use SQLite, not Postgres."),
+    "recording a decision over WS should broadcast a trusted-decision-recorded event"
+  );
+  const stored = store.getTrustedDecisions(run.id);
+  assert.strictEqual(stored.length, 1);
+  assert.strictEqual(stored[0].text, "Use SQLite, not Postgres.");
+  console.log("[ok] WS->server->bus->store: recording a decision persists it as a trusted decision");
+}
 
 ws.close();
 await close();

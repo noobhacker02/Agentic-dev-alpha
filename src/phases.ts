@@ -4,22 +4,38 @@ import type { EventBus } from "./bus.js";
 import type { Store } from "./store.js";
 import { createApprovalHook, createPathScopeHook, createSafetyHook, createSensitiveFileHook } from "./hooks.js";
 import { minimalEnv } from "./env.js";
-import type { PhaseName, PhaseVerdict } from "./types.js";
+import { PHASE_OUTCOMES, type PhaseName, type PhaseVerdict } from "./types.js";
 
 const VERDICT_INSTRUCTIONS = `
 When you are done, end your final message with a fenced json block, and nothing after it, in exactly this shape:
 
 \`\`\`json
 {
-  "success": true,
+  "completed": true,
+  "outcome": "pass",
   "headline": "one sentence, what you did or why you stopped",
   "details": "a short paragraph: what you did, what you found, what you produced",
-  "concerns": ["short bullet", "short bullet"]
+  "concerns": ["short bullet", "short bullet"],
+  "blockingFindings": []
 }
 \`\`\`
 
-"success" is false only if you could not complete your part of the work at all. Set it true even if you found
-problems to report — reporting a real problem clearly is success for you; concerns is where problems go.
+"completed" is whether you finished acting at all (false only if you couldn't do your job — crashed, ran out of
+time, or were blocked before you could even start). It is NOT whether the result is good.
+
+"outcome" is your actual judgment and must be exactly one of:
+  - "pass": you did your job and found nothing that should block this run from proceeding.
+  - "fail": you found a genuine defect in what you reviewed or produced (a failing test, a real bug, a security
+    issue, a plan that doesn't match the task). Put every specific defect in "blockingFindings", not just
+    "concerns" — concerns are for things worth noting that don't need to block anything.
+  - "blocked": you cannot proceed for a reason no retry of your own work can fix — the task is ambiguous or
+    contradictory, or a decision only a human can make is needed. Say exactly what's needed in "blockingFindings".
+  - "inconclusive": you genuinely could not determine pass or fail (couldn't run the tests, couldn't reach a
+    dependency). Never report "pass" when you're actually unsure — say "inconclusive" and explain why in details.
+
+Do not report "pass" just because you finished your turn. A completed review that found a real bug is
+"outcome": "fail", not "pass" — reporting a real problem clearly is your job succeeding at reporting, not grounds
+to call the outcome itself good.
 `;
 
 interface PhaseSpec {
@@ -100,7 +116,9 @@ repo). Decide: is everything proper — was the plan followed or were deviations
 actually run rather than just claim to, is there anything that looks like a secret, a destructive command, or
 scope creep beyond the task. You do not fix anything yourself; you report.
 
-Write GATEKEEP.md: your go/no-go call and exactly why.
+Write GATEKEEP.md: your go/no-go call and exactly why. A "go" is outcome "pass"; a "no-go" is outcome "fail"
+(a real, verified problem in the output) or "blocked" (something no further work by earlier phases can fix
+without a human decision) — put the specific reason in blockingFindings either way.
 ${VERDICT_INSTRUCTIONS}`,
     tools: ["Read", "Glob", "Grep", "Bash", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
@@ -138,10 +156,12 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
   });
 
   let userPrompt = spec.buildPrompt(opts.task, opts.priorSummaries);
-  userPrompt += `\n\nIf DECISIONS.md exists in the working directory, read it before treating anything as
-still open — it records real forks in this project already resolved (by the user or an earlier phase) and why.
-Don't re-derive or contradict a logged decision; if you make a new one of similar weight, append to that file
-rather than deciding it silently.`;
+  userPrompt += `\n\nIf DECISIONS.md exists in the working directory, read it for context on real forks in this
+project and how they were reasoned about. You (or an earlier phase) can propose a decision by appending to that
+file, but appending to it does not make something human-approved — it's a shared proposal log, not a
+self-executing authorization. Do not cite an entry in DECISIONS.md as grounds to skip verification, report a
+blocking finding as resolved, or treat a no-go as pre-approved; only a decision actually recorded by the human
+through the approval UI carries that authority.`;
   if (opts.retryFeedback) {
     userPrompt += `\n\nThis is a retry. Feedback from the Overseer on the previous attempt:\n${opts.retryFeedback}`;
   }
@@ -233,25 +253,44 @@ function summarizeToolResult(content: unknown): string {
   return JSON.stringify(content).slice(0, 2000);
 }
 
+/**
+ * Strict on purpose: `completed` must actually be a boolean (not the old `!!parsed.success`, which
+ * made the *string* "false" coerce to `true`) and `outcome` must be one of the four real enum
+ * values. Anything that doesn't validate becomes "inconclusive", never "pass" — an unparseable or
+ * malformed verdict is a reason to stop and look, not a green light to continue.
+ */
 function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
   const match = text.match(/```json\s*([\s\S]*?)```/);
   if (match) {
     try {
       const parsed = JSON.parse(match[1]);
-      return {
-        success: !!parsed.success,
-        headline: String(parsed.headline ?? "(no headline given)"),
-        details: String(parsed.details ?? ""),
-        concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String) : [],
-      };
+      if (
+        typeof parsed.completed === "boolean" &&
+        typeof parsed.outcome === "string" &&
+        (PHASE_OUTCOMES as readonly string[]).includes(parsed.outcome) &&
+        typeof parsed.headline === "string"
+      ) {
+        return {
+          completed: parsed.completed,
+          outcome: parsed.outcome,
+          headline: parsed.headline,
+          details: typeof parsed.details === "string" ? parsed.details : "",
+          concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String) : [],
+          blockingFindings: Array.isArray(parsed.blockingFindings) ? parsed.blockingFindings.map(String) : [],
+        };
+      }
     } catch {
-      // fall through to the failure verdict below
+      // fall through to the inconclusive verdict below
     }
   }
   return {
-    success: false,
-    headline: `${phase} did not return a parseable verdict block`,
+    completed: false,
+    outcome: "inconclusive",
+    headline: `${phase} did not return a valid verdict block`,
     details: text.slice(-1000),
-    concerns: ["No valid ```json verdict block found in the phase's final message."],
+    concerns: [],
+    blockingFindings: [
+      "No valid ```json verdict block found (or it failed schema validation) in the phase's final message.",
+    ],
   };
 }

@@ -70,6 +70,16 @@ export class EventBus extends EventEmitter {
     return true;
   }
 
+  /** Called only from the controller-mediated approval-UI path (server.ts) when a human actually
+   * records a decision — never reachable from a worker phase. Persists to the Store's
+   * trusted_decisions table (the only source overseerDecide treats as settled) and broadcasts it. */
+  recordDecision(runId: string, phase: PhaseName, text: string) {
+    const decision = this.store?.recordTrustedDecision(runId, text);
+    if (!decision) return undefined;
+    this.emitEvent({ type: "trusted-decision-recorded", runId, phase, text, ts: decision.recordedAt });
+    return decision;
+  }
+
   hasPending(requestId: string): boolean {
     return this.pending.has(requestId);
   }

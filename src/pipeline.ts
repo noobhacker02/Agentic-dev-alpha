@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { PHASES } from "./types.js";
-import type { PipelineConfig, RunRecord } from "./types.js";
+import type { OverseerDecision, PhaseName, PhaseVerdict, PipelineConfig, RunRecord } from "./types.js";
 import type { EventBus } from "./bus.js";
 import { Store } from "./store.js";
 import { runPhase } from "./phases.js";
@@ -24,18 +24,33 @@ function readDecisionsLog(workDir: string): string | undefined {
   }
 }
 
+/**
+ * A repair can only target the phase that just ran or an earlier one -- never forward. This is the
+ * hard boundary overseerDecide's own validation already enforces on the LLM's output; pipeline code
+ * enforces it again here independent of that, since this is the actual authority, not a suggestion.
+ */
+function isValidRepairTarget(from: PhaseName, target: PhaseName): boolean {
+  return PHASES.indexOf(target) >= 0 && PHASES.indexOf(target) <= PHASES.indexOf(from);
+}
+
 export async function runPipeline(config: PipelineConfig, bus: EventBus, store: Store): Promise<RunRecord> {
   const run = store.createRun(config.task, config.workDir);
   bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, ts: new Date().toISOString() });
 
   let finalStatus: RunRecord["status"] = "done";
   let lastSeenDecisionsLog: string | undefined;
+  let totalRepairs = 0;
+  const attemptCounts: Partial<Record<PhaseName, number>> = {};
 
-  outer: for (const phase of PHASES) {
-    let attempt = 1;
+  try {
+    let phaseIdx = 0;
     let retryFeedback: string | undefined;
 
-    while (true) {
+    while (phaseIdx < PHASES.length) {
+      const phase = PHASES[phaseIdx];
+      const attempt = (attemptCounts[phase] ?? 0) + 1;
+      attemptCounts[phase] = attempt;
+
       bus.emitEvent({ type: "phase-start", runId: run.id, phase, attempt, ts: new Date().toISOString() });
       const record = store.startPhase(run.id, phase, attempt);
 
@@ -44,7 +59,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
         .map((s) => `- ${s.name} (attempt ${s.attempt}, ${s.status}): ${s.summary ?? "(no summary)"}`)
         .join("\n");
 
-      let verdict;
+      let verdict: PhaseVerdict;
       try {
         verdict = await runPhase({
           runId: run.id,
@@ -60,10 +75,12 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
         });
       } catch (err) {
         verdict = {
-          success: false,
+          completed: false,
+          outcome: "inconclusive",
           headline: `${phase} threw an unhandled error`,
           details: err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
-          concerns: ["Phase execution raised an exception rather than reporting a verdict."],
+          concerns: [],
+          blockingFindings: ["Phase execution raised an exception rather than reporting a verdict."],
         };
       }
 
@@ -77,36 +94,109 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
         bus.emitEvent({ type: "decisions-log-updated", runId: run.id, content: decisionsLog, ts: new Date().toISOString() });
       }
 
-      const decision = await overseerDecide({
-        task: config.task,
-        phase,
-        attempt,
-        maxRetries: config.maxRetriesPerPhase,
-        verdict,
-        priorSummaries: store.getPhaseSummaries(run.id),
-        decisionsLog,
-      });
+      let decision: OverseerDecision;
+      try {
+        decision = await overseerDecide({
+          task: config.task,
+          phase,
+          attempt,
+          maxRetries: config.maxRetriesPerPhase,
+          verdict,
+          priorSummaries: store.getPhaseSummaries(run.id),
+          decisionsLog,
+          trustedDecisions: store.getTrustedDecisions(run.id),
+        });
+      } catch (err) {
+        // An Overseer API failure must not leave the run stuck "running" forever in the DB (found
+        // by test/stress/pipeline_logic.sh case C) -- treat it as a terminal failure of this run,
+        // not an exception that skips store.finishRun entirely.
+        finalStatus = "failed";
+        bus.emitEvent({
+          type: "overseer-decision",
+          runId: run.id,
+          phase,
+          decision: {
+            action: "stop",
+            reasoning: `Overseer call raised an exception: ${err instanceof Error ? err.message : String(err)}`,
+          },
+          ts: new Date().toISOString(),
+        });
+        break;
+      }
+
+      // Pipeline code has final say, not the Overseer's own text: a non-"pass" outcome can never be
+      // continued past, regardless of what action the Overseer returned (found by pipeline_logic.sh
+      // case A, where a gatekeeper no-go was waved through because the Overseer said "continue").
+      if (decision.action === "continue" && verdict.outcome !== "pass") {
+        decision = {
+          action: "repair",
+          repairTarget: phase,
+          reasoning: `${decision.reasoning} (overridden: pipeline requires outcome "pass" to continue past a phase; got "${verdict.outcome}")`,
+        };
+      }
+
       bus.emitEvent({ type: "overseer-decision", runId: run.id, phase, decision, ts: new Date().toISOString() });
 
       if (decision.action === "continue") {
-        continue outer;
+        phaseIdx += 1;
+        retryFeedback = undefined;
+        continue;
       }
       if (decision.action === "stop") {
-        finalStatus = "stopped";
-        break outer;
+        // "stopped" is a clean halt (e.g. the Overseer judged the task itself ambiguous while the
+        // phase still passed); anything ending on a non-pass outcome is a "failed" run, not a
+        // neutral stop, even when the Overseer's own reasoning used the word "stop".
+        finalStatus = verdict.outcome === "pass" ? "stopped" : "failed";
+        break;
       }
 
-      // retry: same phase again, one attempt higher, carrying the Overseer's feedback
-      attempt += 1;
-      retryFeedback = decision.feedbackForRetry;
-      if (attempt > config.maxRetriesPerPhase + 1) {
+      // repair: route to the named phase (same phase or an earlier one), bounded by a total budget
+      // across the whole run so e.g. a builder<->verifier ping-pong can't run forever even though
+      // neither phase alone ever exceeds its own per-phase retry limit.
+      totalRepairs += 1;
+      if (totalRepairs > config.maxTotalRepairs) {
         finalStatus = "failed";
-        break outer;
+        bus.emitEvent({
+          type: "overseer-decision",
+          runId: run.id,
+          phase,
+          decision: { action: "stop", reasoning: `Total repair budget (${config.maxTotalRepairs}) exhausted for this run.` },
+          ts: new Date().toISOString(),
+        });
+        break;
       }
+
+      const target = decision.repairTarget && isValidRepairTarget(phase, decision.repairTarget) ? decision.repairTarget : phase;
+      if (target === phase && attempt > config.maxRetriesPerPhase) {
+        finalStatus = "failed";
+        bus.emitEvent({
+          type: "overseer-decision",
+          runId: run.id,
+          phase,
+          decision: { action: "stop", reasoning: `Per-phase retry budget (${config.maxRetriesPerPhase}) exhausted for ${phase}.` },
+          ts: new Date().toISOString(),
+        });
+        break;
+      }
+
+      retryFeedback = decision.feedbackForRepair ?? decision.reasoning;
+      phaseIdx = PHASES.indexOf(target);
     }
+  } catch (err) {
+    // Anything else unexpected (a bug in the loop itself, a Store I/O error) still leaves a
+    // terminal record rather than an unhandled rejection with the run stuck "running".
+    finalStatus = "failed";
+    bus.emitEvent({
+      type: "overseer-decision",
+      runId: run.id,
+      phase: PHASES[0],
+      decision: { action: "stop", reasoning: `Pipeline raised an unexpected error: ${err instanceof Error ? err.message : String(err)}` },
+      ts: new Date().toISOString(),
+    });
+  } finally {
+    store.finishRun(run.id, finalStatus);
+    bus.emitEvent({ type: "run-end", runId: run.id, status: finalStatus, ts: new Date().toISOString() });
   }
 
-  store.finishRun(run.id, finalStatus);
-  bus.emitEvent({ type: "run-end", runId: run.id, status: finalStatus, ts: new Date().toISOString() });
   return { ...run, status: finalStatus };
 }

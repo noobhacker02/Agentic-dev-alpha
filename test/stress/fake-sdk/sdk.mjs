@@ -11,8 +11,13 @@ export function query({ prompt, options }) {
   const phase = (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
   let text;
   if (isOverseer) {
+    // The phase the Overseer is being asked to judge -- parsed from its own prompt (overseer.ts
+    // always includes "The phase that just finished: <name>"), not from systemPrompt, which is the
+    // fixed OVERSEER_SYSTEM_PROMPT and doesn't name a phase.
+    const targetPhase = (prompt.match(/The phase that just finished: ([a-z-]+)/) || [])[1];
     if (sc === "overseer-throws") throw new Error("API 529 overloaded");
-    if (sc === "always-retry") text = '```json\n{"action":"retry","reasoning":"try again","feedbackForRetry":"fix it"}\n```';
+    if (sc === "always-retry")
+      text = `\`\`\`json\n{"action":"repair","repairTarget":"${targetPhase}","reasoning":"try again","feedbackForRepair":"fix it"}\n\`\`\``;
     else if (sc === "garbage-overseer") text = "I think it's fine!";
     else text = '```json\n{"action":"continue","reasoning":"looks settled per DECISIONS.md"}\n```';
   } else {
@@ -21,10 +26,12 @@ export function query({ prompt, options }) {
     }
     const fail = sc === "always-retry" || sc === "garbage-overseer" || phase === "gatekeeper";
     text = "done\n```json\n" + JSON.stringify({
-      success: !fail,
+      completed: true,
+      outcome: fail ? "fail" : "pass",
       headline: fail ? `${phase}: NO-GO, tests fail, credential found in diff` : `${phase} ok`,
       details: "",
-      concerns: fail ? ["hardcoded cloud credential in src/app.js"] : [],
+      concerns: [],
+      blockingFindings: fail ? ["hardcoded cloud credential in src/app.js"] : [],
     }) + "\n```";
   }
   return (async function* () { yield { type: "assistant", message: { content: [{ type: "text", text }] } }; })();
