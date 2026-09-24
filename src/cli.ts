@@ -4,6 +4,7 @@ import { EventBus } from "./bus.js";
 import { Store } from "./store.js";
 import { startServer } from "./server.js";
 import { runPipeline } from "./pipeline.js";
+import { resolveDataDir } from "./data-dir.js";
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -33,12 +34,14 @@ async function main() {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
-  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2]
+  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
   --no-approval    Skip the human-approval UI; only the built-in safety-pattern hook applies
   --max-retries    Max Overseer-triggered retries per phase before forcing a stop (default: 2)
+  --data-dir       Where the audit database lives (default: ~/.agent-loop, or $AGENT_LOOP_HOME) —
+                   always outside --dir, since the agents have Write/Edit/Bash access there
 `);
     process.exit(cmd ? 1 : 0);
   }
@@ -52,7 +55,8 @@ Usage:
 
   const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
   mkdirSync(workDir, { recursive: true });
-  const dataDir = join(workDir, ".agent-loop");
+  const dataDirOverride = typeof args["data-dir"] === "string" ? args["data-dir"] : process.env.AGENT_LOOP_DATA_DIR;
+  const dataDir = resolveDataDir(workDir, dataDirOverride);
   mkdirSync(dataDir, { recursive: true });
 
   const port = Number(args.port ?? 4173);
@@ -66,6 +70,7 @@ Usage:
   console.log(`agent-loop UI: ${url}`);
   console.log("  (open this exact URL: the #token part is what lets the page approve tool calls)");
   console.log(`Working directory: ${workDir}`);
+  console.log(`Audit database:    ${join(dataDir, "agent-loop.db")}`);
   console.log(`Approval UI: ${requireApproval ? "ON — every non-read tool call waits for you" : "OFF"}`);
   console.log(`Task: ${task}\n`);
 
