@@ -20,16 +20,18 @@
     "test:server": "node --experimental-sqlite test/approval-server.mjs",
     "test:scope": "node test/tool-and-path-scope.mjs",
     "test:data-dir": "node test/data-dir.mjs",
-    "test:safety": "node test/safety-net.mjs"
+    "test:safety": "node test/safety-net.mjs",
+    "test:browser-tools": "node test/browser-tools.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.280",
-    "ws": "^8.21.3"
+    "playwright-core": "^1.63.0",
+    "ws": "^8.21.3",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
-    "playwright-core": "^1.63.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

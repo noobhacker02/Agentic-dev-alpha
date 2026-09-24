@@ -139,7 +139,52 @@ export type AgentEvent =
       ts: string;
     }
   | { type: "decisions-log-updated"; runId: string; content: string; ts: string }
-  | { type: "trusted-decision-recorded"; runId: string; phase: PhaseName; text: string; ts: string };
+  | { type: "trusted-decision-recorded"; runId: string; phase: PhaseName; text: string; ts: string }
+  | { type: "browser-session-started"; runId: string; browserSessionId: string; ts: string }
+  | {
+      type: "browser-session-ended";
+      runId: string;
+      browserSessionId: string;
+      status: "completed" | "failed" | "interrupted";
+      ts: string;
+    }
+  | {
+      type: "browser-action-started";
+      runId: string;
+      browserSessionId: string;
+      actionId: string;
+      toolName: string;
+      input: unknown;
+      ts: string;
+    }
+  | {
+      type: "browser-action-completed";
+      runId: string;
+      browserSessionId: string;
+      actionId: string;
+      toolName: string;
+      result: string;
+      isError: boolean;
+      durationMs: number;
+      ts: string;
+    }
+  | {
+      type: "browser-snapshot";
+      runId: string;
+      browserSessionId: string;
+      url: string;
+      title: string;
+      screenshotPath: string;
+      ts: string;
+    }
+  | {
+      type: "browser-artifact-created";
+      runId: string;
+      browserSessionId: string;
+      kind: "screenshot" | "trace";
+      path: string;
+      ts: string;
+    };
 
 export interface ApprovalDecision {
   decision: "allow" | "deny";
