@@ -130,6 +130,10 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
   });
 
   let userPrompt = spec.buildPrompt(opts.task, opts.priorSummaries);
+  userPrompt += `\n\nIf DECISIONS.md exists in the working directory, read it before treating anything as
+still open — it records real forks in this project already resolved (by the user or an earlier phase) and why.
+Don't re-derive or contradict a logged decision; if you make a new one of similar weight, append to that file
+rather than deciding it silently.`;
   if (opts.retryFeedback) {
     userPrompt += `\n\nThis is a retry. Feedback from the Overseer on the previous attempt:\n${opts.retryFeedback}`;
   }
@@ -205,9 +209,6 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
         }
       }
     }
-    opts.store.logEvent(opts.runId, opts.phase, message.type ?? "unknown", {
-      subtype: message.subtype,
-    });
   }
 
   return parseVerdict(lastAssistantText, opts.phase);

@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { PHASES } from "./types.js";
 import type { PipelineConfig, RunRecord } from "./types.js";
 import type { EventBus } from "./bus.js";
@@ -5,11 +7,29 @@ import { Store } from "./store.js";
 import { runPhase } from "./phases.js";
 import { overseerDecide } from "./overseer.js";
 
+/**
+ * A project's DECISIONS.md (any phase may write one, following dev-workflow's convention) is
+ * exactly the kind of short, indexed record the Overseer is meant to read instead of holding
+ * things in a phase's own disposable session memory. Read the latest content every phase boundary
+ * and only emit/index when it actually changed, so it's real structured input to overseerDecide()
+ * rather than something that only ever existed inside whichever phase happened to write it.
+ */
+function readDecisionsLog(workDir: string): string | undefined {
+  const path = join(workDir, "DECISIONS.md");
+  if (!existsSync(path)) return undefined;
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runPipeline(config: PipelineConfig, bus: EventBus, store: Store): Promise<RunRecord> {
   const run = store.createRun(config.task, config.workDir);
   bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, ts: new Date().toISOString() });
 
   let finalStatus: RunRecord["status"] = "done";
+  let lastSeenDecisionsLog: string | undefined;
 
   outer: for (const phase of PHASES) {
     let attempt = 1;
@@ -50,6 +70,13 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
       store.finishPhase(record.id, verdict);
       bus.emitEvent({ type: "phase-end", runId: run.id, phase, attempt, verdict, ts: new Date().toISOString() });
 
+      const decisionsLog = readDecisionsLog(config.workDir);
+      if (decisionsLog && decisionsLog !== lastSeenDecisionsLog) {
+        lastSeenDecisionsLog = decisionsLog;
+        store.indexLog(run.id, "decisions-log", decisionsLog);
+        bus.emitEvent({ type: "decisions-log-updated", runId: run.id, content: decisionsLog, ts: new Date().toISOString() });
+      }
+
       const decision = await overseerDecide({
         task: config.task,
         phase,
@@ -57,6 +84,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
         maxRetries: config.maxRetriesPerPhase,
         verdict,
         priorSummaries: store.getPhaseSummaries(run.id),
+        decisionsLog,
       });
       bus.emitEvent({ type: "overseer-decision", runId: run.id, phase, decision, ts: new Date().toISOString() });
 

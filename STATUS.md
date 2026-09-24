@@ -115,6 +115,26 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
   own loop requires were present and correct — see `Dev-Skill/specs/dev-workflow-skill/STATUS.md` (Iteration 3)
   for the full breakdown. No defects found in dev-workflow this run.
 
+**Two real coupling/completeness bugs found and fixed while making this project standalone-public-repo-ready:**
+- **Both `test/validate-*.mjs` scripts hardcoded `../../dev-workflow`**, a relative path that only ever resolved
+  because agent-loop happened to sit inside `Dev-Skill`'s own directory in one development session — it would
+  have broken completely for anyone cloning this repo on its own, which a public repo explicitly invites. Fixed
+  with `test/resolve-skill-source.mjs`: by default it always shallow-clones the current `dev-workflow` straight
+  from the now-public `Dev-Skill` GitHub repo (verified with a real unauthenticated clone — it picked up
+  `decisions-log-template.md`, proving it fetches current content, not something cached or stale), with a local
+  path (`DEV_WORKFLOW_SKILL_PATH`) as an explicit opt-in override only, never a silent default.
+- **`EventBus.emitEvent` only ever did an in-process `emit()`** — consumed solely by the WebSocket broadcast to
+  a live browser. Any unattended run (no browser attached, which is most of the validation runs in this file)
+  left zero durable record in SQLite of its own phase transitions, Overseer reasoning, or approvals — exactly
+  the "indexed logs, not memory" goal this project exists to deliver, just not actually wired up for the common
+  case of nobody watching live. Found while checking whether a `decisions-log-updated` event actually persisted
+  (it didn't — the `events` table only ever held near-empty raw SDK-message-type rows from inside each phase's
+  own session, a different and much weaker signal). Fixed by making `EventBus` persist every event to the store
+  centrally (`src/bus.ts`), and removed the now-redundant raw-message logging in `src/phases.ts`. Re-verified
+  after the fix: a run's `events` table now holds the complete history — phase-start/end, overseer-decision,
+  tool-call/tool-result, decisions-log-updated, run-start/end — not just message-type noise. Added a permanent
+  regression check for this in `test/plumbing.mjs`.
+
 ## What's not yet verified
 
 - **Retry behavior** — three real runs now (two trivial smoke tasks, one real non-trivial feature with the
@@ -165,14 +185,26 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
 | Retry path (Overseer sends a phase back with feedback) | not exercised — implemented, typechecked; 3 real runs (2 smoke, 1 real feature with full retry budget available) and none has ever needed one |
 | Windows / non-Linux run | not run |
 | agent-loop validates dev-workflow's real-world skill triggering | pass — `test/validate-dev-workflow.mjs`, Skill tool fired unprompted, 9/9 artifact checks passed, see Dev-Skill's `specs/dev-workflow-skill/STATUS.md` (Iteration 3) |
+| dev-workflow asks once (genuinely ambiguous task) and never re-asks (decision already logged) | pass — `test/validate-decisions-log.mjs`, 3/3 checks: Run A asked real, specific, batched questions instead of guessing a payment provider; Run B, with `DECISIONS.md` pre-seeded, used Stripe directly without re-asking |
+| agent-loop's own Overseer reads `DECISIONS.md` (not just dev-workflow's sessions) | pass — real pipeline run with `DECISIONS.md` pre-seeded (`logLevel: "debug"`); Builder used the logged value verbatim in `config.json`, independently confirmed by hand |
+| Skill-source resolution doesn't assume a sibling directory | pass (after fix) — was a real bug: `../../dev-workflow` only worked by accident of one session's layout; fixed to always shallow-clone the public `Dev-Skill` repo by default, verified with a real unauthenticated clone |
+| Pipeline events persist to SQLite even with nobody watching the live UI | pass (after fix) — was a real bug: `EventBus.emitEvent` only broadcast over WebSocket; fixed to persist centrally, verified a real run's `events` table holds the full history, not just raw-message noise |
 
 ## Decision needed
 
-None blocking. Pushed to https://github.com/noobhacker02/test-dev-1. Remaining open items, not urgent:
+None blocking. Pushed to https://github.com/noobhacker02/Agentic-dev-alpha (now public). Remaining open items,
+not urgent:
 1. The retry path is still genuinely unexercised after 3 real runs — needs either a deliberately
    adversarial/impossible task or enough real usage that a phase eventually fails on its own; not worth
    forcing artificially just to check a box.
 2. Windows/remote portability is still unverified — an assumption, not something disproven.
-3. The dev-workflow validation script has only run once, with one task phrasing — a single pass is real
-   signal but not enough to call triggering "solved"; worth a few more runs with different task phrasing
-   before trusting it broadly.
+3. The dev-workflow validation scripts have only run once or twice each, with one task phrasing apiece — real
+   signal, but not enough runs to call any of this "solved"; worth repeating with different phrasing over time.
+4. Agent-loop's own 5-phase pipeline (planner/test-designer/builder/verifier/gatekeeper) is a *different*,
+   generic process from dev-workflow's 9-step loop — they don't share code. Only the dedicated
+   `test/validate-*.mjs` scripts actually load dev-workflow as a skill. If the goal becomes "agent-loop's
+   normal runs use dev-workflow's own rigor to build things," not just "agent-loop can test dev-workflow,"
+   that needs its own deliberate design pass — it is not something today's fixes did as a side effect.
+5. The git-clone-latest fetch in `test/resolve-skill-source.mjs` has no caching — every validator run reclones
+   over the network. Deliberate (simplicity over speed for an occasional validation run), not accidental, but
+   worth reconsidering if these scripts start running frequently (e.g. in CI).

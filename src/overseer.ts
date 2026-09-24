@@ -15,6 +15,12 @@ After each phase, decide one of:
   (an ambiguous or contradictory original task, a fundamental architecture problem the plan itself should be
   redone for, or the gatekeeper reporting a no-go with a real, verified problem in the final output).
 
+You may also be given a project's DECISIONS.md — a running log of real forks in the project's direction and
+which way each one went, written by whichever phase encountered them. Treat every entry there as settled: if a
+phase's concerns second-guess or reopen something already decided there, that is not itself a reason to retry
+— the decision was deliberate, not a mistake to fix. Use it the way a lead uses a decision log: context for
+judging whether a phase's choices made sense, not something to relitigate.
+
 Respond with nothing but a fenced json block:
 \`\`\`json
 { "action": "continue" | "retry" | "stop", "reasoning": "one or two sentences", "feedbackForRetry": "only present if action is retry" }
@@ -28,6 +34,8 @@ export async function overseerDecide(opts: {
   maxRetries: number;
   verdict: PhaseVerdict;
   priorSummaries: Array<{ name: PhaseName; attempt: number; status: string; summary: string | null }>;
+  /** Current content of the project's DECISIONS.md, if one exists in the working directory. */
+  decisionsLog?: string;
   model?: string;
 }): Promise<OverseerDecision> {
   if (opts.attempt > opts.maxRetries) {
@@ -43,11 +51,15 @@ export async function overseerDecide(opts: {
     .map((s) => `- ${s.name} (attempt ${s.attempt}, ${s.status}): ${s.summary ?? "(no summary)"}`)
     .join("\n");
 
+  const decisionsSection = opts.decisionsLog
+    ? `\nProject decision log (DECISIONS.md — treat every entry as settled, not up for debate):\n${opts.decisionsLog}\n`
+    : "";
+
   const prompt = `Original task: ${opts.task}
 
 Phase history so far (short summaries only):
 ${summaryText || "(this is the first phase)"}
-
+${decisionsSection}
 The phase that just finished: ${opts.phase} (attempt ${opts.attempt} of max ${opts.maxRetries + 1})
 Its verdict:
   success: ${opts.verdict.success}

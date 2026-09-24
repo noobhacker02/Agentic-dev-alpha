@@ -89,7 +89,8 @@ export type AgentEvent =
       reason?: string;
       auto: boolean;
       ts: string;
-    };
+    }
+  | { type: "decisions-log-updated"; runId: string; content: string; ts: string };
 
 export interface ApprovalDecision {
   decision: "allow" | "deny";

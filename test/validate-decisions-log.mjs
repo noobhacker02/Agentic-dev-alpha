@@ -21,8 +21,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert";
+import { resolveDevWorkflowSkillPath } from "./resolve-skill-source.mjs";
 
-const DEV_WORKFLOW_SRC = new URL("../../dev-workflow", import.meta.url).pathname;
+// Always fetches the current published dev-workflow skill from GitHub by default -- see
+// resolve-skill-source.mjs. Resolved once and reused for both runs below.
+const DEV_WORKFLOW_SRC = resolveDevWorkflowSkillPath();
 const TASK = "Add payment processing so users can buy a subscription in this app.";
 
 function seedRepo() {

@@ -23,8 +23,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import assert from "node:assert";
+import { resolveDevWorkflowSkillPath } from "./resolve-skill-source.mjs";
 
-const DEV_WORKFLOW_SRC = new URL("../../dev-workflow", import.meta.url).pathname;
+// Always fetches the current published dev-workflow skill from GitHub by default (see
+// resolve-skill-source.mjs) -- not a relative path into a sibling directory, which would only
+// work by accident of one development session's layout and breaks for anyone else.
+const DEV_WORKFLOW_SRC = resolveDevWorkflowSkillPath();
 assert.ok(existsSync(join(DEV_WORKFLOW_SRC, "SKILL.md")), `dev-workflow skill not found at ${DEV_WORKFLOW_SRC}`);
 
 const repo = mkdtempSync(join(tmpdir(), "dev-workflow-validate-"));

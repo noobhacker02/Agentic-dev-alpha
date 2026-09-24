@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "agent-loop-smoke-"));
 const store = new Store(join(dir, "test.db"));
-const bus = new EventBus();
+const bus = new EventBus(store);
 
 const run = store.createRun("smoke test task", dir);
 assert.ok(run.id, "run should have an id");
@@ -58,6 +58,19 @@ assert.ok(
   "approval-request event should reach the WS client"
 );
 console.log("[ok] bus->server->WS: approval-request event broadcast to client");
+
+// A run with nobody watching the live UI must still leave a durable record: emitEvent should
+// persist to the store, not only broadcast over the (possibly-unwatched) WebSocket. This regresses
+// a real bug found in production use: the bus used to only ever `emit()` in-process, so an
+// unattended run had zero SQLite history of its own phase transitions/decisions.
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const raw = new DatabaseSync(join(dir, "test.db"), { readOnly: true });
+  const rows = raw.prepare("SELECT type FROM events WHERE type = 'approval-request'").all();
+  assert.ok(rows.length > 0, "EventBus.emitEvent should persist events to the store, not just broadcast over WS");
+  raw.close();
+}
+console.log("[ok] bus->store: emitEvent persists to SQLite even when no WS client is attached to see it");
 
 // Simulate the human clicking "Approve" in the UI.
 ws.send(JSON.stringify({ type: "decision", requestId, decision: "allow" }));

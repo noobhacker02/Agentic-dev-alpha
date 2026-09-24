@@ -59,8 +59,8 @@ Usage:
   const requireApproval = !args["no-approval"];
   const maxRetriesPerPhase = Number(args["max-retries"] ?? 2);
 
-  const bus = new EventBus();
   const store = new Store(join(dataDir, "agent-loop.db"));
+  const bus = new EventBus(store);
 
   const { url, close } = await startServer(bus, port);
   console.log(`agent-loop UI: ${url}`);

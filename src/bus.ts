@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, ApprovalDecision, PhaseName } from "./types.js";
+import type { Store } from "./store.js";
 
 interface PendingApproval {
   resolve: (d: ApprovalDecision) => void;
@@ -12,11 +13,22 @@ interface PendingApproval {
  * flows out through `emit`, and human approve/deny decisions flow back in
  * through `resolveApproval`. The approval hook awaits `requestApproval`
  * directly — it is a real blocking round-trip, not fire-and-forget.
+ *
+ * `emitEvent` also persists every event to the Store (when one is given at construction), not just
+ * the WebSocket broadcast — a run with nobody watching the live UI would otherwise leave zero
+ * durable record of phase transitions, Overseer reasoning, or approvals, which defeats the point of
+ * having an indexed history at all.
  */
 export class EventBus extends EventEmitter {
   private pending = new Map<string, PendingApproval>();
 
+  constructor(private store?: Store) {
+    super();
+  }
+
   emitEvent(event: AgentEvent) {
+    const phase = "phase" in event ? event.phase : null;
+    this.store?.logEvent(event.runId, phase, event.type, event);
     this.emit("event", event);
   }
 

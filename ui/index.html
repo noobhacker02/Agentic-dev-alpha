@@ -33,6 +33,7 @@
   .card.tool-result.error { border-left: 3px solid #f85149; }
   .card.approval { border-left: 3px solid #e3b341; background: #201a08; }
   .card.overseer { border-left: 3px solid #a371f7; }
+  .card.decisions-log { border-left: 3px solid #f778ba; background: #1a0d15; }
   .card.text { border-left: 3px solid #388bfd33; }
   .card.thinking { border-left: 3px solid #8b949e55; color: #8b949e; font-style: italic; }
   pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
@@ -177,6 +178,13 @@ function render(ev, ws) {
       card(
         "overseer",
         meta(when + " · " + ev.phase) + "Approval " + esc(ev.decision) + (ev.reason ? ": " + esc(ev.reason) : "")
+      );
+      break;
+    case "decisions-log-updated":
+      card(
+        "decisions-log",
+        meta(when + " · DECISIONS.md updated — the Overseer reads this, not just this phase's own memory") +
+          "<pre>" + esc(ev.content) + "</pre>"
       );
       break;
   }
