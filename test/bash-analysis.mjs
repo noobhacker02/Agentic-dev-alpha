@@ -76,4 +76,22 @@ assert.strictEqual(r, "Bash(npm test:*)");
 assert.notDeepStrictEqual(plan("npm publish")?.rules, [r]);
 assert.notDeepStrictEqual(plan("npm run deploy")?.rules, plan("npm run build")?.rules);
 console.log("[ok] rules don't stretch: npm test ≠ npm publish, npm run build ≠ npm run deploy");
+
+// --- package installs never get a "don't ask again" rule: the package name IS the trust
+// decision (postinstall/setup.py/build.rs/extconf.rb run arbitrary code named by it), so a rule
+// dropping it (or, for a second package tacked onto an already-approved one, silently covering
+// it too) would let one approved install auto-allow installing anything for the rest of the run.
+for (const cmd of [
+  "npm install lodash", "npm i react", "npm install lodash some-evil-postinstall-pkg",
+  "yarn add left-pad", "pnpm add left-pad", "pip install requests", "pip3 install requests",
+  "gem install rails", "cargo install ripgrep", "go get example.com/pkg", "npm uninstall lodash",
+]) {
+  assert.strictEqual(plan(cmd), null, `expected "${cmd}" to always ask (no rule), got ${JSON.stringify(plan(cmd))}`);
+}
+// The concrete exploit this closes: approving one install must not silently cover a different one.
+assert.strictEqual(plan("npm install lodash"), null);
+assert.strictEqual(plan("npm install lodash evil-pkg"), null);
+// Unaffected: running an already-defined package.json script is still scoped to that script name.
+assert.deepStrictEqual(plan("npm run build")?.rules, ["Bash(npm run build:*)"]);
+console.log("[ok] package installs (npm/yarn/pnpm/pip/gem/cargo/go) always ask -- never a reusable rule");
 console.log("\nALL BASH ANALYSIS TESTS PASSED");

@@ -70,6 +70,25 @@ All notable changes to this project are documented here. Format follows
     different encodings against a real secret file), and the screenshot cap (50 real screenshots
     succeed, the 51st is refused). All existing suites and `pipeline_logic.sh` scenarios still pass.
 
+- **A "don't ask again" rule for one package install silently covered every future one, including a
+  malicious package.** Continuing the same adversarial pass onto the newly-merged approval "remember"
+  rule engine (`src/bash-analysis.ts`, previously untested against anything beyond its own author's
+  cases). Approving `npm install lodash` once saved the rule `Bash(npm install:*)` — a 2-word prefix
+  that drops the package name entirely, because `install`/`add`-style subcommands weren't in the set
+  that keeps a trailing argument (the way `npm run <script>` keeps the script name). Confirmed
+  empirically: `analyzeBash("npm install lodash", …)` and `analyzeBash("npm install
+  some-evil-package-that-postinstalls-malware", …)` computed the *identical* rule, and appending a
+  second package to an already-approved install (`npm install lodash evil-pkg`) didn't change the
+  rule either — the same collision holds for `pip install`, `yarn add`, `pnpm add`, `gem install`,
+  `cargo install`, `go get`, and their `apt`/`brew`/`dnf`/`yum`/`conda` equivalents. Since a package
+  manager's install/add/remove/update subcommand runs arbitrary third-party code named by its
+  argument (postinstall scripts, `setup.py`, `build.rs`, `extconf.rb`…), and a rule can't be scoped
+  safely here the way it can for a fixed, already-reviewed `package.json` script name, these now never
+  produce a rule at all — always ask, the same treatment already given to `curl`'s remote URLs. New
+  regression tests assert `plan()` is `null` for install/add/remove/update across all of the above
+  package managers, including the two-package collision case, while confirming `npm run build` is
+  untouched. All 11 suites and `pipeline_logic.sh` still pass.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.

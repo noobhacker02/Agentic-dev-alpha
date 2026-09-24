@@ -122,6 +122,22 @@ const NEVER_RULE = new Set([
 /** Subcommands whose next word is what actually runs (`npm run build`, `npx vitest`). */
 const RUNNER_SUBS = new Set(["run", "run-script", "exec", "x", "dlx"]);
 const INTERPRETERS = /^(node|nodejs|python|python3|perl|ruby|php|deno|bun|lua|Rscript)$/;
+/**
+ * Package managers whose install/add/remove/update subcommand fetches and runs arbitrary
+ * third-party code (postinstall scripts, setup.py, build.rs, gems' extconf.rb…) named by the
+ * package argument. Unlike `npm run test`, where the script name is already-reviewed code from
+ * package.json, the trust-relevant part here is the package name itself -- and it can't be
+ * folded into a "don't ask again" rule safely: dropping it (as the generic 2-word rule does)
+ * lets one approved install cover every future package, and keeping only the first of several
+ * (the way RUNNER_SUBS keeps one script name) still silently approves whatever else rides
+ * along after it (`npm install lodash evil-pkg` computes the identical rule as `npm install
+ * lodash` alone). So, like `curl`'s remote URLs, these always ask.
+ */
+const PACKAGE_MANAGERS = new Set([
+  "npm", "yarn", "pnpm", "pip", "pip3", "pipx", "gem", "bundle", "cargo", "go", "composer",
+  "apt", "apt-get", "brew", "dnf", "yum", "conda",
+]);
+const PACKAGE_INSTALL_SUBS = new Set(["install", "i", "add", "uninstall", "remove", "rm", "un", "update", "upgrade", "get"]);
 const GIT_NEVER = new Set(["push", "reset", "clean", "checkout", "rebase", "filter-branch", "gc", "prune", "restore", "switch", "am", "apply", "config", "remote", "submodule", "update-ref", "worktree"]);
 const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
 
@@ -189,7 +205,8 @@ export function analyzeBash(command: string, workDir?: string): Subcommand[] | n
 
     let rule: string | null = null;
     if (k === 0 && !s.writes && !NEVER_RULE.has(cmd) && !(cmd === "git" && GIT_NEVER.has(sub ?? "")) &&
-        !(INTERPRETERS.test(cmd) && runsInlineCode(args))) {
+        !(INTERPRETERS.test(cmd) && runsInlineCode(args)) &&
+        !(PACKAGE_MANAGERS.has(cmd) && PACKAGE_INSTALL_SUBS.has(sub ?? ""))) {
       const third = words[2];
       const wantThird = third !== undefined && !third.startsWith("-") && (sub?.startsWith("-") || RUNNER_SUBS.has(sub ?? ""));
       const used = wantThird ? 3 : sub !== undefined ? 2 : 1;
