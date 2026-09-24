@@ -76,6 +76,7 @@ Overseer and a human both query the same short rows: "what did the builder phase
 | `src/cli.ts` | `agent-loop run "<task>"` entry point |
 | `test/plumbing.mjs` | No-LLM test of the store/bus/server/WebSocket round-trip |
 | `test/browser-approval.mjs` | Real end-to-end test: a live pipeline run with a real headless-Chromium browser clicking the actual Approve button |
+| `test/validate-dev-workflow.mjs` | The project's actual meta-goal: installs the sibling `dev-workflow` skill for real and checks whether it triggers and gets followed on an ordinary request |
 
 ## Usage
 
