@@ -4,19 +4,86 @@ import type { EventBus } from "./bus.js";
 import type { PhaseName } from "./types.js";
 
 /**
- * Patterns that are denied outright, before the request even reaches the
- * human approval UI. This is a narrow, defense-in-depth backstop (mirrors
- * dev-workflow's own destructive-command list) — the approval UI is the
- * actual control surface; this just stops the handful of operations no
- * human should have to be asked about twice.
+ * Patterns that are denied outright, before the request even reaches the human approval UI. This
+ * is the actual last line of defense under `--no-approval` (nobody is there to catch what it
+ * misses), so it needs to survive trivial rewordings, not just the textbook spelling of each
+ * command. A real stress test (see docs/STRESS-TEST-REPORT.md) found the original 6-pattern list
+ * caught 3 of 27 adversarial cases — flag-order variants, quoting, wildcards, encoding, and piped
+ * exfiltration all sailed through. This list is organized by the same categories that test used.
+ *
+ * Still a defense-in-depth backstop, not a shell parser: the approval UI (or, unattended, the
+ * task's own good sense) remains the real control surface. This just narrows how much a phase can
+ * do unsupervised before a human would have caught it anyway.
  */
-const HARD_DENY_PATTERNS: RegExp[] = [
-  /rm\s+-rf\s+\/(?:\s|$)/i,
-  /rm\s+-rf\s+~(?:\s|$)/i,
-  /git\s+push\s+.*--force(?!-with-lease)/i,
-  /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, // fork bomb
-  /mkfs\./i,
-  /dd\s+if=.*of=\/dev\/(sd|nvme|hd)/i,
+
+const DANGEROUS_RM_TARGET =
+  /^(\/|\/\*|~|~\/.*|\$HOME\b.*|"\$HOME"|'\$HOME'|\$\{HOME\}.*|\.\.|\.\.\/.*|\*)$/;
+
+/** True if any `rm` invocation in the command combines recursive+force flags with a target like `/`, `~`, `$HOME`, `..`, or a bare `*` (including after `cd /` / `cd ~` earlier in the same line). */
+function hasDangerousRm(command: string): boolean {
+  const changedToDangerousDir = /\bcd\s+(\/|~)(\s|&&|;|$)/.test(command);
+  for (const match of command.matchAll(/\brm\s+((?:[^\n;|&]|\\[;|&])*)/gi)) {
+    const rest = match[1];
+    const tokens = rest.trim().split(/\s+/).filter(Boolean);
+    let recursive = false;
+    let force = false;
+    const targets: string[] = [];
+    for (const tok of tokens) {
+      if (tok === "--recursive") recursive = true;
+      else if (tok === "--force") force = true;
+      else if (tok === "--no-preserve-root") force = true; // only meaningful alongside -r, but signals intent
+      else if (/^-[a-zA-Z]+$/.test(tok)) {
+        if (/r/i.test(tok)) recursive = true;
+        if (/f/i.test(tok)) force = true;
+      } else {
+        targets.push(tok.replace(/^["']|["']$/g, ""));
+      }
+    }
+    if (!recursive || !force) continue;
+    if (targets.some((t) => DANGEROUS_RM_TARGET.test(t))) return true;
+    if (changedToDangerousDir && targets.includes("*")) return true;
+  }
+  return false;
+}
+
+const HARD_DENY_CHECKS: Array<{ name: string; test: (cmd: string) => boolean }> = [
+  { name: "rm targeting /, ~, $HOME, .., or * after cd into one", test: hasDangerousRm },
+  { name: "fork bomb", test: (c) => /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/.test(c) },
+  { name: "mkfs (reformats a device)", test: (c) => /\bmkfs\b/i.test(c) },
+  {
+    name: "dd writing to a block device",
+    test: (c) => /\bdd\b[^\n;|&]*\bof=\/dev\/(?!null\b|zero\b|random\b|urandom\b)[a-z]+/i.test(c),
+  },
+  {
+    name: "git push force (--force, -f, or a +refspec)", // devskill:allow — naming what we detect
+    test: (c) =>
+      /\bgit\s+push\b[^\n;|&]*(--force(?!-with-lease)\b|\s-f(\s|$)|\s\+[\w./-]+)/i.test(c),
+  },
+  { name: "git reset --hard", test: (c) => /\bgit\s+reset\s+--hard\b/i.test(c) }, // devskill:allow
+  { name: "git clean -f (force-deletes untracked files)", test: (c) => /\bgit\s+clean\s+(-\w*f\w*|--force)\b/i.test(c) },
+  { name: "git checkout/restore discarding all local changes", test: (c) => /\bgit\s+(checkout|restore)\s+(--\s+\.|\.)\s*$/i.test(c) },
+  { name: "git branch -D (force-delete)", test: (c) => /\bgit\s+branch\s+(-D|--delete\s+--force)\b/i.test(c) },
+  { name: "find ... -delete", test: (c) => /\bfind\b[^\n;|&]*-delete\b/i.test(c) },
+  { name: "curl/wget piped into a shell", test: (c) => /\b(curl|wget)\b[^\n;|&]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i.test(c) },
+  {
+    name: "base64-decoded payload piped into a shell (obfuscated command)",
+    test: (c) => /\bbase64\s+(-d|--decode)\b[^\n;|&]*\|\s*(sudo\s+)?(sh|bash|zsh)\b/i.test(c),
+  },
+  { name: "Python shutil.rmtree", test: (c) => /shutil\s*\.\s*rmtree\s*\(/i.test(c) },
+  {
+    name: "reading a credential file and piping it to the network",
+    test: (c) =>
+      /\bcat\b[^\n;|&]*(id_rsa|id_ed25519|id_dsa|\.ssh\/|\.aws\/credentials|\.netrc|\.git-credentials)[^\n;|&]*\|\s*(curl|nc|ncat|wget)\b/i.test(
+        c
+      ),
+  },
+  {
+    name: "DROP/TRUNCATE via a database CLI's inline command flag",
+    test: (c) =>
+      /\b(psql|mysql|mariadb|sqlite3|mongosh|redis-cli)\b[^\n;|&]*(-c\b|--command\b|--eval\b|-e\b)[^\n;|&]*\b(DROP|TRUNCATE)\s+(DATABASE|TABLE|SCHEMA)\b/i.test(
+        c
+      ),
+  },
 ];
 
 function commandFromInput(toolName: string, toolInput: Record<string, unknown>): string | null {
@@ -31,12 +98,14 @@ export function createSafetyHook(): HookCallback {
     const pre = input as PreToolUseHookInput;
     const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
     const command = commandFromInput(pre.tool_name, toolInput);
-    if (command && HARD_DENY_PATTERNS.some((re) => re.test(command))) {
+    if (!command) return {};
+    const hit = HARD_DENY_CHECKS.find((c) => c.test(command));
+    if (hit) {
       return {
         hookSpecificOutput: {
           hookEventName: pre.hook_event_name,
           permissionDecision: "deny",
-          permissionDecisionReason: `agent-loop safety net: '${command}' matches a hard-denied destructive pattern and is never allowed, even with human approval.`,
+          permissionDecisionReason: `agent-loop safety net: '${command}' matches a hard-denied pattern (${hit.name}) and is never allowed, even with human approval.`,
         },
       };
     }
@@ -88,6 +157,43 @@ export function createPathScopeHook(workDir: string): HookCallback {
             hookEventName: pre.hook_event_name,
             permissionDecision: "deny",
             permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value}') resolves outside the run's working directory (${workDir}) and is never allowed.`,
+          },
+        };
+      }
+    }
+    return {};
+  };
+}
+
+/**
+ * Filenames/paths that name a credential store or secret regardless of which project they show up
+ * in. A stress test found `Read` auto-approved as a blanket "read-only tool" even when its target
+ * was `~/.claude/.credentials.json` or `~/.ssh/id_rsa` — being outside `--dir` now also catches
+ * those two specifically (`createPathScopeHook`), but a task whose own `--dir` happens to contain
+ * a `.env` or `.git-credentials` (an ordinary thing for a real project to have) would still sail
+ * through on tool-name auto-approval alone. This checks the path itself, so it holds either way —
+ * a `deny` from any hook wins regardless of what the approval hook auto-approves by tool name.
+ */
+const SENSITIVE_PATH_RE =
+  /(^|[/\\])(\.ssh[/\\](id_rsa|id_ed25519|id_dsa|id_ecdsa)(\.pub)?|\.aws[/\\]credentials|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.claude[/\\]\.credentials\.json|credentials\.json|\.env)$/i;
+const SENSITIVE_ABS_RE = /^\/etc\/(shadow|passwd|sudoers)$/i;
+
+export function createSensitiveFileHook(): HookCallback {
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+    const pre = input as PreToolUseHookInput;
+    const argNames = PATH_ARGS[pre.tool_name];
+    if (!argNames) return {};
+    const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
+    for (const arg of argNames) {
+      const value = toolInput[arg];
+      if (typeof value !== "string" || value === "") continue;
+      if (SENSITIVE_PATH_RE.test(value) || SENSITIVE_ABS_RE.test(resolve(value))) {
+        return {
+          hookSpecificOutput: {
+            hookEventName: pre.hook_event_name,
+            permissionDecision: "deny",
+            permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value}') names a credential/secret file and is never allowed, regardless of --dir or tool-level auto-approval.`,
           },
         };
       }

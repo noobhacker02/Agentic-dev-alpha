@@ -2,7 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "./bus.js";
 import type { Store } from "./store.js";
-import { createApprovalHook, createPathScopeHook, createSafetyHook } from "./hooks.js";
+import { createApprovalHook, createPathScopeHook, createSafetyHook, createSensitiveFileHook } from "./hooks.js";
 import { minimalEnv } from "./env.js";
 import type { PhaseName, PhaseVerdict } from "./types.js";
 
@@ -128,6 +128,7 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
   const spec = PHASE_SPECS[opts.phase];
   const safetyHook = createSafetyHook();
   const pathScopeHook = createPathScopeHook(opts.workDir);
+  const sensitiveFileHook = createSensitiveFileHook();
   const approvalHook = createApprovalHook({
     bus: opts.bus,
     runId: opts.runId,
@@ -158,7 +159,7 @@ rather than deciding it silently.`;
       effort: opts.effort,
       env: minimalEnv(),
       hooks: {
-        PreToolUse: [{ hooks: [safetyHook, pathScopeHook, approvalHook], timeout: 3600 }],
+        PreToolUse: [{ hooks: [safetyHook, pathScopeHook, sensitiveFileHook, approvalHook], timeout: 3600 }],
       },
     },
   });
