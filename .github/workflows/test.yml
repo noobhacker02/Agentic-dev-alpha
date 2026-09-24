@@ -1,0 +1,28 @@
+name: Tests
+
+# Everything here runs without an API key: the stores, hooks, approval server, terminal and web UI,
+# saved reports and browser tools, driven directly or through a real headless Chromium. The
+# real-model runs (test/browser-approval.mjs, test/validate-*.mjs, test/e2e/record-run.mjs) cost
+# money and stay manual.
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Pipeline edge cases (scripted fake SDK)
+        run: bash test/stress/pipeline_logic.sh

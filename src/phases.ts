@@ -153,6 +153,8 @@ export interface RunPhaseOptions {
   bus: EventBus;
   store: Store;
   requireApproval: boolean;
+  /** Ask about every shell command, even ones that only read inside --dir. */
+  strictApproval?: boolean;
   model?: string;
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Present only when --browser was passed; shared across every phase in the run so the same
@@ -172,6 +174,8 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
     phase: opts.phase,
     requireApproval: opts.requireApproval,
     autoApproveTools: spec.autoApproveTools,
+    workDir: opts.workDir,
+    autoAllowReadOnly: !opts.strictApproval,
   });
 
   let userPrompt = spec.buildPrompt(opts.task, opts.priorSummaries);
@@ -275,6 +279,17 @@ human-approval flow as Bash or Write.`;
           opts.store.indexLog(opts.runId, "tool-result", summary);
         }
       }
+    } else if (message.type === "result") {
+      opts.bus.emitEvent({
+        type: "usage",
+        runId: opts.runId,
+        phase: opts.phase,
+        role: "phase",
+        costUsd: Number(message.total_cost_usd ?? 0),
+        turns: Number(message.num_turns ?? 0),
+        durationMs: Number(message.duration_ms ?? 0),
+        ts: new Date().toISOString(),
+      });
     }
   }
 
@@ -285,7 +300,9 @@ function summarizeToolResult(content: unknown): string {
   if (typeof content === "string") return content.slice(0, 2000);
   if (Array.isArray(content)) {
     return content
-      .map((c) => (typeof c === "string" ? c : c?.text ?? JSON.stringify(c)))
+      // An image block is base64 -- tens of KB of noise in the transcript, the SQLite index and every
+      // WebSocket message. The screenshot itself is already saved and shown in the browser panel.
+      .map((c) => (typeof c === "string" ? c : c?.type === "image" ? "[image]" : c?.text ?? JSON.stringify(c)))
       .join("\n")
       .slice(0, 2000);
   }

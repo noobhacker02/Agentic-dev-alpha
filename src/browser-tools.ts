@@ -10,8 +10,8 @@
  * URLs. A real domain allowlist is Stage 3 (cloud pilot) territory, not this pass.
  */
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
-import { existsSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -62,11 +62,20 @@ interface BrowserSession {
 export class BrowserSessionManager {
   private sessions = new Map<string, BrowserSession>();
 
+  /** `videoDirFor`, when given, records the whole browser session as a .webm in that run's artifact
+   * directory -- a watchable record of what the agent actually did to the app, not just its claims. */
+  constructor(private opts: { videoDirFor?: (runId: string) => string } = {}) {}
+
   async getOrCreate(runId: string, bus: EventBus): Promise<BrowserSession> {
     const existing = this.sessions.get(runId);
     if (existing) return existing;
     const browser = await launchBrowser();
-    const context = await browser.newContext();
+    const videoDir = this.opts.videoDirFor?.(runId);
+    if (videoDir) mkdirSync(videoDir, { recursive: true });
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      ...(videoDir ? { recordVideo: { dir: videoDir, size: { width: 1280, height: 800 } } } : {}),
+    });
     const page = await context.newPage();
     const session: BrowserSession = { browserSessionId: randomUUID(), browser, context, page };
     this.sessions.set(runId, session);
@@ -90,6 +99,23 @@ export class BrowserSessionManager {
     if (!session) return;
     this.sessions.delete(runId);
     try {
+      // The video file is only complete once its context closes, so close the context first, then
+      // give the recording a stable name and announce it.
+      const video = session.page.video();
+      await session.context.close();
+      if (video) {
+        const recorded = await video.path();
+        const named = join(dirname(recorded), `session-${session.browserSessionId}.webm`);
+        renameSync(recorded, named);
+        bus.emitEvent({
+          type: "browser-artifact-created",
+          runId,
+          browserSessionId: session.browserSessionId,
+          kind: "video",
+          path: named,
+          ts: new Date().toISOString(),
+        });
+      }
       await session.browser.close();
     } finally {
       bus.emitEvent({

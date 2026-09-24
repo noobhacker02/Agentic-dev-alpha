@@ -92,7 +92,7 @@ export interface TrustedDecision {
 }
 
 export type AgentEvent =
-  | { type: "run-start"; runId: string; task: string; ts: string }
+  | { type: "run-start"; runId: string; task: string; workDir?: string; ts: string }
   | { type: "run-end"; runId: string; status: RunRecord["status"]; ts: string }
   | { type: "phase-start"; runId: string; phase: PhaseName; attempt: number; ts: string }
   | { type: "phase-end"; runId: string; phase: PhaseName; attempt: number; verdict: PhaseVerdict; ts: string }
@@ -126,6 +126,8 @@ export type AgentEvent =
       toolUseId: string;
       toolName: string;
       toolInput: unknown;
+      /** The "don't ask again" rule approving this would create; absent when the call can't be generalised. */
+      rule?: string;
       ts: string;
     }
   | {
@@ -133,12 +135,38 @@ export type AgentEvent =
       runId: string;
       phase: PhaseName;
       requestId: string;
+      /** The tool call this approval was for, so a UI can attach the outcome to it. */
+      toolUseId?: string;
       decision: "allow" | "deny";
       reason?: string;
       auto: boolean;
+      /** Set when a human chose "don't ask again": the rule this approval created (e.g. `Bash(npm test:*)`). */
+      rememberedRule?: string;
+      ts: string;
+    }
+  | {
+      /** A call the approval hook allowed without asking, because an earlier "don't ask again" rule matched. */
+      type: "approval-auto-allowed";
+      runId: string;
+      phase: PhaseName;
+      toolUseId: string;
+      toolName: string;
+      rule: string;
+      ts: string;
+    }
+  | {
+      /** Cost and size of one SDK session (a phase attempt or an Overseer call), from its result message. */
+      type: "usage";
+      runId: string;
+      phase: PhaseName;
+      role: "phase" | "overseer";
+      costUsd: number;
+      turns: number;
+      durationMs: number;
       ts: string;
     }
   | { type: "decisions-log-updated"; runId: string; content: string; ts: string }
+  | { type: "report-saved"; runId: string; path: string; ts: string }
   | { type: "trusted-decision-recorded"; runId: string; phase: PhaseName; text: string; ts: string }
   | { type: "browser-session-started"; runId: string; browserSessionId: string; ts: string }
   | {
@@ -181,7 +209,7 @@ export type AgentEvent =
       type: "browser-artifact-created";
       runId: string;
       browserSessionId: string;
-      kind: "screenshot" | "trace";
+      kind: "screenshot" | "trace" | "video";
       path: string;
       ts: string;
     };
@@ -189,6 +217,8 @@ export type AgentEvent =
 export interface ApprovalDecision {
   decision: "allow" | "deny";
   reason?: string;
+  /** "Yes, and don't ask again": allow this and every later call matching the same rule, this run only. */
+  remember?: boolean;
 }
 
 export interface PipelineConfig {
@@ -196,6 +226,8 @@ export interface PipelineConfig {
   workDir: string;
   /** If true, every tool call is routed through the human-approval UI. If false, only the safety hook applies. */
   requireApproval: boolean;
+  /** Ask about every shell command, even ones that only read inside --dir (`--strict-approval`). */
+  strictApproval?: boolean;
   /** Max retries per phase before the Overseer is forced to stop instead of retry again. */
   maxRetriesPerPhase: number;
   /** Max total repairs across the whole run (including ones routed to an earlier phase) — bounds

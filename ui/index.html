@@ -2,339 +2,543 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-loop</title>
-<!-- Suppresses the browser's automatic /favicon.ico request, which this server has no route for
-     and would otherwise 404 on every load -- a standard empty-data-URI, not a missing asset. -->
+<!-- Suppresses the browser's automatic /favicon.ico request, which this server has no route for. -->
 <link rel="icon" href="data:," />
 <style>
-  :root { color-scheme: dark; }
+  /* Modeled on Claude Code's terminal UI: warm dark background, one transcript column, tool calls as
+     "⏺ Tool(args)" with "⎿" output, a permission prompt pinned to the bottom. */
+  :root {
+    color-scheme: dark;
+    --bg: #1f1e1d; --panel: #262624; --panel-2: #2d2c29; --line: #3a3935;
+    --text: #e8e6e3; --dim: #9a9893; --faint: #6f6d68;
+    --accent: #d97757; --green: #4eba65; --red: #ff6b80; --yellow: #e5c07b; --blue: #b1b9f9; --cyan: #7ec4cf;
+    --mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", Consolas, monospace;
+  }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    background: #0d1117; color: #c9d1d9; font-size: 13px;
-  }
-  header {
-    padding: 10px 16px; background: #161b22; border-bottom: 1px solid #30363d;
-    display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 5;
-  }
-  header h1 { font-size: 14px; margin: 0; color: #58a6ff; }
-  #status { color: #8b949e; }
-  #pending-banner {
-    display: none; background: #3d2b00; color: #e3b341; padding: 6px 16px;
-    border-bottom: 1px solid #30363d;
-  }
-  main { padding: 12px 16px; max-width: 980px; margin: 0 auto; }
-  .card {
-    border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px;
-    background: #161b22;
-  }
-  .card .meta { color: #8b949e; font-size: 11px; margin-bottom: 4px; }
-  .card.phase-start { border-left: 3px solid #58a6ff; }
-  .card.phase-end.ok { border-left: 3px solid #3fb950; }
-  .card.phase-end.fail { border-left: 3px solid #f85149; }
-  .card.tool-call { border-left: 3px solid #d29922; }
-  .card.tool-result.error { border-left: 3px solid #f85149; }
-  .card.approval { border-left: 3px solid #e3b341; background: #201a08; }
-  .card.overseer { border-left: 3px solid #a371f7; }
-  .card.decisions-log { border-left: 3px solid #f778ba; background: #1a0d15; }
-  .card.trusted-decision { border-left: 3px solid #3fb950; background: #0d1f13; }
-  .card.browser-action { border-left: 3px solid #56d4dd; }
-  .card.browser-action.error { border-left: 3px solid #f85149; }
-  .card.browser-session { border-left: 3px solid #56d4dd; background: #0d1a1d; }
-  #browser-panel {
-    display: none; border: 1px solid #30363d; border-radius: 6px; background: #0d1a1d;
-    margin: 0 16px 8px; padding: 10px 12px; max-width: 948px; margin-left: auto; margin-right: auto;
-  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.55 var(--mono); display: flex; flex-direction: column; }
+  button { font: inherit; color: inherit; }
+
+  /* header */
+  header { display: flex; align-items: center; gap: 14px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+  .brand { color: var(--accent); font-weight: 700; white-space: nowrap; }
+  #task { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat { color: var(--dim); white-space: nowrap; }
+  .stat b { color: var(--text); font-weight: 600; }
+  #run-state { padding: 1px 9px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  #run-state.running { color: var(--accent); border-color: var(--accent); }
+  #run-state.done { color: var(--green); border-color: var(--green); }
+  #run-state.failed, #run-state.stopped { color: var(--red); border-color: var(--red); }
+  #status { color: var(--dim); white-space: nowrap; }
+  #status::before { content: "●"; margin-right: 5px; color: var(--faint); }
+  #status.live::before { color: var(--green); }
+  #status.down::before { color: var(--red); }
+
+  /* phase stepper */
+  #stepper { display: flex; gap: 6px; padding: 8px 18px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+  .step { display: flex; align-items: center; gap: 7px; padding: 3px 11px; border: 1px solid var(--line); border-radius: 14px; color: var(--faint); background: none; cursor: pointer; white-space: nowrap; }
+  .step .icon { width: 12px; text-align: center; }
+  .step[data-state="active"] { color: var(--accent); border-color: var(--accent); }
+  .step[data-state="pass"] { color: var(--green); border-color: #4eba6566; }
+  .step[data-state="fail"] { color: var(--red); border-color: #ff6b8066; }
+  .step[data-state="skipped"] { color: var(--faint); border-style: dashed; }
+  .step .badge { font-size: 11px; color: var(--yellow); }
+  .step .cost { font-size: 11px; color: var(--dim); }
+
+  /* body: transcript + side panel */
+  .body { flex: 1; min-height: 0; display: flex; }
+  #scroll { flex: 1; min-width: 0; overflow-y: auto; position: relative; }
+  #transcript { max-width: 960px; margin: 0 auto; padding: 14px 22px 30px; }
+  aside { width: 330px; flex: none; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 12px 14px; }
+  aside h3 { margin: 14px 0 6px; font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  aside h3:first-child { margin-top: 0; }
+  .kv { display: flex; justify-content: space-between; color: var(--dim); }
+  .kv b { color: var(--text); font-weight: 500; }
+  .files div, .rule { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rule { color: var(--dim); }
+  .files .w { color: var(--green); } .files .e { color: var(--yellow); }
+  .muted { color: var(--faint); }
+  #browser-panel { display: none; }
   #browser-panel.live { display: block; }
-  #browser-panel .meta { color: #8b949e; font-size: 11px; }
-  #browser-panel img {
-    max-width: 100%; max-height: 280px; object-fit: contain; display: block;
-    border-radius: 4px; border: 1px solid #30363d; margin-top: 6px; cursor: zoom-in;
-    background: #0d1117;
-  }
-  #decision-form {
-    padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d;
-    display: flex; gap: 8px;
-  }
-  #decision-input {
-    flex: 1; font-family: inherit; font-size: 12px; padding: 5px 8px; border-radius: 4px;
-    border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;
-  }
-  .card.text { border-left: 3px solid #388bfd33; }
-  .card.thinking { border-left: 3px solid #8b949e55; color: #8b949e; font-style: italic; }
-  pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
-  .btns { margin-top: 8px; display: flex; gap: 8px; }
-  button {
-    font-family: inherit; font-size: 12px; padding: 4px 10px; border-radius: 4px; border: 1px solid #30363d;
-    cursor: pointer;
-  }
-  .allow { background: #238636; color: white; }
-  .deny { background: #da3633; color: white; }
-  button:disabled { opacity: 0.5; cursor: default; }
+  #browser-panel img { width: 100%; border: 1px solid var(--line); border-radius: 4px; margin-top: 6px; cursor: zoom-in; background: #111; }
+  #browser-panel .url { color: var(--cyan); word-break: break-all; }
+  @media (max-width: 1000px) { aside { display: none; } }
+
+  /* transcript blocks */
+  .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; }
+  .blk::before { position: absolute; left: 0; top: 0; }
+  .blk.text::before { content: "⏺"; color: var(--text); }
+  .blk.tool::before { content: "⏺"; color: var(--accent); }
+  .blk.tool.err::before, .blk.tool.denied::before { color: var(--red); }
+  .blk.tool.ok::before { color: var(--green); }
+  .blk.tool .name { font-weight: 700; }
+  .blk.tool .args { color: var(--dim); }
+  .out { color: var(--dim); margin-top: 1px; }
+  .out .gut { color: var(--faint); }
+  .out.err { color: var(--red); }
+  .more { color: var(--faint); cursor: pointer; }
+  .more:hover { color: var(--text); }
+  .tag { font-size: 11px; padding: 0 6px; border-radius: 8px; margin-left: 6px; border: 1px solid var(--line); color: var(--dim); }
+  .tag.wait { color: var(--yellow); border-color: var(--yellow); }
+  .tag.ok { color: var(--green); border-color: #4eba6566; }
+  .tag.no { color: var(--red); border-color: #ff6b8066; }
+  .blk.thinking { color: var(--faint); font-style: italic; cursor: pointer; }
+  .blk.thinking::before { content: "✻"; color: var(--accent); font-style: normal; }
+  .blk.thinking .full { display: none; }
+  .blk.thinking.open .full { display: block; } .blk.thinking.open .hint { display: none; }
+  .phase-sep { display: flex; align-items: center; gap: 10px; color: var(--dim); margin: 22px 0 12px; }
+  .phase-sep::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .phase-sep b { color: var(--accent); font-weight: 600; }
+  .blk.verdict::before { content: "✓"; color: var(--green); }
+  .blk.verdict.fail::before { content: "✗"; color: var(--red); }
+  .blk.verdict .head { font-weight: 700; }
+  .blk.verdict ul { margin: 2px 0 0; padding-left: 18px; white-space: normal; }
+  .blk.verdict .blocking { color: var(--red); }
+  .blk.overseer::before { content: "◆"; color: var(--blue); }
+  .blk.overseer .act { color: var(--blue); font-weight: 700; }
+  .blk.note::before { content: "※"; color: var(--yellow); }
+  .blk.trusted::before { content: "✓"; color: var(--green); }
+  .blk.run-end { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--panel); white-space: normal; }
+  .blk.run-end::before { content: none; }
+  .blk.run-end.done { border-color: #4eba6588; } .blk.run-end.failed, .blk.run-end.stopped { border-color: #ff6b8088; }
+  .md code { background: var(--panel-2); padding: 0 4px; border-radius: 3px; }
+  .md strong { color: #fff; }
+  #jump { display: none; position: sticky; bottom: 10px; margin: 0 auto; width: max-content; padding: 4px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
+  #jump.show { display: block; }
+
+  /* bottom dock: permission prompt or status line + decision input */
+  #dock { flex: none; border-top: 1px solid var(--line); background: var(--bg); padding: 10px 22px 12px; }
+  #dock .inner { max-width: 960px; margin: 0 auto; }
+  .prompt { border: 1px solid var(--blue); border-radius: 8px; padding: 10px 14px; }
+  .prompt .title { color: var(--blue); font-weight: 700; }
+  .prompt .count { color: var(--dim); float: right; }
+  .prompt .body { margin: 8px 0; padding: 8px 10px; background: var(--panel); border-radius: 6px; max-height: 34vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .prompt .body .add { color: var(--green); } .prompt .body .del { color: var(--red); }
+  .prompt .why { color: var(--dim); }
+  .prompt .q { margin: 8px 0 4px; }
+  .opt { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 2px 0 2px 18px; position: relative; cursor: pointer; color: var(--dim); }
+  .opt:hover, .opt.sel { color: var(--text); }
+  .opt.sel::before { content: "❯"; position: absolute; left: 0; color: var(--blue); }
+  .opt .k { color: var(--faint); }
+  .feedback { display: none; margin-top: 6px; }
+  .feedback.open { display: flex; gap: 8px; }
+  .feedback input { flex: 1; }
+  .hintline { color: var(--faint); margin-top: 6px; font-size: 12px; }
+  .statusline { color: var(--dim); margin-bottom: 8px; min-height: 20px; }
+  .statusline .spin { color: var(--accent); display: inline-block; width: 14px; }
+  .inputrow { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .inputrow span { color: var(--dim); }
+  input[type=text] { flex: 1; background: none; border: 0; outline: none; color: var(--text); font: inherit; }
+  .inputrow:focus-within { border-color: var(--dim); }
+  .smallbtn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
 </style>
 </head>
 <body>
 <header>
-  <h1>agent-loop</h1>
+  <span class="brand">✻ agent-loop</span>
+  <span id="task" title="">waiting for a run…</span>
+  <span id="run-state">idle</span>
+  <span class="stat">⏱ <b id="elapsed">0s</b></span>
+  <span class="stat">$ <b id="cost">0.00</b></span>
   <span id="status">connecting…</span>
 </header>
-<div id="pending-banner"></div>
-<div id="browser-panel"></div>
-<form id="decision-form" title="This is the only kind of decision the Overseer treats as settled — a worker writing to DECISIONS.md is just a proposal.">
-  <input id="decision-input" type="text" placeholder="Record a decision the Overseer should treat as settled…" />
-  <button type="submit">Record</button>
-</form>
-<main id="timeline"></main>
+<nav id="stepper"></nav>
+<div class="body">
+  <div id="scroll">
+    <main id="transcript"></main>
+    <button id="jump">↓ new activity</button>
+  </div>
+  <aside>
+    <h3>Run</h3>
+    <div class="kv">Approvals asked <b id="s-asked">0</b></div>
+    <div class="kv">Approved / rejected <b id="s-ok">0 / 0</b></div>
+    <div class="kv">Auto-allowed by rule <b id="s-auto">0</b></div>
+    <div class="kv">Tool calls <b id="s-tools">0</b></div>
+    <div id="rules" class="muted"></div>
+    <div id="browser-panel"></div>
+    <h3>Files changed</h3>
+    <div id="files" class="files"><span class="muted">none yet</span></div>
+    <h3>Decisions</h3>
+    <div id="decisions"><span class="muted">none yet</span></div>
+  </aside>
+</div>
+<div id="dock"><div class="inner" id="dock-inner"></div></div>
+
 <script>
-const timeline = document.getElementById("timeline");
-const statusEl = document.getElementById("status");
-const banner = document.getElementById("pending-banner");
-let pendingCount = 0;
+const PHASES = ["planner", "test-designer", "builder", "verifier", "gatekeeper"];
+const $ = (id) => document.getElementById(id);
+const scrollBox = $("scroll"), transcript = $("transcript"), dockInner = $("dock-inner");
+const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 
-function updateBanner() {
-  if (pendingCount > 0) {
-    banner.style.display = "block";
-    banner.textContent = pendingCount + " tool call" + (pendingCount > 1 ? "s" : "") + " waiting for your approval";
-  } else {
-    banner.style.display = "none";
-  }
+const state = {
+  runId: null, phase: null, task: "", status: "idle", startedAt: null, endedAt: null, cost: 0,
+  phaseState: {}, phaseCost: {}, repairs: {}, tools: new Map(), pending: [], sel: 0,
+  asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], files: new Map(), decisions: [],
+  live: false, ws: null,
+};
+
+// ---------- helpers
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function md(s) {
+  // Deliberately tiny: bold, inline code, bullets. Everything is escaped first.
+  return esc(s)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/^#{1,6} (.*)$/gm, "<strong>$1</strong>")
+    .replace(/^(\s*)[-*] /gm, "$1• ");
 }
-
-function card(cls, html) {
-  const div = document.createElement("div");
-  div.className = "card " + cls;
-  div.innerHTML = html;
-  timeline.appendChild(div);
-  window.scrollTo(0, document.body.scrollHeight);
-  return div;
-}
-
-function esc(s) {
-  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-}
-
-function meta(text) {
-  return '<div class="meta">' + esc(text) + "</div>";
-}
-
-/** /artifacts/<runId>/<file> requires the same per-run token as the WebSocket -- screenshots can
- * contain real page content, so they get the same access control as everything else here. */
+function fmtTime(ms) { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
+function short(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function rel(p) { const d = (state.workDir || ""); p = String(p ?? ""); return d && p.startsWith(d + "/") ? p.slice(d.length + 1) : p; }
+const REPLAY = Array.isArray(window.__REPLAY__) ? window.__REPLAY__ : null;
 function artifactUrl(runId, filePath) {
-  const base = filePath.split(/[\\/]/).pop();
+  const base = String(filePath).split(/[\\/]/).pop();
+  // A saved report sits next to its run's artifacts, so a relative path works straight from disk.
+  if (REPLAY) return encodeURIComponent(base);
   return "/artifacts/" + encodeURIComponent(runId) + "/" + encodeURIComponent(base) + "?token=" + encodeURIComponent(token);
 }
+function nearBottom() { return scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight < 140; }
+function add(el) {
+  const stick = nearBottom();
+  transcript.appendChild(el);
+  if (stick) scrollBox.scrollTop = scrollBox.scrollHeight; else $("jump").classList.add("show");
+  return el;
+}
+function blk(cls, html) { const d = document.createElement("div"); d.className = "blk " + cls; d.innerHTML = html; return add(d); }
+$("jump").onclick = () => { scrollBox.scrollTop = scrollBox.scrollHeight; $("jump").classList.remove("show"); };
+scrollBox.addEventListener("scroll", () => { if (nearBottom()) $("jump").classList.remove("show"); });
 
-const browserPanel = document.getElementById("browser-panel");
-function renderBrowserPanel() {
-  if (!browserPanel.dataset.active) {
-    browserPanel.classList.remove("live");
+/** "Bash(npm test)", "Write(src/app.js)", "browser.open(http://…)" -- the one-line label Claude Code uses. */
+function toolLabel(name, input) {
+  input = input || {};
+  const b = name.match(/^mcp__browser__(\w+)$/);
+  if (b) return ["browser." + b[1], input.url || input.selector || input.text || input.key || ""];
+  switch (name) {
+    case "Bash": return ["Bash", short(input.command, 110)];
+    case "Read": case "Write": case "Edit": case "NotebookEdit": return [name, rel(input.file_path || input.notebook_path)];
+    case "Glob": return ["Glob", input.pattern];
+    case "Grep": return ["Grep", '"' + short(input.pattern, 60) + '"' + (input.path ? " in " + rel(input.path) : "")];
+    default: return [name, short(JSON.stringify(input), 90)];
+  }
+}
+/** Output collapsed to 3 lines with "+N lines", like Claude Code; click to expand. */
+/** Rule names as a person reads them: browser.click, not mcp__browser__click; long paths shortened. */
+function prettyRule(r) {
+  return String(r).split(", ").map((x) => short(x.replace(/^mcp__browser__/, "browser."), 48)).join(", ");
+}
+function outputHtml(text, isErr) {
+  const lines = String(text ?? "").replace(/\s+$/, "").split("\n").map((l) => (l.length > 400 ? l.slice(0, 400) + " …" : l));
+  if (!lines[0]) lines[0] = "(no output)";
+  const head = lines.slice(0, 3), rest = lines.length - 3;
+  const fmt = (ls) => ls.map((l, i) => (i === 0 ? '<span class="gut">⎿  </span>' : "   ") + esc(l)).join("\n");
+  return '<div class="out' + (isErr ? " err" : "") + '">' + fmt(head) +
+    (rest > 0 ? '\n   <span class="more" data-full="' + esc(lines.join("\n")) + '">… +' + rest + " lines (click to expand)</span>" : "") + "</div>";
+}
+transcript.addEventListener("click", (e) => {
+  const more = e.target.closest(".more");
+  if (more) { const out = more.closest(".out"); out.innerHTML = '<span class="gut">⎿  </span>' + esc(more.dataset.full).replace(/\n/g, "\n   "); return; }
+  const th = e.target.closest(".blk.thinking");
+  if (th) th.classList.toggle("open");
+});
+
+// ---------- header, stepper, side panel
+function renderStepper() {
+  const nav = $("stepper");
+  nav.innerHTML = PHASES.map((p) => {
+    const st = state.phaseState[p] || "pending";
+    const icon = { pending: "○", active: "◐", pass: "✓", fail: "✗", skipped: "–" }[st];
+    const reps = state.repairs[p] ? '<span class="badge">↺' + state.repairs[p] + "</span>" : "";
+    const cost = state.phaseCost[p] ? '<span class="cost">$' + state.phaseCost[p].toFixed(2) + "</span>" : "";
+    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"><span class="icon">' + icon + "</span>" + p + reps + cost + "</button>";
+  }).join("");
+}
+$("stepper").addEventListener("click", (e) => {
+  const step = e.target.closest(".step"); if (!step) return;
+  const sep = [...transcript.querySelectorAll('.phase-sep[data-phase="' + step.dataset.phase + '"]')].pop();
+  if (sep) sep.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+function renderHeader() {
+  $("task").textContent = state.task || "waiting for a run…"; $("task").title = state.task;
+  const rs = $("run-state"); rs.textContent = state.status; rs.className = state.status;
+  $("cost").textContent = state.cost.toFixed(2);
+  $("s-asked").textContent = state.asked; $("s-ok").textContent = state.approved + " / " + state.rejected;
+  $("s-auto").textContent = state.auto; $("s-tools").textContent = state.toolCount;
+  $("rules").innerHTML = state.rules.length
+    ? "<h3>Don't ask again</h3>" + state.rules.flatMap((r) => r.split(", ")).map((r) => '<div class="rule" title="' + esc(r) + '">' + esc(prettyRule(r)) + "</div>").join("")
+    : "";
+  const files = [...state.files.entries()];
+  $("files").innerHTML = files.length ? files.map(([f, k]) => '<div class="' + (k === "Write" ? "w" : "e") + '" title="' + esc(f) + '">' + (k === "Write" ? "+ " : "~ ") + esc(rel(f)) + "</div>").join("") : '<span class="muted">none yet</span>';
+  $("decisions").innerHTML = state.decisions.length ? state.decisions.map((d) => "<div>" + (d.trusted ? "✓ " : "? ") + esc(short(d.text, 140)) + "</div>").join("") : '<span class="muted">none yet</span>';
+  document.title = (state.pending.length ? "(" + state.pending.length + ") approval needed · " : "") + "agent-loop";
+}
+setInterval(() => {
+  if (!state.startedAt) return;
+  $("elapsed").textContent = fmtTime((state.endedAt || Date.now()) - state.startedAt);
+  if (!state.pending.length) renderDock();
+}, 1000);
+// The dock is rebuilt whenever the pending prompt changes; an explicit mode avoids rebuilding the idle input.
+
+const browserPanel = $("browser-panel");
+function renderBrowserPanel(d) {
+  browserPanel.classList.add("live");
+  browserPanel.innerHTML = "<h3>Browser · " + esc(d.status || "active") + "</h3>" +
+    "<div>" + esc(d.title || "(no page loaded yet)") + "</div>" +
+    (d.url ? '<div class="url">' + esc(d.url) + "</div>" : "") +
+    (d.shot ? '<a href="' + artifactUrl(d.runId, d.shot) + '" target="_blank"><img src="' + artifactUrl(d.runId, d.shot) + '" /></a>' : "") +
+    (d.video ? '<a class="url" href="' + artifactUrl(d.runId, d.video) + '" target="_blank">▶ session recording (.webm)</a>' : "");
+}
+const browserState = {};
+
+// ---------- the bottom dock: permission prompt (Claude Code style) or status line
+function promptBody(ev) {
+  const i = ev.toolInput || {};
+  const lines = (s, cls, sign) => String(s ?? "").split("\n").slice(0, 60).map((l) => '<span class="' + cls + '">' + sign + " " + esc(l) + "</span>").join("\n");
+  const b = ev.toolName.match(/^mcp__browser__(\w+)$/);
+  if (ev.toolName === "Bash") return ["Bash command", esc(i.command) + (i.description ? '\n<span class="why">' + esc(i.description) + "</span>" : "")];
+  if (ev.toolName === "Write") return ["Create file " + rel(i.file_path), lines(i.content, "add", "+")];
+  if (ev.toolName === "Edit") return ["Edit file " + rel(i.file_path), lines(i.old_string, "del", "-") + "\n" + lines(i.new_string, "add", "+")];
+  if (b) return ["Browser: " + b[1], esc(JSON.stringify(i, null, 2))];
+  return [ev.toolName, esc(JSON.stringify(i, null, 2))];
+}
+function renderDock() {
+  const ev = state.pending[0];
+  if (!ev && REPLAY) {
+    dockInner.innerHTML = '<div class="statusline muted">Saved report · read-only · run ' + esc(state.status) + "</div>";
     return;
   }
-  browserPanel.classList.add("live");
-  const url = browserPanel.dataset.url || "";
-  const title = browserPanel.dataset.title || "";
-  const shot = browserPanel.dataset.shot || "";
-  const runId = browserPanel.dataset.runId || "";
-  const status = browserPanel.dataset.status || "active";
-  browserPanel.innerHTML =
-    '<div class="meta">Browser session — ' + esc(status) + "</div>" +
-    "<b>" + esc(title || "(no page loaded yet)") + "</b>" +
-    (url ? "<div class=\"meta\">" + esc(url) + "</div>" : "") +
-    (shot ? '<a href="' + artifactUrl(runId, shot) + '" target="_blank"><img src="' + artifactUrl(runId, shot) + '" /></a>' : "");
+  if (!ev) {
+    const running = state.status === "running";
+    const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(Date.now() / 1000) % 10];
+    const status = running
+      ? '<span class="spin">' + spin + "</span> " + esc(state.phase || "starting") + " is working… <span class=\"muted\">(" + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
+      : state.status === "idle" ? '<span class="muted">Waiting for a run to start.</span>'
+      : "Run " + esc(state.status) + "." + (state.reportPath ? ' <span class="muted">Saved report: ' + esc(state.reportPath) + "</span>" : "");
+    // Only the status text changes each tick; the input is built once so typing never loses focus.
+    if (dockInner.dataset.mode === "idle") { dockInner.querySelector(".statusline").innerHTML = status; return; }
+    dockInner.dataset.mode = "idle";
+    dockInner.innerHTML =
+      '<div class="statusline">' + status + "</div>" +
+      '<form class="inputrow" id="decide"><span>&gt;</span><input id="decision-input" type="text" autocomplete="off" placeholder="Record a decision the Overseer must treat as settled (Enter)" /></form>';
+    const f = $("decide"), inp = $("decision-input");
+    f.onsubmit = (e) => {
+      e.preventDefault(); const text = inp.value.trim();
+      if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+      state.ws.send(JSON.stringify({ type: "record-decision", runId: state.runId, phase: state.phase || "planner", text }));
+      inp.value = "";
+    };
+    return;
+  }
+  dockInner.dataset.mode = "prompt";
+  const [title, body] = promptBody(ev);
+  const opts = [
+    ["allow", "Yes"],
+    ...(ev.rule ? [["remember", "Yes, and don't ask again for <code>" + esc(prettyRule(ev.rule)) + "</code> this run"]] : []),
+    ["deny", "No, and tell the agent what to do differently <span class=\"k\">(esc)</span>"],
+  ];
+  state.sel = Math.min(state.sel, opts.length - 1);
+  dockInner.innerHTML =
+    '<div class="prompt" id="prompt" data-request="' + esc(ev.requestId) + '">' +
+    '<span class="count">' + (state.pending.length > 1 ? "1 of " + state.pending.length + " waiting" : "") + "</span>" +
+    '<div class="title">' + esc(title) + '</div><div class="body">' + body + "</div>" +
+    '<div class="why">' + esc(ev.phase) + " wants to run this" + (ev.rule ? "" : " · chained/complex command: will ask every time") + "</div>" +
+    '<div class="q">Do you want to proceed?</div>' +
+    opts.map(([k, label], i) => '<button class="opt' + (i === state.sel ? " sel" : "") + '" data-choice="' + k + '"><span class="k">' + (i + 1) + ".</span> " + label + "</button>").join("") +
+    '<form class="feedback" id="fb"><input type="text" id="fb-text" placeholder="What should it do instead? (Enter to send, Esc to cancel)" /><button class="smallbtn">Send</button></form>' +
+    '<div class="hintline">1–' + opts.length + " or ↑↓ + Enter · y = yes · n / esc = no</div></div>";
+  dockInner.querySelectorAll(".opt").forEach((b) => (b.onclick = () => choose(b.dataset.choice)));
+  $("fb").onsubmit = (e) => { e.preventDefault(); send(ev, "deny", $("fb-text").value.trim() || undefined); };
+}
+function choose(choice) {
+  const ev = state.pending[0]; if (!ev) return;
+  if (choice === "deny") { $("fb").classList.add("open"); $("fb-text").focus(); return; }
+  send(ev, "allow", undefined, choice === "remember");
+}
+function send(ev, decision, reason, remember) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision, reason, remember: !!remember }));
+  state.pending = state.pending.filter((p) => p.requestId !== ev.requestId);
+  state.sel = 0; renderDock(); renderHeader();
+}
+document.addEventListener("keydown", (e) => {
+  if (!state.pending.length) return;
+  const fbOpen = $("fb") && $("fb").classList.contains("open");
+  if (fbOpen) { if (e.key === "Escape") { $("fb").classList.remove("open"); } return; }
+  if (e.target.tagName === "INPUT") return;
+  const opts = [...dockInner.querySelectorAll(".opt")];
+  if (/^[1-9]$/.test(e.key) && opts[+e.key - 1]) { e.preventDefault(); choose(opts[+e.key - 1].dataset.choice); }
+  else if (e.key === "y") { e.preventDefault(); choose("allow"); }
+  else if (e.key === "n" || e.key === "Escape") { e.preventDefault(); choose("deny"); }
+  else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); state.sel = (state.sel + (e.key === "ArrowDown" ? 1 : opts.length - 1)) % opts.length; renderDock(); }
+  else if (e.key === "Enter") { e.preventDefault(); choose(opts[state.sel].dataset.choice); }
+});
+
+// ---------- events -> transcript
+function toolBlock(id) { return state.tools.get(id); }
+function tagTool(id, cls, text) {
+  const t = toolBlock(id); if (!t) return;
+  let tag = t.querySelector(".tag"); if (!tag) { tag = document.createElement("span"); t.querySelector(".line").appendChild(tag); }
+  tag.className = "tag " + cls; tag.textContent = text;
 }
 
-// The per-run token comes from the URL agent-loop prints (#token=…); the server refuses the
-// socket without it.
-const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
-// requestId -> approval card, so a request replayed on reconnect isn't shown twice and a request
-// resolved from another tab has its buttons disabled here too.
-const approvalCards = new Map();
-let activeWs = null;
-let currentRunId = null;
-let currentPhase = null;
+function render(ev) {
+  if (ev.runId) state.runId = ev.runId;
+  if (ev.phase) state.phase = ev.phase;
+  switch (ev.type) {
+    case "run-start":
+      Object.assign(state, { task: ev.task, workDir: ev.workDir || "", status: "running", startedAt: Date.parse(ev.ts), endedAt: null });
+      blk("text md", "<strong>Task:</strong> " + md(ev.task));
+      break;
+    case "run-end":
+      state.status = ev.status; state.endedAt = Date.parse(ev.ts);
+      blk("run-end " + ev.status,
+        "<strong>Run " + esc(ev.status) + "</strong> · " + fmtTime(state.endedAt - state.startedAt) + " · $" + state.cost.toFixed(2) +
+        " · " + state.asked + " approval prompts (" + state.approved + " yes, " + state.rejected + " no, " + state.auto + " by rule) · " + state.toolCount + " tool calls");
+      break;
+    case "phase-start": {
+      state.phaseState[ev.phase] = "active";
+      const d = document.createElement("div"); d.className = "phase-sep"; d.dataset.phase = ev.phase;
+      d.innerHTML = "<b>" + esc(ev.phase) + "</b>" + (ev.attempt > 1 ? " · attempt " + ev.attempt : "");
+      add(d);
+      break;
+    }
+    case "phase-end": {
+      const v = ev.verdict; const skipped = v.headline === "Skipped";
+      state.phaseState[ev.phase] = skipped ? "skipped" : v.outcome === "pass" ? "pass" : "fail";
+      const list = (arr, cls) => arr && arr.length ? "<ul class=\"" + cls + "\">" + arr.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>" : "";
+      blk("verdict " + (v.outcome === "pass" ? "pass" : "fail"),
+        '<span class="head">' + esc(ev.phase) + ": " + esc(v.headline) + '</span> <span class="tag ' + (v.outcome === "pass" ? "ok" : "no") + '">' + esc(skipped ? "skipped" : v.outcome) + "</span>" +
+        (v.details ? '<div class="md muted">' + md(short(v.details, 600)) + "</div>" : "") +
+        list(v.blockingFindings, "blocking") + list(v.concerns, "muted"));
+      break;
+    }
+    case "overseer-decision": {
+      const d = ev.decision;
+      if (d.action === "repair") { const t = d.repairTarget || ev.phase; state.repairs[t] = (state.repairs[t] || 0) + 1; }
+      blk("overseer", 'Overseer → <span class="act">' + esc(d.action.toUpperCase()) + "</span>" + (d.repairTarget ? " " + esc(d.repairTarget) : "") +
+        ' <span class="muted">· ' + esc(d.reasoning) + "</span>" + (d.feedbackForRepair ? '\n<span class="muted">⎿  ' + esc(d.feedbackForRepair) + "</span>" : ""));
+      break;
+    }
+    case "assistant-text":
+      // The phase's final ```json verdict block is shown as the verdict line instead.
+      { const text = ev.text.replace(/```json[\s\S]*?```\s*$/, "").trim(); if (text) blk("text md", md(text)); }
+      break;
+    case "thinking":
+      if (ev.text) blk("thinking", '<span class="hint">Thinking… (click to expand)</span><span class="full">' + esc(ev.text) + "</span>");
+      break;
+    case "tool-call": {
+      state.toolCount++;
+      const [name, args] = toolLabel(ev.toolName, ev.toolInput);
+      const el = blk("tool", '<div class="line"><span class="name">' + esc(name) + '</span><span class="args">(' + esc(args) + ")</span></div>");
+      state.tools.set(ev.toolUseId, el);
+      if (ev.toolName === "Write" || ev.toolName === "Edit") {
+        const f = ev.toolInput?.file_path; if (f && !state.files.has(f)) state.files.set(f, ev.toolName);
+      }
+      break;
+    }
+    case "tool-result": {
+      const t = toolBlock(ev.toolUseId);
+      if (t) { t.insertAdjacentHTML("beforeend", outputHtml(ev.summary, ev.isError)); t.classList.add(ev.isError ? "err" : "ok"); if (nearBottom()) scrollBox.scrollTop = scrollBox.scrollHeight; }
+      else blk("tool " + (ev.isError ? "err" : "ok"), outputHtml(ev.summary, ev.isError));
+      break;
+    }
+    case "approval-request":
+      if (state.pending.some((p) => p.requestId === ev.requestId)) break;
+      state.asked++; state.pending.push(ev); tagTool(ev.toolUseId, "wait", "awaiting approval");
+      renderDock();
+      break;
+    case "approval-resolved":
+      state.pending = state.pending.filter((p) => p.requestId !== ev.requestId);
+      if (ev.decision === "allow") state.approved++; else state.rejected++;
+      if (ev.rememberedRule && !state.rules.includes(ev.rememberedRule)) state.rules.push(ev.rememberedRule);
+      tagTool(ev.toolUseId, ev.decision === "allow" ? "ok" : "no", ev.decision === "allow" ? (ev.rememberedRule ? "approved · rule saved" : "approved") : "rejected" + (ev.reason ? ": " + short(ev.reason, 60) : ""));
+      if (ev.decision === "deny") toolBlock(ev.toolUseId)?.classList.add("denied");
+      renderDock();
+      break;
+    case "approval-auto-allowed":
+      state.auto++; tagTool(ev.toolUseId, "ok", /read-only/.test(ev.rule) ? "read-only · no prompt" : "allowed by " + prettyRule(ev.rule));
+      break;
+    case "usage":
+      state.cost += ev.costUsd; state.phaseCost[ev.phase] = (state.phaseCost[ev.phase] || 0) + ev.costUsd;
+      break;
+    case "report-saved":
+      state.reportPath = ev.path;
+      if (!REPLAY) blk("note", 'Saved report <span class="muted">· open it any time, no server needed</span>\n<span class="muted">⎿  </span>' + esc(ev.path));
+      break;
+    case "decisions-log-updated":
+      state.decisions = state.decisions.filter((d) => d.trusted).concat([{ text: "DECISIONS.md (worker proposal): " + ev.content.trim().split("\n").slice(-3).join(" "), trusted: false }]);
+      blk("note", 'DECISIONS.md updated <span class="muted">· a worker\'s proposal, not settled until you record it below</span>' + outputHtml(ev.content));
+      break;
+    case "trusted-decision-recorded":
+      state.decisions.push({ text: ev.text, trusted: true });
+      blk("trusted", "Decision recorded <span class=\"muted\">· the Overseer now treats this as settled</span>\n<span class=\"muted\">⎿  </span>" + esc(ev.text));
+      break;
+    case "browser-session-started": Object.assign(browserState, { runId: ev.runId, status: "active" }); renderBrowserPanel(browserState); break;
+    case "browser-session-ended": browserState.status = ev.status; renderBrowserPanel(browserState); break;
+    case "browser-artifact-created":
+      if (ev.kind === "video") {
+        browserState.video = ev.path; renderBrowserPanel(browserState);
+        blk("note", 'Browser session recording <span class="muted">· what the agent actually did in the app</span>' +
+          '<video controls preload="metadata" style="display:block;max-width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px"' +
+          (browserState.shot ? ' poster="' + artifactUrl(ev.runId, browserState.shot) + '"' : "") + ' src="' + artifactUrl(ev.runId, ev.path) + '"></video>');
+      }
+      break;
+    case "browser-snapshot":
+      Object.assign(browserState, { runId: ev.runId, url: ev.url, title: ev.title, shot: ev.screenshotPath });
+      renderBrowserPanel(browserState);
+      break;
+    // browser-action-started/-completed duplicate the mcp__browser__* tool-call/result lines already
+    // in the transcript; screenshot artifacts are shown through the panel's latest snapshot.
+  }
+  renderStepper(); renderHeader();
+  if (!state.pending.length) renderDock();
+}
 
+// ---------- connection
 function connect() {
   if (!token) {
-    statusEl.textContent = "no token — open the full URL agent-loop printed (it ends in #token=…)";
+    $("status").textContent = "no token — open the full URL agent-loop printed (it ends in #token=…)";
+    $("status").className = "down";
     return;
   }
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?token=" + encodeURIComponent(token));
   ws.onopen = () => {
-    statusEl.textContent = "live";
-    activeWs = ws;
+    // The server replays the whole run to every new connection -- clear only once one is actually
+    // open, so a server that's gone never leaves you staring at an empty page.
+    resetForReplay();
+    $("status").textContent = "live"; $("status").className = "live"; state.ws = ws;
   };
   ws.onclose = () => {
-    statusEl.textContent = "disconnected — retrying…";
-    if (activeWs === ws) activeWs = null;
+    if (state.ws === ws) state.ws = null;
+    if (["done", "failed", "stopped"].includes(state.status)) {
+      $("status").textContent = "run over · live server stopped"; $("status").className = "down";
+      return; // nothing left to reconnect to; the transcript stays as it is
+    }
+    $("status").textContent = "disconnected — retrying…"; $("status").className = "down";
     setTimeout(connect, 1500);
   };
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
-    render(ev, ws);
+    if (ev.type === "replay-complete") { state.live = true; scrollBox.scrollTop = scrollBox.scrollHeight; renderDock(); return; }
+    render(ev);
   };
 }
-
-function render(ev, ws) {
-  const when = new Date(ev.ts).toLocaleTimeString();
-  switch (ev.type) {
-    case "run-start":
-      card("run", meta(when) + "<b>Run started</b><pre>" + esc(ev.task) + "</pre>");
-      break;
-    case "run-end":
-      card("run", meta(when) + "<b>Run finished:</b> " + esc(ev.status));
-      break;
-    case "phase-start":
-      card("phase-start", meta(when + " · " + ev.phase + " · attempt " + ev.attempt) + "<b>Phase started</b>");
-      break;
-    case "phase-end": {
-      const ok = ev.verdict.outcome === "pass";
-      card(
-        "phase-end " + (ok ? "ok" : "fail"),
-        meta(when + " · " + ev.phase + " · attempt " + ev.attempt + " · outcome: " + ev.verdict.outcome) +
-          "<b>" + (ok ? "✓ " : "✗ ") + esc(ev.verdict.headline) + "</b>" +
-          "<pre>" + esc(ev.verdict.details) + "</pre>" +
-          (ev.verdict.blockingFindings?.length ? "<pre>blocking:\n- " + ev.verdict.blockingFindings.map(esc).join("\n- ") + "</pre>" : "") +
-          (ev.verdict.concerns.length ? "<pre>concerns:\n- " + ev.verdict.concerns.map(esc).join("\n- ") + "</pre>" : "")
-      );
-      break;
-    }
-    case "overseer-decision":
-      card(
-        "overseer",
-        meta(when + " · overseer · after " + ev.phase) +
-          "<b>" + esc(ev.decision.action.toUpperCase()) + "</b>" +
-          (ev.decision.repairTarget ? " → " + esc(ev.decision.repairTarget) : "") +
-          " — " + esc(ev.decision.reasoning) +
-          (ev.decision.feedbackForRepair ? "<pre>feedback: " + esc(ev.decision.feedbackForRepair) + "</pre>" : "")
-      );
-      break;
-    case "assistant-text":
-      card("text", meta(when + " · " + ev.phase) + "<pre>" + esc(ev.text) + "</pre>");
-      break;
-    case "thinking":
-      card("thinking", meta(when + " · " + ev.phase + " · thinking") + "<pre>" + esc(ev.text) + "</pre>");
-      break;
-    case "tool-call":
-      card(
-        "tool-call",
-        meta(when + " · " + ev.phase) +
-          "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.toolInput, null, 2)) + "</pre>"
-      );
-      break;
-    case "tool-result":
-      card(
-        "tool-result " + (ev.isError ? "error" : ""),
-        meta(when + " · " + ev.phase) + "<pre>" + esc(ev.summary) + "</pre>"
-      );
-      break;
-    case "approval-request": {
-      if (approvalCards.has(ev.requestId)) break;
-      pendingCount++;
-      updateBanner();
-      const el = card(
-        "approval",
-        meta(when + " · " + ev.phase + " · awaiting approval") +
-          "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.toolInput, null, 2)) + "</pre>" +
-          '<div class="btns">' +
-          '<button class="allow">Approve</button>' +
-          '<button class="deny">Reject</button>' +
-          "</div>"
-      );
-      approvalCards.set(ev.requestId, el);
-      el.querySelector(".allow").onclick = () => {
-        ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision: "allow" }));
-        el.querySelectorAll("button").forEach((b) => (b.disabled = true));
-      };
-      el.querySelector(".deny").onclick = () => {
-        const reason = prompt("Reason for rejecting (optional):") || undefined;
-        ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision: "deny", reason }));
-        el.querySelectorAll("button").forEach((b) => (b.disabled = true));
-      };
-      break;
-    }
-    case "approval-resolved":
-      approvalCards.get(ev.requestId)?.querySelectorAll("button").forEach((b) => (b.disabled = true));
-      pendingCount = Math.max(0, pendingCount - 1);
-      updateBanner();
-      card(
-        "overseer",
-        meta(when + " · " + ev.phase) + "Approval " + esc(ev.decision) + (ev.reason ? ": " + esc(ev.reason) : "")
-      );
-      break;
-    case "decisions-log-updated":
-      card(
-        "decisions-log",
-        meta(when + " · DECISIONS.md updated (worker-written proposal — not settled until you record it below)") +
-          "<pre>" + esc(ev.content) + "</pre>"
-      );
-      break;
-    case "trusted-decision-recorded":
-      card(
-        "trusted-decision",
-        meta(when + " · " + ev.phase + " · decision recorded — the Overseer now treats this as settled") +
-          "<pre>" + esc(ev.text) + "</pre>"
-      );
-      break;
-    case "browser-session-started":
-      browserPanel.dataset.active = "1";
-      browserPanel.dataset.runId = ev.runId;
-      browserPanel.dataset.status = "active";
-      renderBrowserPanel();
-      card("browser-session", meta(when + " · browser session started"));
-      break;
-    case "browser-session-ended":
-      browserPanel.dataset.status = ev.status;
-      renderBrowserPanel();
-      card("browser-session", meta(when + " · browser session ended: " + esc(ev.status)));
-      break;
-    case "browser-action-started":
-      card(
-        "browser-action",
-        meta(when + " · browser") + "<b>" + esc(ev.toolName) + "</b><pre>" + esc(JSON.stringify(ev.input, null, 2)) + "</pre>"
-      );
-      break;
-    case "browser-action-completed":
-      card(
-        "browser-action " + (ev.isError ? "error" : ""),
-        meta(when + " · browser · " + ev.durationMs + "ms") +
-          "<b>" + (ev.isError ? "✗ " : "✓ ") + esc(ev.toolName) + "</b><pre>" + esc(ev.result) + "</pre>"
-      );
-      break;
-    case "browser-snapshot":
-      browserPanel.dataset.active = "1";
-      browserPanel.dataset.runId = ev.runId;
-      browserPanel.dataset.url = ev.url;
-      browserPanel.dataset.title = ev.title;
-      browserPanel.dataset.shot = ev.screenshotPath;
-      renderBrowserPanel();
-      break;
-    case "browser-artifact-created":
-      card(
-        "browser-session",
-        meta(when + " · browser artifact saved (" + esc(ev.kind) + ")") +
-          '<a href="' + artifactUrl(ev.runId, ev.path) + '" target="_blank">' + esc(ev.path.split(/[\\/]/).pop()) + "</a>"
-      );
-      break;
-  }
-  if (ev.runId) currentRunId = ev.runId;
-  if (ev.phase) currentPhase = ev.phase;
+/** The server replays the whole run on every (re)connect, so start from a clean slate each time. */
+function resetForReplay() {
+  transcript.innerHTML = ""; state.tools.clear(); state.files.clear();
+  Object.assign(state, { phaseState: {}, phaseCost: {}, repairs: {}, pending: [], cost: 0, asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], decisions: [], live: false });
 }
-
-connect();
-
-// A human-recorded decision is the only kind the Overseer treats as settled (see overseer.ts) --
-// unlike DECISIONS.md, which any worker phase can write to as an unverified proposal. This form
-// sends it straight over the already-authenticated WebSocket, so it's reachable only from this
-// page (same host/origin/token checks as every approval).
-const decisionForm = document.getElementById("decision-form");
-const decisionInput = document.getElementById("decision-input");
-decisionForm.onsubmit = (e) => {
-  e.preventDefault();
-  const text = decisionInput.value.trim();
-  if (!text || !activeWs || activeWs.readyState !== WebSocket.OPEN) return;
-  activeWs.send(JSON.stringify({ type: "record-decision", runId: currentRunId, phase: currentPhase || "planner", text }));
-  decisionInput.value = "";
-};
+renderStepper(); renderHeader();
+if (REPLAY) {
+  $("status").textContent = "saved report";
+  for (const ev of REPLAY) render(ev);
+  state.live = true;
+  renderDock();
+} else {
+  renderDock();
+  connect();
+}
 </script>
 </body>
 </html>
