@@ -163,6 +163,25 @@ Reloading the tab re-shows any approval still waiting. `--no-approval` skips
 the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
 unattended runs.
 
+## Browser Agent (Stage 1)
+
+Phases can drive a real, headless Chromium instance through seven tools — `open`, `inspect`, `click`, `fill`,
+`press`, `wait`, `screenshot` (`src/browser-tools.ts`) — registered as a real in-process MCP server via the
+SDK's own `createSdkMcpServer`/`tool()`. Custom tools surface as `mcp__browser__*` in the same `tool_name` field
+the existing safety/path-scope/sensitive-file/approval hooks already read, so a browser action gets exactly the
+same treatment as `Bash` or `Write`: never auto-approved, always visible in the live UI, always subject to the
+safety net. A `BrowserSessionManager` keeps one browser/page alive per run across agent-loop's separate
+per-phase SDK sessions, since the browser context needs to outlive any single phase call.
+
+Screenshot from a real run of these tools (`open` → `fill` → `click` → `screenshot`, driven by calling the tool
+handlers directly, not a canned image):
+
+![Browser Agent Stage 1 demo](docs/assets/browser-agent-stage1-demo.png)
+
+Deliberately scoped to local-only for now — `open` refuses anything but `http://localhost`/`127.0.0.1`. A real
+domain allowlist, cloud worker isolation, and multi-user auth are later stages, not this one; see
+`docs/STRESS-TEST-REPORT.md` for the full staged plan and what's still outstanding.
+
 ## Testing
 
 ```bash
@@ -171,6 +190,7 @@ npm run test:plumbing          # no LLM calls — store/bus/server/WebSocket wir
 npm run test:server            # no LLM calls — approval server access control + approval replay
 npm run test:scope             # no LLM calls — per-phase tool restriction, --dir path scoping, minimal env
 npm run test:data-dir          # no LLM calls — audit database location stays outside --dir
+npm run test:browser-tools     # no LLM calls — real Chromium, real DOM changes, real screenshot files
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided
