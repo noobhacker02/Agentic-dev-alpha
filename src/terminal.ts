@@ -30,12 +30,20 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
   const orange = c("38;5;173"), dim = c("2"), bold = c("1"), green = c("32"), red = c("31"), blue = c("38;5;147"), yellow = c("33");
   const width = () => Math.max(60, Math.min(out.columns ?? 100, 120));
   const write = (s: string) => out.write(s + "\n");
+  // Bash stdout/stderr, file content, a curl response body, and the model's own turn text (which
+  // can echo any of those back) all reach this terminal, and none of it is trustworthy: printed
+  // raw, a planted escape sequence could rewrite the terminal title, clear/overwrite what's on
+  // screen -- including the command text in the approval prompt a human is about to say yes to --
+  // or, via OSC 52 (which many terminal emulators honor), silently write to the real clipboard.
+  // Stripping every C0/C1 control byte except tab and newline removes anything that could ever
+  // start such a sequence, rather than trying to match specific known sequence shapes.
+  const strip = (s: string) => s.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
   const rel = (p: unknown) => {
-    const s = String(p ?? "");
+    const s = strip(String(p ?? ""));
     return opts.workDir && s.startsWith(opts.workDir + "/") ? s.slice(opts.workDir.length + 1) : s;
   };
   const short = (s: unknown, n: number) => {
-    const t = String(s ?? "").replace(/\s+/g, " ").trim();
+    const t = strip(String(s ?? "")).replace(/\s+/g, " ").trim();
     return t.length > n ? t.slice(0, n - 1) + "…" : t;
   };
   const label = (name: string, i: Record<string, unknown> = {}) => {
@@ -65,10 +73,10 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     const i = (active.toolInput ?? {}) as Record<string, unknown>;
     const title = active.toolName === "Bash" ? "Bash command" : active.toolName === "Write" ? `Create file ${rel(i.file_path)}` : active.toolName === "Edit" ? `Edit file ${rel(i.file_path)}` : active.toolName;
     const body =
-      active.toolName === "Bash" ? String(i.command ?? "")
-      : active.toolName === "Write" ? String(i.content ?? "").split("\n").slice(0, 12).map((l) => green("+ " + l)).join("\n")
-      : active.toolName === "Edit" ? [...String(i.old_string ?? "").split("\n").slice(0, 6).map((l) => red("- " + l)), ...String(i.new_string ?? "").split("\n").slice(0, 6).map((l) => green("+ " + l))].join("\n")
-      : JSON.stringify(i, null, 2);
+      active.toolName === "Bash" ? strip(String(i.command ?? ""))
+      : active.toolName === "Write" ? strip(String(i.content ?? "")).split("\n").slice(0, 12).map((l) => green("+ " + l)).join("\n")
+      : active.toolName === "Edit" ? [...strip(String(i.old_string ?? "")).split("\n").slice(0, 6).map((l) => red("- " + l)), ...strip(String(i.new_string ?? "")).split("\n").slice(0, 6).map((l) => green("+ " + l))].join("\n")
+      : strip(JSON.stringify(i, null, 2));
     const bar = blue("│");
     const lines = [
       "",
@@ -134,13 +142,13 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     switch (ev.type) {
       case "run-start":
         startedAt = Date.parse(ev.ts);
-        write(`\n${orange("✻")} ${bold("agent-loop")} ${dim("·")} ${ev.task}`);
+        write(`\n${orange("✻")} ${bold("agent-loop")} ${dim("·")} ${strip(ev.task)}`);
         break;
       case "phase-start":
         write(`\n${orange(bold(ev.phase))}${ev.attempt > 1 ? dim(` · attempt ${ev.attempt}`) : ""} ${dim("─".repeat(Math.max(4, width() - ev.phase.length - 16)))}`);
         break;
       case "assistant-text": {
-        const text = ev.text.replace(/```json[\s\S]*?```\s*$/, "").trim();
+        const text = strip(ev.text).replace(/```json[\s\S]*?```\s*$/, "").trim();
         if (!text) break;
         const lines = text.split("\n").filter((l) => l.trim());
         write(`⏺ ${lines.slice(0, 4).join("\n  ")}${lines.length > 4 ? dim(`\n  … +${lines.length - 4} lines`) : ""}`);
@@ -180,7 +188,7 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
       case "phase-end": {
         const v = ev.verdict;
         const ok = v.outcome === "pass";
-        write(`${ok ? green("✓") : red("✗")} ${bold(`${ev.phase}: ${v.headline}`)} ${dim(v.headline === "Skipped" ? "(skipped)" : `(${v.outcome})`)}`);
+        write(`${ok ? green("✓") : red("✗")} ${bold(`${ev.phase}: ${strip(v.headline)}`)} ${dim(v.headline === "Skipped" ? "(skipped)" : `(${v.outcome})`)}`);
         for (const f of v.blockingFindings ?? []) write(`  ${red("• " + short(f, width() - 6))}`);
         break;
       }

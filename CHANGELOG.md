@@ -89,6 +89,29 @@ All notable changes to this project are documented here. Format follows
   package managers, including the two-package collision case, while confirming `npm run build` is
   untouched. All 11 suites and `pipeline_logic.sh` still pass.
 
+- **The terminal transcript printed attacker-reachable content straight to the real terminal, raw
+  control bytes and all.** Continuing the same adversarial pass onto `src/terminal.ts` (new,
+  previously untested beyond its own feature tests). Bash stdout/stderr, file content, a curl
+  response body, and the model's own turn text (which can echo any of those back) all flow into
+  this transcript unsanitized -- and, worst of all, into the approval prompt body itself, the exact
+  text a human reads before clicking "approve". Confirmed empirically: a `tool-result` summary
+  and `assistant-text` carrying a raw OSC 52 escape sequence (which many terminal emulators honor
+  as "write this to the system clipboard") reached the real output byte-for-byte; a `Write` tool's
+  `content` carrying a CSI screen-clear sequence reached the approval prompt itself, meaning
+  attacker-controlled file content could rewrite what the terminal displays while a human is
+  deciding whether to approve it.
+  - Fixed with a `strip()` that removes every C0 control byte except tab/newline and every C1
+    control byte (0x00-0x08, 0x0B-0x1F, 0x7F-0x9F) -- removing every byte that can ever *start* an
+    escape sequence, rather than pattern-matching specific known sequence shapes, which can always
+    be incomplete. Applied at the source (`short()`, `rel()`, the approval prompt's `body`,
+    assistant text, the run's task string, and a phase's verdict headline) so it always runs before
+    our own intentionally-added color codes are wrapped around it, never after -- stripping the
+    finished, colored string would have eaten our own escapes too.
+  - Re-verified: the same OSC 52 / screen-clear payloads now render as inert visible text (no ESC
+    byte, so no sequence for the terminal to interpret) in both the transcript and the approval
+    prompt. New regression test (`test/terminal.mjs`) covers tool output, model text, and the
+    approval-prompt body. All 11 suites and `pipeline_logic.sh` still pass.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.

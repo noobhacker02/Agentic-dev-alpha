@@ -55,6 +55,24 @@ assert.ok(text.includes("✗ builder: Tests fail (fail)") && text.includes("• 
 assert.ok(text.includes("◆ Overseer → REPAIR builder"));
 assert.ok(/Run failed · \d+s · \$0\.42/.test(text), "the run summary carries total cost");
 console.log("[ok] verdicts, Overseer decisions and a cost summary print");
+
+// --- terminal escape/control bytes in untrusted content (tool output, file content, the model's
+// own text) must never reach the real terminal raw: a planted OSC 52 can silently write to the
+// system clipboard, and a CSI screen-clear/cursor-move could rewrite what a human sees in the
+// approval prompt they're about to say yes to.
+const OSC52 = "\x1b]52;c;ZGF0YQ==\x07";
+const CLEAR = "\x1b[2J\x1b[H";
+text = "";
+bus.emitEvent({ type: "tool-call", runId, phase: "builder", toolUseId: "t5", toolName: "Bash", toolInput: { command: "curl http://localhost:8080/data" }, ts: ts() });
+bus.emitEvent({ type: "tool-result", runId, phase: "builder", toolUseId: "t5", toolName: "", isError: false, summary: `ok ${OSC52} done`, ts: ts() });
+bus.emitEvent({ type: "assistant-text", runId, phase: "builder", text: `Found: ${OSC52}`, ts: ts() });
+bus.requestApproval({ runId, phase: "builder", toolUseId: "t6", toolName: "Write", toolInput: { file_path: "/w/a.txt", content: `${CLEAR}looks safe` } });
+await tick();
+assert.ok(!text.includes("\x1b]52"), "OSC 52 (clipboard write) never reaches the real terminal, from tool output or model text");
+assert.ok(!text.includes("\x1b[2J"), "a CSI screen-clear in file content shown in the approval prompt is stripped, not executed");
+assert.ok(text.includes("looks safe"), "the harmless remainder of the content still renders");
+console.log("[ok] escape/control bytes in tool output, model text, and the approval prompt body are stripped");
+
 term.detach();
 console.log("\n--- sample ---\n" + text.split("\n").slice(0, 14).join("\n"));
 console.log("\nALL TERMINAL TESTS PASSED");
