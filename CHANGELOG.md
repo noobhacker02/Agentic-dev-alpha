@@ -40,6 +40,36 @@ All notable changes to this project are documented here. Format follows
 - agent-loop's own git hooks ran an outdated copy of the scanner (3 of 19 secret formats). They're
   synced to Dev-Skill's hardened version.
 
+### Security
+- **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh
+  adversarial pass on the Browser Agent (new code from this session, previously only checked by my
+  own feature-correctness tests, never an independent attempt to break it) found one real gap and
+  fixed it.
+  - `open()`'s `http://localhost`/`127.0.0.1`-only restriction was checked exactly once, on `open()`'s
+    own argument. Nothing stopped a page loaded from an allowed local origin from then navigating
+    itself elsewhere via a link click, a JS redirect, a form submit, or a background fetch/XHR --
+    none of those ever call `open()` at all. Confirmed empirically before fixing: a demo page with a
+    link to a second server, clicked via `click()`, navigated the browser there with zero
+    re-validation; pointed at a real external host, a background `fetch()` succeeded and a link click
+    actually left the local origin.
+  - Fixed by registering `context.route("**/*", ...)` on every browser session, aborting any
+    navigation or sub-resource request -- from any page, at any point -- that isn't local. `open()`'s
+    own check and the new route guard now share one function (`isAllowedBrowserUrl`) so they can't
+    drift apart. Re-verified: the same scenario now shows the fetch failing and the click landing on
+    Chromium's own blocked-navigation error page.
+  - Checked and confirmed already safe, no code change needed: the `open()` URL regex against
+    realistic bypass attempts (userinfo tricks, subdomain tricks, alternate loopback encodings,
+    protocol confusion -- verified empirically against the real regex, not just reasoned about), and
+    path traversal against `/artifacts/<runId>/<file>` (`server.ts` uses `path.join`, not
+    `path.resolve`, which never lets a later absolute-looking segment escape the base directory --
+    confirmed with a real request against a real server and a real secret file placed outside
+    `artifactRoot`).
+  - Added a screenshot cap (50 per session) as cheap hardening against a runaway or adversarial phase
+    filling disk -- there was no size or rate limit at all before this.
+  - New permanent regression tests (no LLM calls): the containment case, the traversal case (three
+    different encodings against a real secret file), and the screenshot cap (50 real screenshots
+    succeed, the 51st is refused). All existing suites and `pipeline_logic.sh` scenarios still pass.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.
