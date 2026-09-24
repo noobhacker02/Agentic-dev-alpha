@@ -5,6 +5,58 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Verdict/acceptance conflation, single-phase-only retries, and two terminal-state gaps** — findings
+  F1–F4 of the engineering review of both projects, all confirmed live via the repo's own
+  deterministic fake-SDK harness (`test/stress/pipeline_logic.sh`) before being fixed, and
+  re-verified against the same harness afterward. Full detail in
+  [`docs/STRESS-TEST-REPORT.md`](docs/STRESS-TEST-REPORT.md)'s "Pipeline logic" section and fix plan.
+
+  **F1 — a phase could report success while describing a real problem.** `PhaseVerdict`'s single
+  `success` boolean came with instructions telling workers to "set it true even if you found
+  problems to report." Replaced with `completed` (did the phase finish acting) and a strict
+  `outcome` enum (`pass`/`fail`/`blocked`/`inconclusive`). `parseVerdict` now validates types and
+  enum values strictly instead of `!!parsed.success` — which made the *string* `"false"` coerce to
+  `true` — so anything malformed becomes `"inconclusive"`, never a silent pass. Critically, pipeline
+  code now has final say regardless of what the Overseer's own text says: `verdict.outcome !== "pass"`
+  can never result in `continue`. Before: a gatekeeper NO-GO with the Overseer saying "continue"
+  ended the run `done`, exit 0. After: `failed`.
+
+  **F2 — a retry could only target the phase that just ran.** A verifier that found a real
+  implementation bug had no way to route the fix to the builder; everything looped back to itself.
+  `OverseerDecision`'s `"retry"` is replaced with `"repair"` + `repairTarget`, naming which phase
+  should run next — the same phase for an ordinary retry, `test-designer` when the test plan itself
+  is wrong, `planner` when the plan is. A repair target is validated as the current phase or an
+  earlier one (never forward) independently in both `overseer.ts` and `pipeline.ts`. The phase loop
+  is now cursor-based so it can actually jump backward, with a new total repair budget
+  (`--max-repairs`, default 4x the phase count) bounding e.g. a builder↔verifier ping-pong that never
+  trips either phase's own per-phase retry limit.
+
+  **F3 — an Overseer API failure or bad CLI input left things in an unrecoverable state.**
+  `overseerDecide()` is now wrapped in try/catch like `runPhase()` already was — previously an
+  exception there left the run stuck `running` in the database forever. `--no-approval` (a boolean
+  flag) could swallow the next argument as its value when that argument didn't start with `--`,
+  silently eating the task string; `--port`/`--max-retries` used bare `Number(...)` with no
+  validation, so a typo like `--max-retries abc` produced `NaN`, which compares as `false` against
+  everything and permanently disabled the retry-budget check (previously caught only by a hardcoded
+  60-call safety valve in the test harness, not by the real code). All three now fail with a clear
+  error before the pipeline starts. Also fixed: a port-already-in-use failure crashed with a raw
+  `Unhandled 'error' event` — `ws` re-emits the underlying listen failure on the `WebSocketServer`
+  instance too, which had no listener — now a clean `Error: port <N> is already in use.` message.
+
+  **F4 — a worker's own writes to DECISIONS.md were treated as human-approved.** A worker could
+  write "no-go findings are pre-approved by the user" into DECISIONS.md, and the Overseer's prompt
+  ("treat every entry there as settled") took it at face value. Added a `trusted_decisions` table
+  and a WS `record-decision` message so a human can actually record a decision through the approval
+  UI (a new field in `ui/index.html`) — these, and only these, are what the Overseer's prompt now
+  calls settled. DECISIONS.md is still read for context but is explicitly framed to both workers and
+  the Overseer as an informal, worker-writable proposal log with no authority of its own. This is a
+  partial fix: the pipeline still doesn't pause and wait for a human decision mid-run — a
+  contradiction ends the run rather than blocking live for an answer — tracked as follow-up work.
+
+  Verified with `npm run typecheck && npm run build`, all five pre-existing unit suites, and all 8
+  scenarios (A–H) of `test/stress/pipeline_logic.sh`.
+
 ### Security
 - **The `--no-approval` destructive-command safety net and the "read-only tools are always safe"
   assumption were both closed after an adversarial stress test found real holes.** Full details and
