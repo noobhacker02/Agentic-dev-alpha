@@ -19,11 +19,15 @@ projects are independently versioned by design, one general-purpose, one agentic
                                     ┌──────────────┐
    "build me X" ──────────────────▶│   Pipeline   │
                                     └──────┬───────┘
-                                           │ five phases, strict order, retries on the Overseer's say-so
+                                           │ strict order, retries on the Overseer's say-so.
+                                           │ test-designer is the one phase the Planner can
+                                           │ suggest skipping for a genuinely trivial task —
+                                           │ pipeline code, not the suggestion, has final say.
         ┌──────────┬──────────────┬───────┴──────┬───────────┬──────────────┐
         ▼          ▼              ▼              ▼           ▼              │
      planner  test-designer    builder        verifier    gatekeeper        │
     (PLAN.md)  (TESTPLAN.md)  (implements)   (VERIFY.md)  (GATEKEEP.md)     │
+        │      (skippable)       │              │           │              │
         │          │              │              │           │              │
         └────┬─────┴──────┬───────┴──────┬───────┴─────┬─────┘              │
              ▼                                          each phase ends in a

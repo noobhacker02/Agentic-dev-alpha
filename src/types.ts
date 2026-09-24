@@ -8,6 +8,17 @@ export const PHASES = [
 
 export type PhaseName = (typeof PHASES)[number];
 
+/**
+ * The only phase a run is ever allowed to skip, and only on the Planner's own suggestion for a
+ * trivial task (see PhaseVerdict.suggestedSkip and pipeline.ts). builder/verifier/gatekeeper are
+ * never skippable: something must implement, something must independently check it actually works,
+ * and something must do the final security/scope gate. planner can't skip itself since builder's
+ * prompt depends on PLAN.md existing. This is a hard pipeline-code allowlist, not something a
+ * suggestion alone can expand -- same principle as verdict.outcome overriding the Overseer's own
+ * "continue" text in pipeline.ts.
+ */
+export const SKIPPABLE_PHASES = ["test-designer"] as const;
+
 export interface RunRecord {
   id: string;
   task: string;
@@ -50,6 +61,9 @@ export interface PhaseVerdict {
   concerns: string[];
   /** Findings that must prevent the run from being accepted until addressed. Empty for outcome "pass". */
   blockingFindings: string[];
+  /** Planner-only: phases this trivial task doesn't need. Validated against SKIPPABLE_PHASES by
+   * pipeline code, not trusted as-is -- see runPipeline. Absent or empty for every other phase. */
+  suggestedSkip?: PhaseName[];
 }
 
 /**

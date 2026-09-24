@@ -31,6 +31,13 @@ FAKE_SCENARIO=x timeout 20 "${NODE[@]}" run --no-approval "build a thing" --port
 echo "### G: port already in use                                (correct: clear error message)"
 node -e "require('http').createServer().listen(5108)" & BLOCKER=$!; sleep 1
 FAKE_SCENARIO=x timeout 20 "${NODE[@]}" run "t" --port 5108 --dir "$OUT/ws-g" 2>&1 | head -3; kill $BLOCKER
+echo "### I: Planner suggests skipping test-designer (trivial task) (correct: run reaches 'done' with 8 LLM calls, not 10 -- test-designer never invoked)"
+runit trivial-skip 5109
+if grep -q 'write TESTPLAN\.md' "$OUT/log-trivial-skip.jsonl" 2>/dev/null; then
+  echo "  FAIL: test-designer was invoked despite the suggested skip"
+else
+  echo "  OK: test-designer was never invoked"
+fi
 echo "### H: audit DB location                                  (correct: outside the agents' --dir, no .agent-loop/ left inside it)"
 DB_E="$(db_path_for injected-decisions)"
 echo "  audit db: $DB_E"

@@ -4,7 +4,7 @@ import type { EventBus } from "./bus.js";
 import type { Store } from "./store.js";
 import { createApprovalHook, createPathScopeHook, createSafetyHook, createSensitiveFileHook } from "./hooks.js";
 import { minimalEnv } from "./env.js";
-import { PHASE_OUTCOMES, type PhaseName, type PhaseVerdict } from "./types.js";
+import { PHASE_OUTCOMES, SKIPPABLE_PHASES, type PhaseName, type PhaseVerdict } from "./types.js";
 
 const VERDICT_INSTRUCTIONS = `
 When you are done, end your final message with a fenced json block, and nothing after it, in exactly this shape:
@@ -38,6 +38,15 @@ Do not report "pass" just because you finished your turn. A completed review tha
 to call the outcome itself good.
 `;
 
+const PLANNER_SKIP_INSTRUCTIONS = `
+If, and only if, this task is trivial enough that a separate formal test plan would be pure overhead (a one-line
+config change, a typo fix, adding a single obvious constant) — not because it's small effort for you, but because
+there is genuinely nothing worth a dedicated test-design pass — add "suggestedSkip": ["test-designer"] to your
+verdict json. Leave it out (or empty) for anything else, including ordinary features and bug fixes. This is a
+suggestion the pipeline decides whether to honor, not a decision you're making yourself; when in doubt, don't
+suggest skipping anything.
+`;
+
 interface PhaseSpec {
   systemPrompt: string;
   /**
@@ -60,7 +69,7 @@ Write your plan to PLAN.md in the working directory. It must cover: a one-paragr
 the concrete files you expect to create or change, the approach/architecture in enough detail that two
 different implementers would build the same thing, and explicit out-of-scope notes for anything you're
 deliberately not doing. Look at the existing repo structure first — don't plan in a vacuum.
-${VERDICT_INSTRUCTIONS}`,
+${VERDICT_INSTRUCTIONS}${PLANNER_SKIP_INSTRUCTIONS}`,
     tools: ["Read", "Glob", "Grep", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task) => `Task: ${task}\n\nWrite PLAN.md for this task.`,
@@ -270,6 +279,9 @@ function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
         (PHASE_OUTCOMES as readonly string[]).includes(parsed.outcome) &&
         typeof parsed.headline === "string"
       ) {
+        const suggestedSkip = Array.isArray(parsed.suggestedSkip)
+          ? parsed.suggestedSkip.filter((p: unknown): p is PhaseName => (SKIPPABLE_PHASES as readonly string[]).includes(String(p)))
+          : undefined;
         return {
           completed: parsed.completed,
           outcome: parsed.outcome,
@@ -277,6 +289,7 @@ function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
           details: typeof parsed.details === "string" ? parsed.details : "",
           concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String) : [],
           blockingFindings: Array.isArray(parsed.blockingFindings) ? parsed.blockingFindings.map(String) : [],
+          ...(suggestedSkip?.length ? { suggestedSkip } : {}),
         };
       }
     } catch {

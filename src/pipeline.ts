@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { PHASES } from "./types.js";
+import { PHASES, SKIPPABLE_PHASES } from "./types.js";
 import type { OverseerDecision, PhaseName, PhaseVerdict, PipelineConfig, RunRecord } from "./types.js";
 import type { EventBus } from "./bus.js";
 import { Store } from "./store.js";
@@ -25,12 +25,19 @@ function readDecisionsLog(workDir: string): string | undefined {
 }
 
 /**
- * A repair can only target the phase that just ran or an earlier one -- never forward. This is the
- * hard boundary overseerDecide's own validation already enforces on the LLM's output; pipeline code
- * enforces it again here independent of that, since this is the actual authority, not a suggestion.
+ * A repair can only target the phase that just ran or an earlier one -- never forward -- and never
+ * a phase this specific run already skipped. This is the hard boundary overseerDecide's own
+ * validation already enforces on the LLM's output; pipeline code enforces it again here
+ * independent of that, since this is the actual authority, not a suggestion.
  */
-function isValidRepairTarget(from: PhaseName, target: PhaseName): boolean {
-  return PHASES.indexOf(target) >= 0 && PHASES.indexOf(target) <= PHASES.indexOf(from);
+function isValidRepairTarget(from: PhaseName, target: PhaseName, runPhases: readonly PhaseName[]): boolean {
+  return PHASES.indexOf(target) >= 0 && PHASES.indexOf(target) <= PHASES.indexOf(from) && runPhases.includes(target);
+}
+
+/** A phase entry that never actually ran -- recorded so the history/UI stay honest about why it's
+ * absent, instead of a silent gap. */
+function skippedVerdict(reason: string): PhaseVerdict {
+  return { completed: true, outcome: "pass", headline: "Skipped", details: reason, concerns: [], blockingFindings: [] };
 }
 
 export async function runPipeline(config: PipelineConfig, bus: EventBus, store: Store): Promise<RunRecord> {
@@ -45,9 +52,12 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
   try {
     let phaseIdx = 0;
     let retryFeedback: string | undefined;
+    // The actual sequence for this run -- starts as every phase, shrinks by at most
+    // SKIPPABLE_PHASES when the Planner suggests it and pipeline code allows it (see below).
+    let runPhases: PhaseName[] = [...PHASES];
 
-    while (phaseIdx < PHASES.length) {
-      const phase = PHASES[phaseIdx];
+    while (phaseIdx < runPhases.length) {
+      const phase = runPhases[phaseIdx];
       const attempt = (attemptCounts[phase] ?? 0) + 1;
       attemptCounts[phase] = attempt;
 
@@ -138,7 +148,21 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
       bus.emitEvent({ type: "overseer-decision", runId: run.id, phase, decision, ts: new Date().toISOString() });
 
       if (decision.action === "continue") {
-        phaseIdx += 1;
+        // Only right as the Planner passes, and only once: apply any skip it suggested. Validated
+        // again here against the hard SKIPPABLE_PHASES allowlist -- parseVerdict already filtered
+        // it, but this is the actual authority, not a suggestion the pipeline merely trusts.
+        if (phase === "planner" && verdict.suggestedSkip?.length) {
+          for (const skip of verdict.suggestedSkip) {
+            if (!(SKIPPABLE_PHASES as readonly string[]).includes(skip) || !runPhases.includes(skip)) continue;
+            const skipRecord = store.startPhase(run.id, skip, 1);
+            const skip_verdict = skippedVerdict(`Planner suggested skipping this phase as unnecessary for a trivial task: ${verdict.headline}`);
+            store.finishPhase(skipRecord.id, skip_verdict);
+            bus.emitEvent({ type: "phase-start", runId: run.id, phase: skip, attempt: 1, ts: new Date().toISOString() });
+            bus.emitEvent({ type: "phase-end", runId: run.id, phase: skip, attempt: 1, verdict: skip_verdict, ts: new Date().toISOString() });
+            runPhases = runPhases.filter((p) => p !== skip);
+          }
+        }
+        phaseIdx = runPhases.indexOf(phase) + 1;
         retryFeedback = undefined;
         continue;
       }
@@ -166,7 +190,8 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
         break;
       }
 
-      const target = decision.repairTarget && isValidRepairTarget(phase, decision.repairTarget) ? decision.repairTarget : phase;
+      const target =
+        decision.repairTarget && isValidRepairTarget(phase, decision.repairTarget, runPhases) ? decision.repairTarget : phase;
       if (target === phase && attempt > config.maxRetriesPerPhase) {
         finalStatus = "failed";
         bus.emitEvent({
@@ -180,7 +205,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
       }
 
       retryFeedback = decision.feedbackForRepair ?? decision.reasoning;
-      phaseIdx = PHASES.indexOf(target);
+      phaseIdx = runPhases.indexOf(target);
     }
   } catch (err) {
     // Anything else unexpected (a bug in the loop itself, a Store I/O error) still leaves a
