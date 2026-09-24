@@ -6,6 +6,37 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
+  registerable but unused; this actually plugs them in.
+  - New `--browser` CLI flag gives `builder`/`verifier` a real browser MCP server for the run (off
+    by default). `src/pipeline.ts` creates one `BrowserSessionManager` per run, scopes each run's
+    screenshots under `<data dir>/browser-artifacts/<runId>/`, and always closes the session in its
+    existing `finally` block — even after an unhandled pipeline error — so Stage 1's
+    never-leak-a-Chromium-process contract holds at the pipeline level, not just inside
+    `browser-tools.ts` itself.
+  - `src/server.ts` gained `GET /artifacts/<runId>/<file>`, serving screenshots read-only, gated by
+    the *same* per-run token as the WebSocket (screenshots can contain real page content, so they
+    don't get the UI's own token-free static-file treatment).
+  - `ui/index.html` gained a live **Browser** panel: latest screenshot (height-capped after actually
+    looking at a real render and finding one that dominated the whole page), current URL/title, and
+    session status, plus timeline cards for browser actions and artifacts.
+  - **Caught a real regression before this shipped**: `browser-tools.ts`'s SDK imports broke *every*
+    `pipeline_logic.sh` scenario, not just browser-related ones — the fake-SDK test harness
+    blanket-redirects all `@anthropic-ai/claude-agent-sdk` imports to its own mock, which didn't
+    stub `createSdkMcpServer`/`tool`. Fixed with shape-compatible passthrough stubs.
+  - New `test/ui-render.mjs` (`npm run test:ui`, no API calls) drives the real dashboard with a
+    synthetic event sequence covering every event type, including a real DOM click on Approve, and
+    asserts zero console errors. Caught two more real bugs while writing it: `page.waitForFunction
+    (fn, {timeout})` silently passes the options object as the wrong parameter (needs an explicit
+    `undefined` arg first), so it was using Playwright's 30s default instead of the 5s intended; and
+    driving the bus directly to avoid a real API call skips the real approval hook's own
+    `approval-resolved` broadcast, which the test now emits itself. Also added a data-URI favicon to
+    stop Chromium's automatic `/favicon.ico` probe from producing a spurious console 404 on every
+    load.
+  - Verified: all 7 unit suites and all 10 `pipeline_logic.sh` scenarios pass; `test:ui` run 4 times
+    with zero flakiness. Real screenshots of both the tools and the full dashboard are in
+    [`docs/screenshots/`](docs/screenshots/INDEX.md).
+
 - **Browser Agent Stage 1: real Playwright tools a phase can call.** First step of the Cloud
   Browser Agent proposal, scoped to what's actually buildable without cloud infrastructure (no VM,
   domain, or auth here — that's Stage 3 and needs real infrastructure decisions).
