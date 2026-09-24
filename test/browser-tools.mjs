@@ -173,4 +173,73 @@ await sessions.closeAll(bus);
 console.log("[ok] closeAll() runs cleanly with no live sessions left");
 
 server.close();
+
+// 13. Containment: open()'s local-only restriction is enforced at the network-request level, not
+// just on open()'s own argument -- found by actually clicking a link on a real page and observing
+// the browser navigate to a second server with zero re-validation, before this was fixed. A page
+// loaded from an allowed local origin must not be able to escape via a link, a background
+// fetch/XHR, or an <img> pointed at a non-local host, since none of those ever call open() at all.
+{
+  const escapeHtml = `<!doctype html><html><body>
+    <a id="leave" href="https://example.com/">leave</a>
+    <script>
+      window.fetchResult = "not-run";
+      fetch("https://example.com/exfil").then(() => window.fetchResult = "succeeded").catch((e) => window.fetchResult = "failed: " + e.message);
+    </script>
+  </body></html>`;
+  const escapeServer = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(escapeHtml);
+  });
+  await new Promise((resolve) => escapeServer.listen(0, "127.0.0.1", resolve));
+  const escapePort = escapeServer.address().port;
+  const escapeRunId = "containment-test";
+  const h2 = __testHandlers({ runId: escapeRunId, bus, sessions, artifactDir });
+
+  await h2.open.handler({ url: `http://127.0.0.1:${escapePort}` }, {});
+  await h2.wait.handler({ timeoutMs: 1000 }, {});
+  const session = sessions.get(escapeRunId);
+  const fetchResult = await session.page.evaluate(() => window.fetchResult);
+  assert.ok(/^failed/.test(fetchResult), `a background fetch() to a non-local host must be blocked, got: ${fetchResult}`);
+
+  await h2.click.handler({ selector: "#leave" }, {});
+  const afterClick = await h2.inspect.handler({}, {});
+  assert.ok(
+    !/^URL: https:\/\/example\.com/.test(afterClick.content[0].text),
+    "clicking a link to a non-local host must not actually navigate there"
+  );
+
+  await sessions.close(escapeRunId, bus, "completed");
+  escapeServer.close();
+  console.log("[ok] a page loaded from an allowed local origin cannot escape via a link click or a background fetch to a non-local host");
+}
+
+// 14. Screenshots are capped per session -- nothing previously stopped a runaway or adversarial
+// phase from calling screenshot() in a loop and filling disk. Take real screenshots up to the
+// limit and confirm the next one is refused, not silently written anyway.
+{
+  const capRunId = "cap-test";
+  const capServer = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<html><body>cap test</body></html>");
+  });
+  await new Promise((resolve) => capServer.listen(0, "127.0.0.1", resolve));
+  const capPort = capServer.address().port;
+  const h3 = __testHandlers({ runId: capRunId, bus, sessions, artifactDir });
+  await h3.open.handler({ url: `http://127.0.0.1:${capPort}` }, {});
+
+  const MAX = 50; // must match MAX_SCREENSHOTS_PER_SESSION in src/browser-tools.ts
+  for (let i = 0; i < MAX; i++) {
+    const res = await h3.screenshot.handler({}, {});
+    assert.ok(!res.isError, `screenshot ${i + 1}/${MAX} should succeed: ${res.content[0]?.text}`);
+  }
+  const overLimit = await h3.screenshot.handler({}, {});
+  assert.ok(overLimit.isError, "a screenshot past the per-session cap should be refused");
+  assert.ok(/limit/i.test(overLimit.content[0].text), "the refusal should explain it's the per-session limit");
+
+  await sessions.close(capRunId, bus, "completed");
+  capServer.close();
+  console.log(`[ok] screenshots are capped at ${MAX} per session; one more is refused, not silently written`);
+}
+
 console.log("\nALL BROWSER TOOL TESTS PASSED");

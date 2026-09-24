@@ -52,6 +52,27 @@ interface BrowserSession {
   browser: Browser;
   context: BrowserContext;
   page: Page;
+  screenshotCount: number;
+}
+
+/** No size or rate limit on screenshots was a real, if minor, disk-fill DoS: nothing stopped a
+ * runaway or adversarial phase from calling screenshot() in a loop. One session, one run -- a few
+ * dozen screenshots is generous for any real verification flow. */
+const MAX_SCREENSHOTS_PER_SESSION = 50;
+
+const LOCAL_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+
+/**
+ * The one gate for Stage 1's "local-only" boundary -- shared by both `open()`'s own check AND the
+ * context-level request guard below, so they can never drift apart. `open()` alone isn't enough: a
+ * page loaded from an allowed local origin can still contain a link, a JS redirect, a form, or a
+ * background fetch/XHR pointed at an external host, and none of those go through `open()` at all
+ * (confirmed empirically -- clicking a link navigated the browser to a second local server with zero
+ * re-validation before this fix). `about:blank` is Playwright's own page-creation default before any
+ * real navigation and never represents an actual network request.
+ */
+function isAllowedBrowserUrl(url: string): boolean {
+  return url === "about:blank" || LOCAL_URL_RE.test(url);
 }
 
 /**
@@ -67,8 +88,20 @@ export class BrowserSessionManager {
     if (existing) return existing;
     const browser = await launchBrowser();
     const context = await browser.newContext();
+    // Enforced at the network-request level, not just on open()'s own argument: a page loaded from
+    // an allowed local origin can still contain a link, a JS redirect, a form, or a background
+    // fetch/XHR pointed at an external host, and none of those go through open() at all. This
+    // aborts every navigation and every sub-resource request the context ever makes -- from any
+    // page, at any point -- unless it targets an allowed local URL, closing that gap at its root
+    // instead of re-checking after the fact (confirmed empirically: before this, clicking a link
+    // navigated the browser to a second server with zero re-validation).
+    await context.route("**/*", async (route) => {
+      const url = route.request().url();
+      if (isAllowedBrowserUrl(url)) await route.continue();
+      else await route.abort("blockedbyclient");
+    });
     const page = await context.newPage();
-    const session: BrowserSession = { browserSessionId: randomUUID(), browser, context, page };
+    const session: BrowserSession = { browserSessionId: randomUUID(), browser, context, page, screenshotCount: 0 };
     this.sessions.set(runId, session);
     bus.emitEvent({
       type: "browser-session-started",
@@ -106,8 +139,6 @@ export class BrowserSessionManager {
     for (const runId of [...this.sessions.keys()]) await this.close(runId, bus, "interrupted");
   }
 }
-
-const LOCAL_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
 
 /** A short, human-legible summary of interactive elements -- not a full accessibility tree, but
  * enough for "accessible locators first" (docs/BROWSER-AGENT.md section 2) without the added
@@ -190,7 +221,7 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
     { url: z.string().describe("The URL to navigate to") },
     async ({ url }) => {
       const { result, isError } = await instrumented(opts, "open", { url }, async () => {
-        if (!LOCAL_URL_RE.test(url)) {
+        if (!isAllowedBrowserUrl(url)) {
           throw new Error(`Refused: only http://localhost or http://127.0.0.1 URLs are allowed in this stage, got: ${url}`);
         }
         const session = await sessions.getOrCreate(runId, bus);
@@ -299,6 +330,10 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
       const { result, isError } = await instrumented(opts, "screenshot", {}, async () => {
         const session = sessions.get(runId);
         if (!session) throw new Error("No open browser session -- call open first.");
+        if (session.screenshotCount >= MAX_SCREENSHOTS_PER_SESSION) {
+          throw new Error(`Refused: this session already took ${MAX_SCREENSHOTS_PER_SESSION} screenshots, the limit for one run.`);
+        }
+        session.screenshotCount += 1;
         const buf = await session.page.screenshot({ type: "png" });
         pngBase64 = buf.toString("base64");
         mkdirSync(opts.artifactDir, { recursive: true });

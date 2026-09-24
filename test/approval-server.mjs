@@ -106,7 +106,8 @@ console.log("[ok] each server run gets its own random token");
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const artifactRoot = mkdtempSync(join(tmpdir(), "agent-loop-artifacts-"));
+  const container = mkdtempSync(join(tmpdir(), "agent-loop-artifacts-container-"));
+  const artifactRoot = join(container, "artifacts");
   const runDir = join(artifactRoot, "run-123");
   const { mkdirSync } = await import("node:fs");
   mkdirSync(runDir, { recursive: true });
@@ -138,6 +139,24 @@ console.log("[ok] each server run gets its own random token");
 
   const missing = await httpGetFull(`/artifacts/run-123/nope.png?token=${artSrv.token}`);
   assert.strictEqual(missing.status, 404);
+
+  // Path traversal: a secret file placed as a sibling of artifactRoot must never be reachable.
+  // path.join (what server.ts uses, not path.resolve) never lets a later absolute-looking segment
+  // escape the base it's joined onto, so a naive ".." request either gets caught by the existing
+  // top-level check or, once normalized, no longer starts with "/artifacts/" at all and falls
+  // through to the UI's own file route -- confirmed here against the real server, not just reasoned
+  // about the library's documented behavior.
+  writeFileSync(join(artifactRoot, "..", "secret.txt"), "should never be servable");
+  for (const traversal of [
+    "/artifacts/run-123/../../secret.txt",
+    "/artifacts/run-123/%2e%2e/%2e%2e/secret.txt",
+    "/artifacts/..%2Fsecret.txt",
+  ]) {
+    const res = await httpGetFull(`${traversal}?token=${artSrv.token}`);
+    assert.notStrictEqual(res.status, 200, `traversal attempt should not succeed: ${traversal} -> ${res.status}`);
+    assert.ok(!res.body.includes("should never be servable"), `traversal attempt must not leak the secret file's content: ${traversal}`);
+  }
+  console.log("[ok] path traversal attempts against /artifacts/ cannot escape artifactRoot");
 
   await artSrv.close();
 
