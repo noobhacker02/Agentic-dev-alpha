@@ -1,4 +1,5 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { minimalEnv } from "./env.js";
 import type { OverseerDecision, PhaseName, PhaseVerdict } from "./types.js";
 
 const OVERSEER_SYSTEM_PROMPT = `You are the Overseer of agent-loop, a multi-agent dev pipeline with five
@@ -74,10 +75,13 @@ Decide: continue, retry, or stop.`;
     prompt,
     options: {
       systemPrompt: OVERSEER_SYSTEM_PROMPT,
-      allowedTools: [],
+      // `tools: []` actually removes every tool from the model's schema (see src/env.ts's comment
+      // and docs/STRESS-TEST-REPORT.md); `allowedTools: []` alone only means "auto-approve nothing"
+      // and would leave the full built-in toolset reachable if any hook ever allowed a call.
+      tools: [],
       model: opts.model,
       effort: "high",
-      env: { ...process.env },
+      env: minimalEnv(),
     },
   });
 

@@ -3,8 +3,12 @@ import { randomUUID } from "node:crypto";
 import type { AgentEvent, ApprovalDecision, PhaseName } from "./types.js";
 import type { Store } from "./store.js";
 
+type ApprovalRequestEvent = Extract<AgentEvent, { type: "approval-request" }>;
+
 interface PendingApproval {
   resolve: (d: ApprovalDecision) => void;
+  /** Kept so a UI tab that connects (or reloads) while this is pending can be shown it again. */
+  event: ApprovalRequestEvent;
 }
 
 /**
@@ -41,10 +45,7 @@ export class EventBus extends EventEmitter {
     toolInput: unknown;
   }): { requestId: string; wait: Promise<ApprovalDecision> } {
     const requestId = randomUUID();
-    const wait = new Promise<ApprovalDecision>((resolve) => {
-      this.pending.set(requestId, { resolve });
-    });
-    this.emitEvent({
+    const event: ApprovalRequestEvent = {
       type: "approval-request",
       runId: base.runId,
       phase: base.phase,
@@ -53,7 +54,11 @@ export class EventBus extends EventEmitter {
       toolName: base.toolName,
       toolInput: base.toolInput,
       ts: new Date().toISOString(),
+    };
+    const wait = new Promise<ApprovalDecision>((resolve) => {
+      this.pending.set(requestId, { resolve, event });
     });
+    this.emitEvent(event);
     return { requestId, wait };
   }
 
@@ -67,5 +72,10 @@ export class EventBus extends EventEmitter {
 
   hasPending(requestId: string): boolean {
     return this.pending.has(requestId);
+  }
+
+  /** Approval requests still waiting on a human, oldest first. */
+  pendingRequests(): ApprovalRequestEvent[] {
+    return [...this.pending.values()].map((p) => p.event);
   }
 }

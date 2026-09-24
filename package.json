@@ -16,7 +16,10 @@
     "dev": "tsx src/cli.ts",
     "start": "node --experimental-sqlite dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:plumbing": "node --experimental-sqlite test/plumbing.mjs"
+    "test:plumbing": "node --experimental-sqlite test/plumbing.mjs",
+    "test:server": "node --experimental-sqlite test/approval-server.mjs",
+    "test:scope": "node test/tool-and-path-scope.mjs",
+    "test:data-dir": "node test/data-dir.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.280",

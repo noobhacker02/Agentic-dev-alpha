@@ -67,7 +67,9 @@ console.log("[ok] pipeline process started and server is listening");
 
 const browser = await chromium.launch({ executablePath: findPreinstalledChrome() });
 const page = await browser.newPage();
-await page.goto(`http://localhost:${PORT}/`);
+// The printed URL carries the per-run token in its #fragment; without it the page can't connect.
+const uiUrl = childOutput.match(/agent-loop UI: (\S+)/)[1];
+await page.goto(uiUrl);
 await page.waitForSelector("#status");
 console.log("[ok] browser opened the real UI page");
 

@@ -86,8 +86,19 @@ function meta(text) {
   return '<div class="meta">' + esc(text) + "</div>";
 }
 
+// The per-run token comes from the URL agent-loop prints (#token=…); the server refuses the
+// socket without it.
+const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+// requestId -> approval card, so a request replayed on reconnect isn't shown twice and a request
+// resolved from another tab has its buttons disabled here too.
+const approvalCards = new Map();
+
 function connect() {
-  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  if (!token) {
+    statusEl.textContent = "no token — open the full URL agent-loop printed (it ends in #token=…)";
+    return;
+  }
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?token=" + encodeURIComponent(token));
   ws.onopen = () => (statusEl.textContent = "live");
   ws.onclose = () => {
     statusEl.textContent = "disconnected — retrying…";
@@ -150,6 +161,7 @@ function render(ev, ws) {
       );
       break;
     case "approval-request": {
+      if (approvalCards.has(ev.requestId)) break;
       pendingCount++;
       updateBanner();
       const el = card(
@@ -161,6 +173,7 @@ function render(ev, ws) {
           '<button class="deny">Reject</button>' +
           "</div>"
       );
+      approvalCards.set(ev.requestId, el);
       el.querySelector(".allow").onclick = () => {
         ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision: "allow" }));
         el.querySelectorAll("button").forEach((b) => (b.disabled = true));
@@ -173,6 +186,7 @@ function render(ev, ws) {
       break;
     }
     case "approval-resolved":
+      approvalCards.get(ev.requestId)?.querySelectorAll("button").forEach((b) => (b.disabled = true));
       pendingCount = Math.max(0, pendingCount - 1);
       updateBanner();
       card(

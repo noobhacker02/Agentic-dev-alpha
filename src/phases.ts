@@ -2,7 +2,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "node:crypto";
 import type { EventBus } from "./bus.js";
 import type { Store } from "./store.js";
-import { createApprovalHook, createSafetyHook } from "./hooks.js";
+import { createApprovalHook, createPathScopeHook, createSafetyHook } from "./hooks.js";
+import { minimalEnv } from "./env.js";
 import type { PhaseName, PhaseVerdict } from "./types.js";
 
 const VERDICT_INSTRUCTIONS = `
@@ -23,7 +24,12 @@ problems to report — reporting a real problem clearly is success for you; conc
 
 interface PhaseSpec {
   systemPrompt: string;
-  allowedTools: string[];
+  /**
+   * The actual set of built-in tools available to this phase (SDK `tools` option). Unlike
+   * `allowedTools` (auto-approval only — see docs/STRESS-TEST-REPORT.md), this is enforced at the
+   * tool-schema level: a phase given ["Read", "Write"] has no Bash tool to call in the first place.
+   */
+  tools: string[];
   autoApproveTools?: string[];
   buildPrompt(task: string, priorSummaries: string): string;
 }
@@ -39,7 +45,7 @@ the concrete files you expect to create or change, the approach/architecture in 
 different implementers would build the same thing, and explicit out-of-scope notes for anything you're
 deliberately not doing. Look at the existing repo structure first — don't plan in a vacuum.
 ${VERDICT_INSTRUCTIONS}`,
-    allowedTools: ["Read", "Glob", "Grep", "Write"],
+    tools: ["Read", "Glob", "Grep", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task) => `Task: ${task}\n\nWrite PLAN.md for this task.`,
   },
@@ -54,7 +60,7 @@ Write your output to TESTPLAN.md: a numbered list of concrete test scenarios (in
 how each will actually be run/checked), plus a "Gaps found in PLAN.md" section — even if it's empty, say so
 explicitly rather than omitting the section.
 ${VERDICT_INSTRUCTIONS}`,
-    allowedTools: ["Read", "Glob", "Grep", "Write"],
+    tools: ["Read", "Glob", "Grep", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task, prior) =>
       `Task: ${task}\n\nRead PLAN.md and write TESTPLAN.md.\n\nPrior phase summaries:\n${prior}`,
@@ -66,7 +72,7 @@ phases, different agents with no memory of this conversation) and implement exac
 Keep the diff scoped to what the plan describes — if you find the plan is wrong or incomplete, implement the
 best correct interpretation and say exactly how/why you deviated in your concerns.
 ${VERDICT_INSTRUCTIONS}`,
-    allowedTools: ["Read", "Glob", "Grep", "Write", "Edit", "Bash"],
+    tools: ["Read", "Glob", "Grep", "Write", "Edit", "Bash"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task, prior) =>
       `Task: ${task}\n\nRead PLAN.md and TESTPLAN.md, then implement the task.\n\nPrior phase summaries:\n${prior}`,
@@ -81,7 +87,7 @@ Check the result against the ORIGINAL task intent, not just against what the Bui
 Write your findings to VERIFY.md: a table of each TESTPLAN.md scenario with pass/fail and the actual evidence
 (command run, output seen), plus whether the result matches the original task's intent.
 ${VERDICT_INSTRUCTIONS}`,
-    allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
+    tools: ["Read", "Glob", "Grep", "Bash", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task, prior) =>
       `Original task: ${task}\n\nRead TESTPLAN.md, run its scenarios for real, and write VERIFY.md.\n\nPrior phase summaries:\n${prior}`,
@@ -96,7 +102,7 @@ scope creep beyond the task. You do not fix anything yourself; you report.
 
 Write GATEKEEP.md: your go/no-go call and exactly why.
 ${VERDICT_INSTRUCTIONS}`,
-    allowedTools: ["Read", "Glob", "Grep", "Bash", "Write"],
+    tools: ["Read", "Glob", "Grep", "Bash", "Write"],
     autoApproveTools: ["Read", "Glob", "Grep"],
     buildPrompt: (task, prior) =>
       `Original task: ${task}\n\nReview everything produced so far and write GATEKEEP.md.\n\nPrior phase summaries:\n${prior}`,
@@ -121,6 +127,7 @@ export interface RunPhaseOptions {
 export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
   const spec = PHASE_SPECS[opts.phase];
   const safetyHook = createSafetyHook();
+  const pathScopeHook = createPathScopeHook(opts.workDir);
   const approvalHook = createApprovalHook({
     bus: opts.bus,
     runId: opts.runId,
@@ -145,13 +152,13 @@ rather than deciding it silently.`;
     options: {
       cwd: opts.workDir,
       systemPrompt: spec.systemPrompt,
-      allowedTools: spec.allowedTools,
+      tools: spec.tools,
       permissionMode: "default",
       model: opts.model,
       effort: opts.effort,
-      env: { ...process.env },
+      env: minimalEnv(),
       hooks: {
-        PreToolUse: [{ hooks: [safetyHook, approvalHook], timeout: 3600 }],
+        PreToolUse: [{ hooks: [safetyHook, pathScopeHook, approvalHook], timeout: 3600 }],
       },
     },
   });

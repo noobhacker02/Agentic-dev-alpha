@@ -111,9 +111,14 @@ machine's directory layout.
 | `src/phases.ts` | The five phase system prompts + `runPhase()`, the actual `query()` wrapper |
 | `src/overseer.ts` | Overseer decision logic (continue / retry / stop), decision-log-aware |
 | `src/pipeline.ts` | Sequences the five phases, watches `DECISIONS.md`, applies Overseer decisions |
+| `src/env.ts` | The minimal, allowlisted env passed to every phase and the Overseer instead of the full shell env |
+| `src/data-dir.ts` | Resolves where the audit database lives — always outside `--dir` |
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
 | `src/cli.ts` | `agent-loop run "<task>"` entry point |
+| `test/approval-server.mjs` | No-LLM test of the approval server's access control (token, Origin, Host) and pending-approval replay |
+| `test/tool-and-path-scope.mjs` | No-LLM test of per-phase tool restriction, `--dir` path scoping, and `minimalEnv()` |
+| `test/data-dir.mjs` | No-LLM test that the audit database always resolves outside `--dir` |
 | `test/plumbing.mjs` | No-LLM test of the store/bus/server/WebSocket round-trip |
 | `test/browser-approval.mjs` | Real end-to-end test: a live pipeline run with a real headless-Chromium browser clicking Approve |
 | `test/resolve-skill-source.mjs` | Fetches the current `dev-workflow` skill (GitHub by default, local path as opt-in override) |
@@ -138,10 +143,13 @@ machine's directory layout.
 ```bash
 npm install
 npm run build
-node dist/cli.js run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2]
+node dist/cli.js run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--data-dir <path>]
 ```
 
-Open the printed URL to watch the run live and approve/reject tool calls as they happen. `--no-approval` skips
+Open the printed URL to watch the run live and approve/reject tool calls as they happen. Use the exact URL: it
+ends in `#token=…`, a per-run secret the page needs to connect. The server listens on `127.0.0.1` only and
+refuses WebSocket connections from any other website's page, so nothing but that tab can approve a tool call.
+Reloading the tab re-shows any approval still waiting. `--no-approval` skips
 the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
 unattended runs.
 
@@ -150,6 +158,9 @@ unattended runs.
 ```bash
 npm run build
 npm run test:plumbing          # no LLM calls — store/bus/server/WebSocket wiring only
+npm run test:server            # no LLM calls — approval server access control + approval replay
+npm run test:scope             # no LLM calls — per-phase tool restriction, --dir path scoping, minimal env
+npm run test:data-dir          # no LLM calls — audit database location stays outside --dir
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided
