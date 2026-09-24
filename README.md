@@ -176,7 +176,9 @@ per-phase SDK sessions, since the browser context needs to outlive any single ph
 Screenshot from a real run of these tools (`open` → `fill` → `click` → `screenshot`, driven by calling the tool
 handlers directly, not a canned image):
 
-![Browser Agent Stage 1 demo](docs/assets/browser-agent-stage1-demo.png)
+![Browser Agent Stage 1 demo](docs/screenshots/browser-agent/01-open-fill-click-screenshot.png)
+
+More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
 
 Deliberately scoped to local-only for now — `open` refuses anything but `http://localhost`/`127.0.0.1`. A real
 domain allowlist, cloud worker isolation, and multi-user auth are later stages, not this one; see

@@ -115,4 +115,25 @@ const ordinaryDenied = await chainDenies(FULL_CHAIN_NO_APPROVAL, "Read", { file_
 assert.ok(!ordinaryDenied, "an ordinary in-workdir file read should not be denied");
 console.log("[ok] an ordinary in-workdir file read is left alone");
 
+// Browser tool calls (src/browser-tools.ts) surface as mcp__browser__* in tool_name -- the same
+// field these hooks already key on for built-ins -- so they must get the same treatment as Bash or
+// Write: never blocked by the safety net just for being a browser action, but never silently
+// auto-approved either. autoApproveTools only ever lists Read/Glob/Grep, so an unrecognized
+// mcp__browser__* name correctly falls through to "ask a human" under approval mode.
+{
+  const browserInput = { selector: "#go-button" };
+  const deniedOff = await chainDenies(FULL_CHAIN_NO_APPROVAL, "mcp__browser__click", browserInput);
+  assert.ok(!deniedOff, "an ordinary browser click should not be blocked by the safety net under --no-approval");
+
+  // Race the approval hook's own promise against a short timeout: it must NOT resolve immediately
+  // (that would mean it silently auto-approved), since nothing has called resolveApproval yet.
+  const pending = approvalOn(pre("mcp__browser__click", browserInput), "t", { signal });
+  const raceResult = await Promise.race([
+    pending.then(() => "resolved-immediately"),
+    new Promise((r) => setTimeout(() => r("still-pending"), 150)),
+  ]);
+  assert.strictEqual(raceResult, "still-pending", "a browser action must wait for a real human decision under approval mode, not auto-approve");
+  console.log("[ok] browser tool calls are not blocked by the safety net, and require real human approval (not auto-approved) when approval is on");
+}
+
 console.log("\nALL SAFETY NET TESTS PASSED");
