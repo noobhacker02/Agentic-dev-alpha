@@ -1,5 +1,6 @@
 import { isAbsolute, resolve, sep } from "node:path";
 import type { HookCallback, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
+import { analyzeBash } from "./bash-analysis.js";
 import type { EventBus } from "./bus.js";
 import type { PhaseName } from "./types.js";
 
@@ -210,6 +211,10 @@ export interface ApprovalHookOptions {
   requireApproval: boolean;
   /** Tools that never need a human's eyes (pure reads) — auto-approved without a round-trip. */
   autoApproveTools?: string[];
+  /** The run's --dir: shell commands that only read inside it run without a prompt. */
+  workDir?: string;
+  /** false = ask about every shell command, even read-only ones (`--strict-approval`). */
+  autoAllowReadOnly?: boolean;
 }
 
 /**
@@ -219,6 +224,32 @@ export interface ApprovalHookOptions {
  * (see the SDK's 6-step permission evaluation order) — a PreToolUse hook is
  * the one place guaranteed to run for every tool call.
  */
+/**
+ * What approving a call would mean, modeled on Claude Code's permission rules:
+ *  - `readOnly`: the call only reads inside --dir (every subcommand of a shell command does), so it
+ *    runs without a prompt, the same way Read/Glob/Grep already do;
+ *  - `rules`: the "Yes, and don't ask again" rules approving it would save -- `Bash(npm test:*)` per
+ *    subcommand that isn't read-only, the bare tool name for other tools (file tools are already
+ *    confined to --dir by the path-scope hook).
+ * null = too open-ended to generalise (rm, kill, git push, remote curl, interpreters' inline code,
+ * command substitution, redirects to files…): asked every single time.
+ */
+export function approvalPlan(toolName: string, toolInput: unknown, workDir?: string): { readOnly: boolean; rules: string[] } | null {
+  if (toolName !== "Bash") return { readOnly: false, rules: [toolName] };
+  const command = typeof (toolInput as { command?: unknown })?.command === "string" ? (toolInput as { command: string }).command : "";
+  const subs = analyzeBash(command, workDir);
+  if (!subs) return null;
+  const needRules = subs.filter((s) => !s.readOnly);
+  if (needRules.some((s) => !s.rule)) return null;
+  return { readOnly: needRules.length === 0, rules: [...new Set(needRules.map((s) => s.rule as string))] };
+}
+
+/** The single rule for a simple command (kept for callers that only deal in one rule). */
+export function approvalRuleFor(toolName: string, toolInput: unknown, workDir?: string): string | null {
+  const plan = approvalPlan(toolName, toolInput, workDir);
+  return plan && plan.rules.length === 1 ? plan.rules[0] : null;
+}
+
 export function createApprovalHook(opts: ApprovalHookOptions): HookCallback {
   const autoApprove = new Set(opts.autoApproveTools ?? []);
   return async (input, toolUseId, { signal }) => {
@@ -235,24 +266,52 @@ export function createApprovalHook(opts: ApprovalHookOptions): HookCallback {
       };
     }
 
+    const plan = approvalPlan(pre.tool_name, pre.tool_input, opts.workDir);
+    const readOnlyShell = !!plan?.readOnly && opts.autoAllowReadOnly !== false;
+    if (plan && (readOnlyShell || (plan.rules.length > 0 && plan.rules.every((r) => opts.bus.hasAllowRule(r))))) {
+      const rule = readOnlyShell ? "read-only command inside the working directory" : plan.rules.join(", ");
+      opts.bus.emitEvent({
+        type: "approval-auto-allowed",
+        runId: opts.runId,
+        phase: opts.phase,
+        toolUseId: toolUseId ?? requestIdFallback(),
+        toolName: pre.tool_name,
+        rule,
+        ts: new Date().toISOString(),
+      });
+      return {
+        hookSpecificOutput: {
+          hookEventName: pre.hook_event_name,
+          permissionDecision: "allow",
+          permissionDecisionReason: `allowed by the "don't ask again" rule ${rule} a human created this run`,
+        },
+      };
+    }
+
     const { requestId, wait } = opts.bus.requestApproval({
       runId: opts.runId,
       phase: opts.phase,
       toolUseId: toolUseId ?? requestIdFallback(),
       toolName: pre.tool_name,
       toolInput: pre.tool_input,
+      rule: plan?.rules.join(", ") || undefined,
     });
 
     const decision = await raceWithAbort(wait, signal);
+    const remembered = decision.decision === "allow" && decision.remember && plan ? plan.rules : [];
+    for (const r of remembered) opts.bus.addAllowRule(r);
+    const rememberedRule = remembered.length ? remembered.join(", ") : undefined;
 
     opts.bus.emitEvent({
       type: "approval-resolved",
       runId: opts.runId,
       phase: opts.phase,
       requestId,
+      toolUseId: toolUseId ?? undefined,
       decision: decision.decision,
       reason: decision.reason,
       auto: false,
+      rememberedRule,
       ts: new Date().toISOString(),
     });
 
@@ -270,7 +329,7 @@ function requestIdFallback(): string {
   return `no-tool-use-id-${Date.now()}`;
 }
 
-async function raceWithAbort<T extends { decision: "allow" | "deny"; reason?: string }>(
+async function raceWithAbort<T extends { decision: "allow" | "deny"; reason?: string; remember?: boolean }>(
   wait: Promise<T>,
   signal: AbortSignal
 ): Promise<T> {

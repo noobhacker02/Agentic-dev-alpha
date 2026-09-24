@@ -5,12 +5,14 @@ import { Store } from "./store.js";
 import { startServer } from "./server.js";
 import { runPipeline } from "./pipeline.js";
 import { resolveDataDir } from "./data-dir.js";
+import { writeRunReport } from "./report.js";
+import { attachTerminal } from "./terminal.js";
 import { PHASES } from "./types.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
 // must never consume the next token just because that token doesn't start with "--".
-const BOOLEAN_FLAGS = new Set(["no-approval", "browser"]);
+const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -62,6 +64,7 @@ Usage:
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
   --no-approval    Skip the human-approval UI; only the built-in safety-pattern hook applies
+  --strict-approval  Ask about every shell command too, even ones that only read inside --dir
   --max-retries    Max same-phase retries before the pipeline gives up on that phase (default: 2)
   --max-repairs    Max total repairs across the whole run, including ones routed to an earlier
                    phase (default: 4x the phase count) — bounds builder<->verifier repair loops
@@ -109,21 +112,45 @@ Usage:
     store.close();
     process.exit(1);
   }
+  const interactive = requireApproval && !!process.stdin.isTTY;
   console.log(`agent-loop UI: ${url}`);
   console.log("  (open this exact URL: the #token part is what lets the page approve tool calls)");
   console.log(`Working directory: ${workDir}`);
   console.log(`Audit database:    ${join(dataDir, "agent-loop.db")}`);
-  console.log(`Approval UI: ${requireApproval ? "ON — every non-read tool call waits for you" : "OFF"}`);
+  console.log(
+    `Approvals: ${!requireApproval ? "OFF" : interactive ? "ON — answer here (1/2/3) or in the web UI" : "ON — answer in the web UI"}`
+  );
   console.log(`Browser tools: ${browser ? "ON — builder/verifier get real Chromium (localhost only)" : "OFF"}`);
-  console.log(`Task: ${task}\n`);
+  console.log(`Task: ${task}`);
+  const terminal = attachTerminal(bus, { interactive, workDir, uiUrl: url });
+
+  let costUsd = 0;
+  bus.on("event", (e) => {
+    if (e.type === "usage") costUsd += e.costUsd;
+  });
+  const startedAt = Date.now();
 
   const run = await runPipeline(
-    { task, workDir, requireApproval, maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir },
+    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir },
     bus,
     store
   );
 
+  terminal.detach();
   console.log(`\nRun ${run.id} finished with status: ${run.status}`);
+  console.log(`Cost: $${costUsd.toFixed(2)} · ${Math.round((Date.now() - startedAt) / 1000)}s`);
+  try {
+    const dir = join(browserArtifactDir, run.id);
+    const reportPath = join(dir, "report.html");
+    // Announced first, so the saved report itself also says where it lives, and a page still open
+    // can show it before the live server goes away.
+    bus.emitEvent({ type: "report-saved", runId: run.id, path: reportPath, ts: new Date().toISOString() });
+    const report = writeRunReport(dir, bus.allEvents());
+    console.log(`Report: file://${report}`);
+    await new Promise((r) => setTimeout(r, 300)); // let open pages receive the last events
+  } catch (err) {
+    console.error(`Could not write the run report: ${err instanceof Error ? err.message : String(err)}`);
+  }
   store.close();
   await close();
   process.exit(run.status === "done" ? 0 : 1);

@@ -153,15 +153,25 @@ machine's directory layout.
 ```bash
 npm install
 npm run build
-node dist/cli.js run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--data-dir <path>]
+node dist/cli.js run "<task description>" [--dir <workDir>] [--browser] [--no-approval] [--strict-approval]
 ```
 
-Open the printed URL to watch the run live and approve/reject tool calls as they happen. Use the exact URL: it
-ends in `#token=…`, a per-run secret the page needs to connect. The server listens on `127.0.0.1` only and
-refuses WebSocket connections from any other website's page, so nothing but that tab can approve a tool call.
-Reloading the tab re-shows any approval still waiting. `--no-approval` skips
-the human-in-the-loop UI (only the built-in destructive-command safety net still applies) — useful for
-unattended runs.
+You can drive a run from the terminal, the browser, or both. Whichever answers an approval first wins.
+
+- **Terminal:** the run prints a Claude Code-style transcript (`⏺ Bash(npm test)` / `⎿ …`) and asks each
+  approval right there: `1` yes, `2` yes and don't ask again, `3` no and tell the agent what to do instead.
+- **Browser:** open the printed URL (it ends in `#token=…`, a per-run secret) for the same transcript, plus a
+  phase stepper, live cost, the browser preview and a keyboard-driven prompt pinned to the bottom. It
+  listens on `127.0.0.1` only and refuses any other website's page. A reload replays the whole run.
+- **Afterwards:** every run writes a self-contained `report.html` (the path is printed at the end) with the
+  full transcript, costs and, with `--browser`, a video of what the agent did in the app.
+
+Shell commands that only read inside `--dir` (`ls`, `cat`, `grep`, `git status`, `curl` to localhost…) don't
+ask, the same way `Read`/`Grep` never did. Pass `--strict-approval` to be asked about every shell command
+anyway. `--no-approval` skips approvals entirely; only the safety net still applies.
+
+**[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 16 for the same
+task, with screenshots, videos, and exactly which rules can and can't become "don't ask again".
 
 ## Browser Agent (Stages 1–2)
 
@@ -193,12 +203,18 @@ domain allowlist, cloud worker isolation, and multi-user auth are later stages, 
 
 ```bash
 npm run build
+npm test                       # all of the no-API suites below, in one go (what CI runs)
 npm run test:plumbing          # no LLM calls — store/bus/server/WebSocket wiring only
 npm run test:server            # no LLM calls — approval server access control + approval replay
 npm run test:scope             # no LLM calls — per-phase tool restriction, --dir path scoping, minimal env
 npm run test:data-dir          # no LLM calls — audit database location stays outside --dir
 npm run test:browser-tools     # no LLM calls — real Chromium, real DOM changes, real screenshot files
-npm run test:ui                # no LLM calls — real Chromium renders the real dashboard, incl. the browser panel
+npm run test:ui                # no LLM calls — real Chromium drives the real UI: stepper, keyboard approvals, replay
+npm run test:terminal          # no LLM calls — the terminal transcript + prompt, driven with real keypresses
+npm run test:bash              # no LLM calls — which shell commands are read-only / get which "don't ask again" rule
+npm run test:rules             # no LLM calls — "don't ask again" never stretches past what you saw
+npm run test:report            # no LLM calls — the saved report.html opens from disk, inert against injected HTML
+node test/e2e/record-run.mjs --out <dir> [--browser] [--smart] -- "<task>"   # real API calls — records a whole run as video
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided

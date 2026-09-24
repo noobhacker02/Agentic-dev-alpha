@@ -80,7 +80,7 @@ let clicksPerformed = 0;
 let clickLoopRunning = true;
 const clickLoop = (async () => {
   while (clickLoopRunning) {
-    const button = page.locator(".approval .btns .allow:not([disabled])").first();
+    const button = page.locator('#prompt .opt[data-choice="allow"]').first();
     if (await button.count().catch(() => 0)) {
       await button.click().catch(() => {});
       clicksPerformed++;
@@ -111,8 +111,8 @@ console.log(`[ok] pipeline process exited with code ${exitCode}, browser clicked
 await page.screenshot({ path: join(workDir, "final-ui-state.png"), fullPage: true });
 console.log(`[ok] saved screenshot: ${join(workDir, "final-ui-state.png")}`);
 
-const resolvedCount = await page.locator(".card").filter({ hasText: "Approval allow" }).count();
-console.log(`[info] UI timeline shows ${resolvedCount} 'Approval allow' resolution card(s)`);
+const resolvedCount = await page.locator(".blk.tool .tag.ok").count();
+console.log(`[info] UI transcript shows ${resolvedCount} approved tool call(s)`);
 
 await browser.close();
 

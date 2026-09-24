@@ -49,6 +49,8 @@ export async function overseerDecide(opts: {
   /** Decisions actually approved by the human through the approval UI — the only ones treated as settled. */
   trustedDecisions?: TrustedDecision[];
   model?: string;
+  /** Called with this Overseer call's cost/turns/duration once its session ends. */
+  onUsage?: (u: { costUsd: number; turns: number; durationMs: number }) => void;
 }): Promise<OverseerDecision> {
   const outcome = opts.verdict.outcome;
   if (opts.attempt > opts.maxRetries) {
@@ -108,6 +110,12 @@ Decide: continue, repair, or stop.`;
       for (const block of message.message?.content ?? []) {
         if (block.type === "text") lastText = block.text;
       }
+    } else if (message.type === "result") {
+      opts.onUsage?.({
+        costUsd: Number(message.total_cost_usd ?? 0),
+        turns: Number(message.num_turns ?? 0),
+        durationMs: Number(message.duration_ms ?? 0),
+      });
     }
   }
 
