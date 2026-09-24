@@ -189,6 +189,30 @@ Every pipeline costs about $1 minimum, even for a one-line `--version` flag: 10 
 - **`validate-dev-workflow.mjs` checks paperwork, not results.** It passes if SPEC.md, CHANGELOG, hooks and commits exist. It never checks whether the `/health` route works. The forced-skill run above would pass it, bug included.
 - **Evidence base is thin.** STATUS.md rests on 5 runs, and its trigger success was never repeated. No cost was recorded before this review. This review spent about $5.50 on real runs.
 
+## Round 2: usability, measured on real runs
+
+Round 1 found security holes; most are fixed (see the fix plan below). Round 2 asked a different
+question: can a person actually use this? A real Chromium clicked through the real UI during real
+runs (`test/e2e/record-run.mjs`). The output was graded by hidden tests and the sessions were recorded
+as video. Full write-up with screenshots and videos: [docs/UI.md](UI.md).
+
+| Finding | Evidence | Status |
+| --- | --- | --- |
+| 53 approval clicks for a tiny todo app; 24 for Roman numerals | recorded runs, old UI | **Fixed**: 16 and 11 (per-run "don't ask again" rules + read-only commands don't ask) |
+| 356 cards for one 4-minute run; one browser click = 5 cards | recorded run | **Fixed**: 103 blocks, one line per tool call |
+| Approve button scrolls away mid-stream | video | **Fixed**: prompt pinned to the bottom, keyboard 1/2/3 |
+| Reload mid-run shows an empty page | `test:ui` | **Fixed**: full replay on every connection |
+| Run end wipes the open page, and nothing is saved to look at later | recorded run (`transcriptBlocks: 0`) | **Fixed**: page keeps it; `report.html` saved per run |
+| No cost anywhere | code read | **Fixed**: per phase + total, UI and CLI |
+| Terminal silent for the whole run | fresh-clone run | **Fixed**: Claude Code-style transcript + approvals in the terminal |
+| Screenshot tool's base64 dumped into transcript, log index, every socket message | real-run screenshot | **Fixed** |
+| `cat $F` would have produced a rule matching whatever `$F` held | `test:bash` while building rules | **Fixed** before shipping |
+| `python3 -O -c "…"` would have produced `Bash(python3 -O:*)`, allowing any inline Python | real-run approval log | **Fixed** before shipping |
+| agent-loop's own git hooks ran the old scanner (3/19 secret formats) | diff vs. Dev-Skill | **Fixed**: synced |
+| No `npm test`, no CI | fresh clone | **Fixed**: `npm test` (11 suites) + GitHub Actions |
+| Output quality | hidden graders | Unchanged and good: todo app 9/9, Roman numerals 4,040/4,040 |
+| Dev-Skill triggers on only 3 of 8 ordinary coding requests | held-out A/B, real model | Fixed in Dev-Skill: 8/8, 0/2 false triggers |
+
 ## Fix plan
 
 Work top to bottom. The first five are security holes someone could exploit today.

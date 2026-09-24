@@ -23,8 +23,15 @@ interface PendingApproval {
  * durable record of phase transitions, Overseer reasoning, or approvals, which defeats the point of
  * having an indexed history at all.
  */
+/** Enough for a long run's transcript; older events are still in the Store, just not replayed. */
+const HISTORY_LIMIT = 5000;
+
 export class EventBus extends EventEmitter {
   private pending = new Map<string, PendingApproval>();
+  /** Everything emitted this process, so a tab opened mid-run (or reloaded) sees the whole transcript. */
+  private history: AgentEvent[] = [];
+  /** "Don't ask again" rules a human created this run, e.g. `Bash(npm test:*)` or `Write`. */
+  private allowRules = new Set<string>();
 
   constructor(private store?: Store) {
     super();
@@ -33,7 +40,30 @@ export class EventBus extends EventEmitter {
   emitEvent(event: AgentEvent) {
     const phase = "phase" in event ? event.phase : null;
     this.store?.logEvent(event.runId, phase, event.type, event);
+    this.history.push(event);
+    if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT);
     this.emit("event", event);
+  }
+
+  /**
+   * What a newly connected UI should be sent: the run so far, minus approval requests that were
+   * already decided (their outcome is carried by the approval-resolved event that follows them).
+   */
+  replay(): AgentEvent[] {
+    return this.history.filter((e) => e.type !== "approval-request" || this.pending.has(e.requestId));
+  }
+
+  /** Every event this process emitted (up to the history limit), for writing a saved report. */
+  allEvents(): AgentEvent[] {
+    return [...this.history];
+  }
+
+  addAllowRule(rule: string) {
+    this.allowRules.add(rule);
+  }
+
+  hasAllowRule(rule: string): boolean {
+    return this.allowRules.has(rule);
   }
 
   /** Called by a PreToolUse hook. Resolves once a human (or auto-policy) decides. */
@@ -43,6 +73,7 @@ export class EventBus extends EventEmitter {
     toolUseId: string;
     toolName: string;
     toolInput: unknown;
+    rule?: string;
   }): { requestId: string; wait: Promise<ApprovalDecision> } {
     const requestId = randomUUID();
     const event: ApprovalRequestEvent = {
@@ -53,6 +84,7 @@ export class EventBus extends EventEmitter {
       toolUseId: base.toolUseId,
       toolName: base.toolName,
       toolInput: base.toolInput,
+      rule: base.rule,
       ts: new Date().toISOString(),
     };
     const wait = new Promise<ApprovalDecision>((resolve) => {

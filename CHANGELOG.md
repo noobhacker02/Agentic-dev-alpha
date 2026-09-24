@@ -5,7 +5,42 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **The run UI, rebuilt after watching real runs** (docs/UI.md). A recorded todo-app run needed 53
+  approval clicks and put 356 cards on screen, and the page lost everything on reload or when the run
+  ended. Now:
+  - Claude Code-style transcript: one `⏺ Tool(args)` line per call with its output attached and
+    collapsed. There's a phase stepper, live cost and elapsed time, and a side panel.
+  - The permission prompt is pinned to the bottom and answered with 1/2/3, y/n or Esc. "No" takes a
+    reason that goes back to the agent.
+  - "Yes, and don't ask again" saves a narrow per-run rule (`Bash(npm test:*)`). Read-only shell
+    commands inside `--dir` don't ask; `--strict-approval` restores asking. Compound commands are
+    judged per subcommand (`src/bash-analysis.ts`). Destructive, remote, wrapped or run-time-expanded
+    commands never become rules.
+  - The server replays the whole run to every connection. The transcript survives the server
+    stopping.
+  - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
+
 ### Added
+- **Terminal transcript and approvals** (`src/terminal.ts`): the same transcript and prompt in the
+  terminal, so a run can be driven without the browser. Whichever side answers first wins.
+- **Saved run report**: every run writes a self-contained `report.html` next to its artifacts. It
+  opens from disk with no server, and event text is escaped so it can't break out of the page.
+- **Browser session video**: with `--browser`, the agent's session is recorded as `.webm`, shown in the
+  UI and the report.
+- **Cost tracking**: `usage` events per phase and Overseer call. The CLI prints the total, the UI shows
+  it per phase.
+- **`npm test`** and **CI** (`.github/workflows/test.yml`) run all 11 no-API suites, including real
+  Chromium.
+- **`test/e2e/record-run.mjs`**: records a real run as video plus per-phase screenshots and a summary.
+
+### Fixed
+- The screenshot tool's base64 image data was dumped into the transcript, the log index and every
+  WebSocket message.
+- agent-loop's own git hooks ran an outdated copy of the scanner (3 of 19 secret formats). They're
+  synced to Dev-Skill's hardened version.
+
+### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.
   - New `--browser` CLI flag gives `builder`/`verifier` a real browser MCP server for the run (off

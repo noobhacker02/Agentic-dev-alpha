@@ -17,6 +17,7 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".webm": "video/webm",
 };
 
 /**
@@ -131,7 +132,11 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
       try {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "decision" && msg.requestId && (msg.decision === "allow" || msg.decision === "deny")) {
-          bus.resolveApproval(msg.requestId, { decision: msg.decision, reason: msg.reason });
+          bus.resolveApproval(msg.requestId, {
+            decision: msg.decision,
+            reason: typeof msg.reason === "string" ? msg.reason.slice(0, 2000) : undefined,
+            remember: msg.remember === true,
+          });
         } else if (
           msg.type === "record-decision" &&
           typeof msg.runId === "string" &&
@@ -148,9 +153,10 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
         // ignore malformed client messages
       }
     });
-    // Events aren't replayed, so a tab opened or reloaded mid-run would never see an approval that
-    // was requested before it connected, and the run would hang until the hook timed out.
-    for (const event of bus.pendingRequests()) ws.send(JSON.stringify(event));
+    // Replay the run so far: a tab opened or reloaded mid-run gets the whole transcript, and any
+    // approval still waiting (otherwise the run would hang until the hook timed out).
+    for (const event of bus.replay()) ws.send(JSON.stringify(event));
+    ws.send(JSON.stringify({ type: "replay-complete" }));
   });
 
   const broadcast = (event: AgentEvent) => {

@@ -43,13 +43,16 @@ function skippedVerdict(reason: string): PhaseVerdict {
 
 export async function runPipeline(config: PipelineConfig, bus: EventBus, store: Store): Promise<RunRecord> {
   const run = store.createRun(config.task, config.workDir);
-  bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, ts: new Date().toISOString() });
+  bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, workDir: config.workDir, ts: new Date().toISOString() });
 
   let finalStatus: RunRecord["status"] = "done";
   let lastSeenDecisionsLog: string | undefined;
   let totalRepairs = 0;
   const attemptCounts: Partial<Record<PhaseName, number>> = {};
-  const browserSessions = config.browser ? new BrowserSessionManager() : undefined;
+  const artifactRoot = config.browserArtifactDir;
+  const browserSessions = config.browser
+    ? new BrowserSessionManager({ videoDirFor: artifactRoot ? (runId) => join(artifactRoot, runId) : undefined })
+    : undefined;
   // Scoped per run under the configured root (cli.ts passes <dataDir>/browser-artifacts as the
   // root; server.ts serves /artifacts/<runId>/<file> from that same root) so screenshots from
   // different runs against the same --dir don't land in one shared, unscoped folder.
@@ -91,6 +94,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           bus,
           store,
           requireApproval: config.requireApproval,
+          strictApproval: config.strictApproval,
           browser: browserOpt,
         });
       } catch (err) {
@@ -125,6 +129,8 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           priorSummaries: store.getPhaseSummaries(run.id),
           decisionsLog,
           trustedDecisions: store.getTrustedDecisions(run.id),
+          onUsage: (u) =>
+            bus.emitEvent({ type: "usage", runId: run.id, phase, role: "overseer", ...u, ts: new Date().toISOString() }),
         });
       } catch (err) {
         // An Overseer API failure must not leave the run stuck "running" forever in the DB (found
