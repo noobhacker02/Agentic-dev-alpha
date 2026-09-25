@@ -242,6 +242,45 @@ server.close();
   console.log(`[ok] screenshots are capped at ${MAX} per session; one more is refused, not silently written`);
 }
 
+// WebSockets and WebRTC never pass through context.route(), so the request guard above can't see
+// them. Before this was fixed, a local page reached a non-allowed host both ways: a ws:// connection
+// sent data out, and a STUN "server" received UDP packets. 127.0.0.2 isn't on the allowlist but still
+// lands on this machine, so it stands in for an outside host without needing the internet.
+{
+  const { WebSocketServer } = await import("ws");
+  const dgram = await import("node:dgram");
+  const leaks = [];
+  const outside = createServer((_q, s) => { leaks.push("http"); s.end("ok"); }).listen(0, "0.0.0.0");
+  await new Promise((r) => outside.on("listening", r));
+  new WebSocketServer({ server: outside }).on("connection", (ws) => { leaks.push("ws-connected"); ws.on("message", () => leaks.push("ws-data")); });
+  const udp = dgram.createSocket("udp4").on("message", () => leaks.push("udp"));
+  await new Promise((r) => udp.bind(0, "0.0.0.0", r));
+  const o = outside.address().port, u = udp.address().port;
+  const page = `<script>
+    try { const ws = new WebSocket("ws://127.0.0.2:${o}/"); ws.onopen = () => ws.send("secret"); } catch (e) {}
+    try { const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.2:${u}" }] });
+          pc.createDataChannel("x"); pc.createOffer().then((d) => pc.setLocalDescription(d)); } catch (e) {}
+  </script>`;
+  const local = createServer((_q, s) => { s.setHeader("content-type", "text/html"); s.end(page); }).listen(0, "127.0.0.1");
+  await new Promise((r) => local.on("listening", r));
+  const runId = "ws-rtc-containment";
+  const session = await sessions.getOrCreate(runId, bus);
+  await session.page.goto(`http://127.0.0.1:${local.address().port}/`);
+  await session.page.waitForTimeout(2500);
+  assert.deepStrictEqual(leaks, [], `nothing may reach a non-allowed host over WebSocket or WebRTC, got: ${leaks.join(", ")}`);
+  console.log("[ok] a local page can't reach a non-allowed host over WebSocket or WebRTC (UDP)");
+
+  // A local WebSocket still works: the gate is on the host, not on WebSockets as such.
+  const localWs = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await new Promise((r) => localWs.on("listening", r));
+  const echoed = new Promise((r) => localWs.on("connection", (ws) => ws.on("message", (m) => r(String(m)))));
+  await session.page.evaluate((p) => { const ws = new WebSocket(`ws://127.0.0.1:${p}/`); ws.onopen = () => ws.send("hello"); }, localWs.address().port);
+  assert.strictEqual(await Promise.race([echoed, new Promise((r) => setTimeout(() => r("timeout"), 3000))]), "hello");
+  console.log("[ok] a WebSocket to 127.0.0.1 still connects");
+  await sessions.close(runId, bus, "completed");
+  outside.close(); local.close(); udp.close(); localWs.close();
+}
+
 // 15. close() must never throw, even when saving the video artifact fails (video.path() throws by
 // contract when a video wasn't actually saved -- a crash, a disk issue, a race, all realistic) or
 // closing the browser itself fails. pipeline.ts calls close() as the *first* statement in its own

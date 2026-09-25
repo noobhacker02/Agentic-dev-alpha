@@ -56,7 +56,7 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     return `${name}(${short(JSON.stringify(i), 70)})`;
   };
 
-  const pretty = (r: string) => r.replace(/mcp__browser__/g, "browser.");
+  const pretty = (r: string | undefined) => strip(String(r ?? "")).replace(/mcp__browser__/g, "browser.");
   let cost = 0;
   let startedAt = 0;
   const tools = new Map<string, string>();

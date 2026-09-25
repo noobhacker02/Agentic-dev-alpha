@@ -73,6 +73,26 @@ assert.ok(!text.includes("\x1b[2J"), "a CSI screen-clear in file content shown i
 assert.ok(text.includes("looks safe"), "the harmless remainder of the content still renders");
 console.log("[ok] escape/control bytes in tool output, model text, and the approval prompt body are stripped");
 
+// Rule text reaches the prompt ("don't ask again for …") and the approval lines. Even if a rule ever
+// carried control bytes, none may reach the terminal.
+{
+  // Close the approval the previous check left open, the way the web UI answering it would.
+  for (const p of bus.pendingRequests()) {
+    bus.resolveApproval(p.requestId, { decision: "deny" });
+    bus.emitEvent({ type: "approval-resolved", runId, phase: "builder", requestId: p.requestId, toolUseId: p.toolUseId, decision: "deny", auto: false, ts: ts() });
+  }
+  const before = text.length;
+  const evilRule = "Bash(npm run \u001b[2J\u001b[Hsafe:*)";
+  const r = bus.requestApproval({ runId, phase: "builder", toolUseId: "t9", toolName: "Bash", toolInput: { command: "npm run x" }, rule: evilRule });
+  bus.emitEvent({ type: "approval-auto-allowed", runId, phase: "builder", toolUseId: "t8", toolName: "Bash", rule: evilRule, ts: ts() });
+  input.write("2"); await tick(); await r.wait;
+  bus.emitEvent({ type: "approval-resolved", runId, phase: "builder", requestId: r.requestId, toolUseId: "t9", decision: "allow", auto: false, rememberedRule: evilRule, ts: ts() });
+  const added = text.slice(before);
+  assert.ok(added.includes("don't ask again for Bash(npm run [2J[Hsafe:*)"), "the rule still shows, minus its control bytes");
+  assert.ok(!/[\u001b\u009b]/.test(added), "no escape byte from rule text may reach the terminal");
+  console.log("[ok] rule text in the prompt and approval lines is stripped of escape bytes");
+}
+
 term.detach();
 console.log("\n--- sample ---\n" + text.split("\n").slice(0, 14).join("\n"));
 console.log("\nALL TERMINAL TESTS PASSED");
