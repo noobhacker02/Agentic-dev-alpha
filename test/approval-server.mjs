@@ -101,6 +101,28 @@ assert.ok(srv.token.length >= 32);
 await other.close();
 console.log("[ok] each server run gets its own random token");
 
+// --- `--port 0` (a valid non-negative --port value; Node/networking convention for "OS, pick a
+// free port") used to leave hostOk/originOk permanently checking against literal port 0, and
+// the printed URL named port 0 too -- something no client could ever connect to, breaking the
+// approval UI outright. The real bound port (from server.address()) must be what's checked and
+// what's printed.
+{
+  const auto = await startServer(new EventBus(), 0);
+  assert.ok(!auto.url.includes(":0/"), `printed URL must use the real bound port, not 0: ${auto.url}`);
+  const realPort = new URL(auto.url.split("#")[0]).port;
+  const connected = await new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${realPort}/ws?token=${auto.token}`, {
+      headers: { Origin: `http://127.0.0.1:${realPort}` },
+    });
+    ws.on("open", () => { ws.close(); resolve(true); });
+    ws.on("error", () => resolve(false));
+    ws.on("unexpected-response", () => resolve(false));
+  });
+  assert.ok(connected, "a client using the printed URL's real port and token must be able to connect");
+  await auto.close();
+  console.log("[ok] --port 0: the printed URL and host/origin checks use the real OS-assigned port, not literal 0");
+}
+
 // --- browser-tool artifacts (screenshots) are served read-only, gated by the same token
 {
   const { mkdtempSync, writeFileSync } = await import("node:fs");

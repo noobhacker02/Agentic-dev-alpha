@@ -55,11 +55,18 @@ export interface ServerOptions {
  */
 export function startServer(bus: EventBus, port: number, opts: ServerOptions = {}) {
   const token = opts.token ?? randomBytes(24).toString("hex");
-  const allowedHosts = new Set([`${HOST}:${port}`, `localhost:${port}`]);
-  const allowedOrigins = new Set([...allowedHosts].map((h) => `http://${h}`));
+  // `port: 0` (a valid, non-negative --port value; Node/networking convention for "OS, pick a free
+  // port") is only a request -- the real bound port is only known once listen()'s callback fires,
+  // via server.address(). Recomputed from a live variable (not a Set frozen at the requested value)
+  // so hostOk/originOk check against the port clients can actually reach, whichever it turns out to
+  // be, instead of permanently rejecting every real connection against a printed URL nothing could
+  // ever connect to either (confirmed empirically: with port 0, both were stuck at literal port 0).
+  let actualPort = port;
+  const allowedHosts = () => new Set([`${HOST}:${actualPort}`, `localhost:${actualPort}`]);
+  const allowedOrigins = () => new Set([...allowedHosts()].map((h) => `http://${h}`));
 
-  const hostOk = (req: IncomingMessage) => allowedHosts.has(req.headers.host ?? "");
-  const originOk = (req: IncomingMessage) => req.headers.origin === undefined || allowedOrigins.has(req.headers.origin);
+  const hostOk = (req: IncomingMessage) => allowedHosts().has(req.headers.host ?? "");
+  const originOk = (req: IncomingMessage) => req.headers.origin === undefined || allowedOrigins().has(req.headers.origin);
   const tokenOk = (req: IncomingMessage) => {
     const given = Buffer.from(parseTarget(req.url)?.searchParams.get("token") ?? "");
     const want = Buffer.from(token);
@@ -174,10 +181,13 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     // process instead of letting this promise reject cleanly.
     wss.on("error", reject);
     server.listen(port, HOST, () => {
+      const addr = server.address();
+      if (addr && typeof addr === "object") actualPort = addr.port;
       resolve({
         // The token rides in the fragment so the browser never sends it in a request line,
-        // server log or Referer; the UI reads it from location.hash.
-        url: `http://${HOST}:${port}/#token=${token}`,
+        // server log or Referer; the UI reads it from location.hash. Built from actualPort, not
+        // the possibly-0 requested one, so the URL is one a client can actually reach.
+        url: `http://${HOST}:${actualPort}/#token=${token}`,
         token,
         close: () =>
           new Promise<void>((res) => {

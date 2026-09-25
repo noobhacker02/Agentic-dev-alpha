@@ -136,6 +136,25 @@ All notable changes to this project are documented here. Format follows
     (`test/browser-tools.mjs`) exercises both failure points against a real session's real browser.
     All 11 suites and `pipeline_logic.sh` still pass, with no leaked Chromium processes.
 
+- **`--port 0` silently broke the approval UI.** Finished the adversarial pass on `src/server.ts`'s
+  WebSocket/HTTP access control (`startServer`). The core threat model here was already soundly
+  built and tested by the prior session -- DNS-rebinding Host headers, another site's Origin even
+  while holding the valid token, no/wrong token, and path traversal against `/artifacts/` are all
+  real, passing regression tests already, and re-running them found nothing wrong. But `port: 0`
+  (a valid, non-negative `--port` value -- the standard Node/networking convention for "OS, pick a
+  free port") broke it: `allowedHosts`/`allowedOrigins` and the printed URL were all built once from
+  the *requested* port, never updated to the port the OS actually bound. Confirmed empirically:
+  `startServer(bus, 0, {})` printed `http://127.0.0.1:0/#token=...` -- connecting to literal port 0
+  fails (`ECONNREFUSED`) -- while the server was really listening on a different, never-surfaced
+  port, so every legitimate connection attempt using the printed URL would also fail `hostOk`
+  forever (it only ever allowed `"127.0.0.1:0"`/`"localhost:0"`).
+  - Fixed by reading the real bound port from `server.address()` once `listen()`'s callback fires,
+    and checking/printing that instead of the requested value. `allowedHosts`/`allowedOrigins` are
+    now computed from a live variable rather than frozen into a `Set` before the real port is known.
+  - Re-verified: `startServer(bus, 0, {})` now prints a real, reachable URL, and a client connecting
+    with that exact URL's port and token succeeds. New regression test (`test/approval-server.mjs`)
+    covers `--port 0` end-to-end. All 11 suites and `pipeline_logic.sh` still pass.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.
