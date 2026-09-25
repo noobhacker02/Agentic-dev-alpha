@@ -143,31 +143,47 @@ export class BrowserSessionManager {
     return this.sessions.get(runId);
   }
 
-  /** Always call this, even after a worker error -- an unclosed Chromium process and temp profile
-   * leaking past the run is exactly the failure mode docs/BROWSER-AGENT.md's MVP boundary rules out. */
+  /**
+   * Always call this, even after a worker error -- an unclosed Chromium process and temp profile
+   * leaking past the run is exactly the failure mode docs/BROWSER-AGENT.md's MVP boundary rules
+   * out. That means this method itself must never throw: pipeline.ts calls it as the *first*
+   * statement in its own `finally` block, ahead of store.finishRun and the run-end event, with no
+   * try/catch of its own -- an exception here doesn't just skip below it, it escapes that finally
+   * block entirely and skips finishRun/run-end too, leaving the run stuck "running" forever in the
+   * DB on top of the leaked browser. Confirmed empirically: video.path() throws by contract when a
+   * video wasn't actually saved (a crash, a disk issue, a race -- all realistic), which is exactly
+   * the kind of failure this method must survive.
+   */
   async close(runId: string, bus: EventBus, status: "completed" | "failed" | "interrupted"): Promise<void> {
     const session = this.sessions.get(runId);
     if (!session) return;
     this.sessions.delete(runId);
     try {
-      // The video file is only complete once its context closes, so close the context first, then
-      // give the recording a stable name and announce it.
-      const video = session.page.video();
-      await session.context.close();
-      if (video) {
-        const recorded = await video.path();
-        const named = join(dirname(recorded), `session-${session.browserSessionId}.webm`);
-        renameSync(recorded, named);
-        bus.emitEvent({
-          type: "browser-artifact-created",
-          runId,
-          browserSessionId: session.browserSessionId,
-          kind: "video",
-          path: named,
-          ts: new Date().toISOString(),
-        });
+      try {
+        // The video file is only complete once its context closes, so close the context first,
+        // then give the recording a stable name and announce it. Best-effort: losing the
+        // recording is never worth losing the run's terminal state or leaking the browser below.
+        const video = session.page.video();
+        await session.context.close();
+        if (video) {
+          const recorded = await video.path();
+          const named = join(dirname(recorded), `session-${session.browserSessionId}.webm`);
+          renameSync(recorded, named);
+          bus.emitEvent({
+            type: "browser-artifact-created",
+            runId,
+            browserSessionId: session.browserSessionId,
+            kind: "video",
+            path: named,
+            ts: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error(`agent-loop: could not save the browser session video for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
       }
       await session.browser.close();
+    } catch (err) {
+      console.error(`agent-loop: error closing the browser session for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       bus.emitEvent({
         type: "browser-session-ended",
