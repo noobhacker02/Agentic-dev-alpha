@@ -137,7 +137,31 @@ const PACKAGE_MANAGERS = new Set([
   "npm", "yarn", "pnpm", "pip", "pip3", "pipx", "gem", "bundle", "cargo", "go", "composer",
   "apt", "apt-get", "brew", "dnf", "yum", "conda",
 ]);
-const PACKAGE_INSTALL_SUBS = new Set(["install", "i", "add", "uninstall", "remove", "rm", "un", "update", "upgrade", "get"]);
+const PACKAGE_INSTALL_SUBS = new Set(["install", "i", "add", "uninstall", "remove", "rm", "un", "update", "upgrade", "get", "ci", "sync", "reinstall"]);
+// Also package managers: the first list missed these, and each of `bun add x`, `uv add x`,
+// `uv pip install x`, `poetry add x`, `pipenv install x`, `deno install x` and
+// `python3 -m pip install x` still produced one rule that covered any package (confirmed).
+for (const pm of ["bun", "uv", "poetry", "pipenv", "pdm", "hatch", "rye", "pixi", "mamba", "micromamba", "deno",
+  "ensurepip", "dotnet", "nuget", "mix", "cabal", "stack", "opam", "cpan", "cpanm", "luarocks", "vcpkg", "conan",
+  "volta", "corepack", "choco", "winget", "scoop", "snap", "flatpak", "port", "pkg", "apk", "pacman", "zypper"]) {
+  PACKAGE_MANAGERS.add(pm);
+}
+
+/** `npm install x`, `uv pip install x`, and the module form `python3 -m pip install x`: the
+ * install-like word can sit one word further in than `sub`, behind a flag or a nested tool name. */
+function installsPackages(cmd: string, args: string[]): boolean {
+  let pm = cmd;
+  let rest = args;
+  // bun and deno are both runtimes and package managers, so only switch to the module form when
+  // there actually is a `-m <module>`.
+  const m = INTERPRETERS.test(cmd) ? args.indexOf("-m") : -1;
+  if (m >= 0) {
+    pm = args[m + 1] ?? "";
+    rest = args.slice(m + 2);
+  }
+  if (!PACKAGE_MANAGERS.has(pm)) return false;
+  return rest.filter((a) => !a.startsWith("-")).slice(0, 2).some((a) => PACKAGE_INSTALL_SUBS.has(a));
+}
 const GIT_NEVER = new Set(["push", "reset", "clean", "checkout", "rebase", "filter-branch", "gc", "prune", "restore", "switch", "am", "apply", "config", "remote", "submodule", "update-ref", "worktree"]);
 const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
 
@@ -159,6 +183,10 @@ function insideDir(root: string, p: string): boolean {
 }
 
 export function analyzeBash(command: string, workDir?: string): Subcommand[] | null {
+  // Control bytes (ESC and friends) have no business in a command a person approves, and they'd ride
+  // into rule text shown in the terminal prompt (confirmed: `npm run <ESC>[2J…` cleared the screen
+  // from inside "don't ask again for …"). Never read-only, never a rule: always ask.
+  if (/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/.test(command)) return null;
   const raw = tokenize(command.trim());
   if (!raw || raw.length === 0) return null;
   let cwd = workDir;
@@ -206,7 +234,7 @@ export function analyzeBash(command: string, workDir?: string): Subcommand[] | n
     let rule: string | null = null;
     if (k === 0 && !s.writes && !NEVER_RULE.has(cmd) && !(cmd === "git" && GIT_NEVER.has(sub ?? "")) &&
         !(INTERPRETERS.test(cmd) && runsInlineCode(args)) &&
-        !(PACKAGE_MANAGERS.has(cmd) && PACKAGE_INSTALL_SUBS.has(sub ?? ""))) {
+        !installsPackages(cmd, args)) {
       const third = words[2];
       const wantThird = third !== undefined && !third.startsWith("-") && (sub?.startsWith("-") || RUNNER_SUBS.has(sub ?? ""));
       const used = wantThird ? 3 : sub !== undefined ? 2 : 1;

@@ -112,6 +112,20 @@ All notable changes to this project are documented here. Format follows
     prompt. New regression test (`test/terminal.mjs`) covers tool output, model text, and the
     approval-prompt body. All 11 suites and `pipeline_logic.sh` still pass.
 
+- **The three latest fixes each left a gap. All three are closed now, and each is tested by
+  confirming the test fails without the fix.**
+  - *Browser containment:* the new request guard never sees WebSockets or WebRTC. A local page
+    opened `ws://` to a non-allowed host and sent data. A STUN "server" received 4 UDP packets. Now
+    `context.routeWebSocket` only lets local WebSockets through, and Chromium starts with WebRTC's
+    non-proxied UDP disabled. Pages also get no `RTCPeerConnection`.
+  - *Package installs:* the install check keyed on `sub` alone. `python3 -m pip install`,
+    `uv pip install`, `uv add`, `bun add`, `poetry add`, `pipenv install` and `deno install` still
+    each saved one rule covering any package. It now also follows `-m <module>` and nested tools,
+    and covers more package managers plus `ci`/`sync`. Their `run`/`test` commands keep narrow rules.
+  - *Terminal sanitizing:* rule text skipped the new `strip()`. `npm run <ESC>[2J…` cleared the
+    screen from inside the prompt's "don't ask again for …" line. Commands with control bytes now
+    never become rules, and rule text is stripped before printing.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.

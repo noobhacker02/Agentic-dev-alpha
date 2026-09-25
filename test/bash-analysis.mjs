@@ -94,4 +94,25 @@ assert.strictEqual(plan("npm install lodash evil-pkg"), null);
 // Unaffected: running an already-defined package.json script is still scoped to that script name.
 assert.deepStrictEqual(plan("npm run build")?.rules, ["Bash(npm run build:*)"]);
 console.log("[ok] package installs (npm/yarn/pnpm/pip/gem/cargo/go) always ask -- never a reusable rule");
+// The first install fix missed these: each still produced one rule covering any package.
+for (const c of [
+  "python3 -m pip install requests", "python -m pip install requests", "python3 -m pip install -U requests",
+  "bun add lodash", "bun install", "uv add requests", "uv pip install requests", "uv sync",
+  "poetry add requests", "pipenv install requests", "deno install npm:lodash", "npm ci",
+]) {
+  expect(c, null);
+}
+// ...while ordinary run/test commands of the same tools keep a narrow rule.
+expect("bun run build", ["Bash(bun run build:*)"]);
+expect("uv run pytest", ["Bash(uv run pytest:*)"]);
+expect("python3 -m pytest -q", ["Bash(python3 -m pytest:*)"]);
+expect("poetry run pytest", ["Bash(poetry run pytest:*)"]);
+console.log("[ok] installs via python -m pip, uv, bun, poetry, pipenv, deno and npm ci always ask; their run/test commands keep narrow rules");
+
+// Control bytes can't ride into rule text (it's shown in the terminal prompt): always ask.
+expect("npm run \u001b[2J\u001b[Hsafe-build", null);
+expect("ls \u009b2J", null);
+expect("echo hi\r", null);
+console.log("[ok] commands containing escape/control bytes always ask and never become rules");
+
 console.log("\nALL BASH ANALYSIS TESTS PASSED");
