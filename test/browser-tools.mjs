@@ -242,4 +242,53 @@ server.close();
   console.log(`[ok] screenshots are capped at ${MAX} per session; one more is refused, not silently written`);
 }
 
+// 15. close() must never throw, even when saving the video artifact fails (video.path() throws by
+// contract when a video wasn't actually saved -- a crash, a disk issue, a race, all realistic) or
+// closing the browser itself fails. pipeline.ts calls close() as the *first* statement in its own
+// `finally` block, with no try/catch of its own, ahead of store.finishRun and the run-end event --
+// an exception escaping close() doesn't just skip the rest of close(), it skips finishRun/run-end
+// too, leaving the run stuck "running" forever in the DB on top of the leaked browser. Both real
+// failure points are exercised directly against a real session's real browser.
+{
+  const failRunId = "close-failure-test";
+  const failServer = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<html><body>close failure test</body></html>");
+  });
+  await new Promise((resolve) => failServer.listen(0, "127.0.0.1", resolve));
+  const failPort = failServer.address().port;
+
+  // 15a. The video artifact step throws.
+  {
+    const h4 = __testHandlers({ runId: failRunId, bus, sessions, artifactDir });
+    await h4.open.handler({ url: `http://127.0.0.1:${failPort}` }, {});
+    const session = sessions.get(failRunId);
+    const realBrowser = session.browser;
+    session.page.video = () => ({ path: async () => { throw new Error("simulated: video was not saved"); } });
+
+    await sessions.close(failRunId, bus, "completed"); // must resolve, not reject
+    assert.strictEqual(realBrowser.isConnected(), false, "the browser must still be closed for real, not leaked, when the video step fails");
+    const ended = events.filter((e) => e.type === "browser-session-ended" && e.runId === failRunId);
+    assert.strictEqual(ended.length, 1, "browser-session-ended must still fire when the video step fails");
+  }
+
+  // 15b. Closing the browser itself throws.
+  {
+    const h5 = __testHandlers({ runId: failRunId, bus, sessions, artifactDir });
+    await h5.open.handler({ url: `http://127.0.0.1:${failPort}` }, {});
+    const session = sessions.get(failRunId);
+    const realBrowser = session.browser;
+    const realClose = realBrowser.close.bind(realBrowser); // save the real method before overwriting it
+    session.browser.close = async () => { throw new Error("simulated: browser.close() failed"); };
+
+    await sessions.close(failRunId, bus, "completed"); // must still resolve, not reject
+    const endedAfter = events.filter((e) => e.type === "browser-session-ended" && e.runId === failRunId);
+    assert.strictEqual(endedAfter.length, 2, "browser-session-ended must still fire even when browser.close() itself throws");
+    await realClose(); // the mock prevented the real close; actually close it now so this test doesn't leak
+  }
+
+  failServer.close();
+  console.log("[ok] close() never throws -- a failed video save or a failed browser.close() still tears down the browser and emits browser-session-ended");
+}
+
 console.log("\nALL BROWSER TOOL TESTS PASSED");

@@ -112,6 +112,30 @@ All notable changes to this project are documented here. Format follows
     prompt. New regression test (`test/terminal.mjs`) covers tool output, model text, and the
     approval-prompt body. All 11 suites and `pipeline_logic.sh` still pass.
 
+- **A failed browser-session video save could leak a Chromium process and leave the run stuck
+  "running" forever in the audit database.** Continuing the same adversarial pass onto
+  `BrowserSessionManager.close()`'s video-recording lifecycle (new, from the newly-merged PR,
+  previously only exercised by its own happy-path tests). `close()`'s `finally` block emitted
+  `browser-session-ended` on any failure, but a `try/finally` doesn't swallow the original
+  exception -- it still re-throws after the `finally` runs, skipping `session.browser.close()`
+  entirely when the failure happened before that line. `pipeline.ts` calls `close()` as the
+  *first* statement in its own `finally` block, with no try/catch of its own, ahead of
+  `store.finishRun` and the `run-end` event -- so that escaped exception skipped those too,
+  propagating all the way to `cli.ts`'s top-level handler. Confirmed empirically: forcing
+  `video.path()` to throw (which it does by contract whenever a video wasn't actually saved -- a
+  crash, a disk issue, a race, all realistic) left the real Chromium process connected
+  (`browser.isConnected() === true`) after `close()` returned, and reproducing pipeline.ts's exact
+  `finally`-block shape showed `store.finishRun`/`run-end` never running once the exception escaped.
+  - Fixed by making `close()` structurally unable to throw: the video-artifact step is wrapped in
+    its own try/catch (best-effort -- losing the recording is never worth losing the run's terminal
+    state or leaking the browser below), and `browser.close()` itself is now also guarded so a
+    failure there can't escape either. Both log to `console.error` instead of failing silently.
+  - Re-verified: the same `video.path()` failure and a separate forced `browser.close()` failure
+    both now leave `close()` resolving normally, the real browser actually closed
+    (`isConnected() === false`), and `browser-session-ended` still emitted. New regression test
+    (`test/browser-tools.mjs`) exercises both failure points against a real session's real browser.
+    All 11 suites and `pipeline_logic.sh` still pass, with no leaked Chromium processes.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.
