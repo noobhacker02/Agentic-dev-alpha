@@ -108,3 +108,20 @@ Regenerate `docs/screenshots/approval-ui/04-after-real-run.png` and
 `docs/media/after-new-ui-real-run-5x.webm` against the fixed code so the public demo no longer shows
 the pre-fix path leak (finding #2). Costs a real, small amount of API spend to re-record; not done
 automatically here pending confirmation.
+
+## Round 2: independent re-check against the fixed code
+
+Re-ran the exploit scenario fresh (a real Chromium session via `BrowserSessionManager`, a real local
+HTTP server, a real `screenshot` tool call), independently of the automated test added above:
+
+```
+Tool-visible text: "Screenshot saved (screenshot-1790580138412-c24785fe.png)"
+Contains a path separator: false
+Contains the real artifactDir string: false
+```
+
+Confirms finding #1 is closed: the tool's visible output no longer contains the artifact directory,
+a path separator, or any other trace of the local filesystem layout — only a bare filename. Findings
+#3 and #4 were re-read against the current source and remain unchanged (no code touched either
+file). No new leaks surfaced in this round. The only outstanding item is still the two public demo
+files under the "Open item" above, which remain unregenerated.
