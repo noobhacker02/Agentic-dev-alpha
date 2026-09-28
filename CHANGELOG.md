@@ -68,6 +68,20 @@ All notable changes to this project are documented here. Format follows
   Synced into dev-workflow's canonical hook scripts (`Dev-Skill/dev-workflow/scripts/hooks/`) and both
   installed copies (this repo's and Dev-Skill's own `.githooks/`).
 
+### Security
+- **`export`/`set`/`declare`/`unset`/`alias`/`unalias`/`readonly` were missing from
+  `bash-analysis.ts`'s `NEVER_RULE`.** These mutate shell state that outlives the one command they
+  ran in — the exact same risk class the code already blocked for the *inline* `VAR=value cmd`
+  prefix form, just in the broader, more persistent standalone form. Concretely: a human could
+  approve a bland-looking `export NODE_OPTIONS=--require=/tmp/evil.js` (or `LD_PRELOAD=…`) once,
+  either directly or by clicking "don't ask again," and — because the SDK's Bash tool keeps one
+  persistent shell across calls in a session (confirmed via its own `CwdChangedHookInput`, which
+  exists for the identical reason `cd` persists across calls) — every *already-approved* rule like
+  `Bash(npm test:*)` would then silently run under that changed environment the next time it
+  auto-approved, without the human ever reviewing the new behavior. Fixed by adding these to
+  `NEVER_RULE`, so they always ask like `env`/`eval`/`exec`/`cd` already do. Regression test added
+  (`test/bash-analysis.mjs`); all 11 suites (now 81 assertions) and 11 stress scenarios pass.
+
 ### Cross-platform audit
 Reviewed the codebase for Linux/macOS/Windows portability, beyond the git-hooks fix above.
 - Confirmed already fine: all path handling goes through `node:path` (`join`/`resolve`/`dirname`),

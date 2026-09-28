@@ -24,6 +24,7 @@ these once.
 | 9 | `--port 0` (valid CLI value) broke the approval UI: host/origin allowlists and the printed URL were frozen at literal port 0 | `src/server.ts` | Medium (reliability) |
 | 10 | Browser screenshot tool printed its full local filesystem path into the transcript/index/every WebSocket message — already visible in this project's own public demo screenshot and video | `src/browser-tools.ts` | Medium (info disclosure, proven via own repo) |
 | 11 | `dev-workflow`'s git hooks only looked for `python3`; many Windows Python installs only have `python` | Dev-Skill repo | Medium (portability) |
+| 12 | `export`/`set`/`declare`/`unset`/`alias`/`readonly` were missing from `NEVER_RULE`: a bland-looking `export LD_PRELOAD=…`/`NODE_OPTIONS=…` could earn a "don't ask again" rule, and — worse — once it ran (one human approval, or under `--no-approval`) it silently changed what an *already-trusted* rule like `Bash(npm test:*)` actually executed next, since env/alias state persists across Bash calls in the same session (confirmed via the SDK's own `CwdChangedHookInput`, which exists for the identical reason `cd` persists) but a rule's text match doesn't account for it | `src/bash-analysis.ts` | High (undermines every existing "don't ask again" rule, not just its own) |
 
 Every row has a permanent regression test, and the full suite (11 test files, no API cost) plus
 `test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
