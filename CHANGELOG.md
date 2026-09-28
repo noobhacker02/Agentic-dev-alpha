@@ -54,6 +54,24 @@ All notable changes to this project are documented here. Format follows
   same clay/orange accent already used for the brand mark and active-phase state, as a soft ambient
   glow rather than a hard ring, after review. Screenshot:
   `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
+- **The browser panel is now a live view with a full snapshot history, not a single frame that
+  silently gets replaced.** Every `browser-snapshot` this run is kept (capped at 24) and shown as a
+  gallery strip below the main image; clicking an older thumbnail pins the view to it and a
+  "jump to live" control appears, so looking back at an earlier state doesn't fight the run for
+  control of the display. A small pulsing dot next to "Browser · active" (and a slow breathe on the
+  active phase's stepper icon) signals "still working" continuously between discrete WebSocket
+  events, instead of the panel looking frozen until the next one arrives — the DOM-native
+  equivalent of the persistent, dirty-flag-gated render loop a reviewed reference project
+  (see `docs/INSPIRATION-POKEHARNESS.md`) uses a Pixi ticker for; here it's just CSS animation,
+  which the browser's own compositor already runs independently of JS/events. New regression test:
+  a hostile page `title`/`url` reaching the gallery's new `title` attribute sink stays inert text
+  (`test/ui-render.mjs`).
+- **A few rotating one-liners in the idle status line** instead of a single static "Waiting for a run
+  to start." — picked by wall-clock time so they change every 8s rather than flicker per-tick.
+  Deliberately dry/self-deprecating dev humor (commit messages, force-pushes, stale TODOs), not
+  political and not genuinely dark — this sits on the same screen as destructive-command approval
+  prompts, so the tone stays professional rather than undermining what's actually being reviewed
+  there.
 
 ### Fixed
 - The screenshot tool's base64 image data was dumped into the transcript, the log index and every

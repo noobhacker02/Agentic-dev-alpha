@@ -41,6 +41,10 @@
   .step { display: flex; align-items: center; gap: 7px; padding: 3px 11px; border: 1px solid var(--line); border-radius: 14px; color: var(--faint); background: none; cursor: pointer; white-space: nowrap; }
   .step .icon { width: 12px; text-align: center; }
   .step[data-state="active"] { color: var(--accent); border-color: var(--accent); }
+  /* A slow, independent breathe on the active phase's icon -- signals "still working" continuously
+     between discrete WS events instead of the row looking frozen until the next one arrives. Kept
+     visually distinct from data-waiting's glow (a different, more urgent signal: needs you). */
+  .step[data-state="active"] .icon { animation: live-pulse 2.4s ease-in-out infinite; }
   .step[data-state="pass"] { color: var(--green); border-color: #4eba6566; }
   .step[data-state="fail"] { color: var(--red); border-color: #ff6b8066; }
   .step[data-state="skipped"] { color: var(--faint); border-style: dashed; }
@@ -78,6 +82,16 @@
   #browser-panel.live { display: block; }
   #browser-panel img { width: 100%; border: 1px solid var(--line); border-radius: 4px; margin-top: 6px; cursor: zoom-in; background: #111; }
   #browser-panel .url { color: var(--cyan); word-break: break-all; }
+  #browser-panel h3 { display: flex; align-items: center; gap: 6px; }
+  .live-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--green); display: inline-block; animation: live-pulse 1.6s ease-in-out infinite; }
+  .shot-main { animation: shot-flash .5s ease-out; }
+  .shot-jump-live { margin-top: 6px; width: 100%; }
+  /* A filmstrip of every snapshot taken this run, not just the latest -- the run is often over
+     before anyone's looking, so a history to scrub back through matters as much as "live" does. */
+  .shot-gallery { display: flex; gap: 4px; overflow-x: auto; margin-top: 6px; padding-bottom: 2px; }
+  .shot-gallery img { width: 44px; height: 30px; object-fit: cover; flex: none; border-radius: 3px; border: 1px solid var(--line); cursor: pointer; opacity: .55; background: #111; }
+  .shot-gallery img:hover { opacity: .85; }
+  .shot-gallery img.sel { opacity: 1; border-color: var(--accent); }
   @media (max-width: 1000px) { aside { display: none; } }
 
   /* transcript blocks */
@@ -226,6 +240,12 @@
      around the whole line -- present, not loud. */
   .blk.tool.awaiting { animation: blk-in .2s ease-out, pulse-glow-blk 2.2s ease-in-out infinite; }
   @keyframes pulse-glow-blk { 0%, 100% { box-shadow: -2px 0 0 0 rgba(217, 119, 87, .5); } 50% { box-shadow: -2px 0 8px 1px rgba(217, 119, 87, .38); } }
+  /* The browser panel's "live" dot and the brief flash on its main image when a new snapshot lands
+     -- shot-main is a fresh DOM node on every render (innerHTML is rebuilt wholesale), so this
+     animation replays automatically each time without any manual class-toggling JS, the same trick
+     .blk's own blk-in entrance animation already relies on. */
+  @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes shot-flash { from { filter: brightness(1.6); } to { filter: brightness(1); } }
   html { transition: background-color .25s ease; }
   body, header, #stepper, aside, #dock, .step, .blk, .tag, .opt, .smallbtn, #theme-toggle,
   #run-state, .inputrow, #jump {
@@ -280,6 +300,21 @@
 
 <script>
 const PHASES = ["planner", "test-designer", "builder", "verifier", "gatekeeper"];
+// Rotates every 8s while idle -- picked by wall-clock time, not per-tick random, so it changes
+// slowly instead of flickering every second. Kept light, not edgy: this sits on the same screen as
+// destructive-command approval prompts, so the tone stays dry rather than dark.
+const IDLE_LINES = [
+  "Waiting for a run to start.",
+  "Idle. Even the Overseer needs a moment.",
+  "No run yet — the calm before the commits.",
+  "Standing by. Coffee's probably cold by now.",
+  "Idle. Unlike your CI queue, this part's free.",
+  "Nothing running. Good time to write that test you've been avoiding.",
+  "Idle. No commits, no incidents — a rare and beautiful combination.",
+  "Nothing running. Somewhere, someone's about to force-push to main.",
+  "Idle. That TODO from 2019 still isn't going to fix itself.",
+  "Nothing running. Your last commit message still doesn't explain what changed.",
+];
 const $ = (id) => document.getElementById(id);
 const scrollBox = $("scroll"), transcript = $("transcript"), dockInner = $("dock-inner");
 const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
@@ -397,15 +432,35 @@ setInterval(() => {
 // The dock is rebuilt whenever the pending prompt changes; an explicit mode avoids rebuilding the idle input.
 
 const browserPanel = $("browser-panel");
+// `history`: every snapshot taken this run (capped -- a long run can easily produce dozens), so the
+// panel is a scrubbable record, not just whatever the agent happened to be looking at last.
+// `pinned`: null means "follow the newest snapshot automatically" (the live-view default); an index
+// means the user clicked an older thumbnail and is deliberately looking at it, so a new snapshot
+// arriving must not yank the view out from under them -- it should just make "jump to live" appear.
+const browserState = { history: [], pinned: null };
+const SHOT_HISTORY_CAP = 24;
 function renderBrowserPanel(d) {
   browserPanel.classList.add("live");
-  browserPanel.innerHTML = "<h3>Browser · " + esc(d.status || "active") + "</h3>" +
-    "<div>" + esc(d.title || "(no page loaded yet)") + "</div>" +
-    (d.url ? '<div class="url">' + esc(d.url) + "</div>" : "") +
-    (d.shot ? '<a href="' + artifactUrl(d.runId, d.shot) + '" target="_blank"><img src="' + artifactUrl(d.runId, d.shot) + '" /></a>' : "") +
+  const atLive = d.pinned == null;
+  const idx = atLive ? d.history.length - 1 : d.pinned;
+  const cur = d.history[idx] || { shot: d.shot, url: d.url, title: d.title };
+  const isLive = d.status === "active" || d.status === undefined;
+  browserPanel.innerHTML =
+    "<h3>Browser · " + esc(d.status || "active") + (isLive ? ' <span class="live-dot" title="updating live"></span>' : "") + "</h3>" +
+    "<div>" + esc(cur.title || "(no page loaded yet)") + "</div>" +
+    (cur.url ? '<div class="url">' + esc(cur.url) + "</div>" : "") +
+    (cur.shot ? '<a href="' + artifactUrl(d.runId, cur.shot) + '" target="_blank"><img class="shot-main" src="' + artifactUrl(d.runId, cur.shot) + '" /></a>' : "") +
+    (!atLive ? '<button type="button" class="smallbtn shot-jump-live">⏵ jump to live</button>' : "") +
+    (d.history.length > 1
+      ? '<div class="shot-gallery">' + d.history.map((s, i) =>
+          '<img data-idx="' + i + '" class="' + (i === idx ? "sel" : "") + '" src="' + artifactUrl(d.runId, s.shot) + '" title="' + esc(s.title || "snapshot " + (i + 1)) + '" />'
+        ).join("") + "</div>"
+      : "") +
     (d.video ? '<a class="url" href="' + artifactUrl(d.runId, d.video) + '" target="_blank">▶ session recording (.webm)</a>' : "");
+  browserPanel.querySelectorAll(".shot-gallery img").forEach((img) => (img.onclick = () => { d.pinned = +img.dataset.idx; renderBrowserPanel(d); }));
+  const jump = browserPanel.querySelector(".shot-jump-live");
+  if (jump) jump.onclick = () => { d.pinned = null; renderBrowserPanel(d); };
 }
-const browserState = {};
 
 // ---------- the bottom dock: permission prompt (Claude Code style) or status line
 function promptBody(ev) {
@@ -429,7 +484,7 @@ function renderDock() {
     const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(Date.now() / 1000) % 10];
     const status = running
       ? '<span class="spin">' + spin + "</span> " + esc(state.phase || "starting") + " is working… <span class=\"muted\">(" + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
-      : state.status === "idle" ? '<span class="muted">Waiting for a run to start.</span>'
+      : state.status === "idle" ? '<span class="muted">' + esc(IDLE_LINES[Math.floor(Date.now() / 8000) % IDLE_LINES.length]) + "</span>"
       : "Run " + esc(state.status) + "." + (state.reportPath ? ' <span class="muted">Saved report: ' + esc(state.reportPath) + "</span>" : "");
     // Only the status text changes each tick; the input is built once so typing never loses focus.
     if (dockInner.dataset.mode === "idle") { dockInner.querySelector(".statusline").innerHTML = status; return; }
@@ -607,13 +662,16 @@ function render(ev) {
     case "browser-artifact-created":
       if (ev.kind === "video") {
         browserState.video = ev.path; renderBrowserPanel(browserState);
+        const lastShot = browserState.history[browserState.history.length - 1]?.shot;
         blk("note", 'Browser session recording <span class="muted">· what the agent actually did in the app</span>' +
           '<video controls preload="metadata" style="display:block;max-width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px"' +
-          (browserState.shot ? ' poster="' + artifactUrl(ev.runId, browserState.shot) + '"' : "") + ' src="' + artifactUrl(ev.runId, ev.path) + '"></video>');
+          (lastShot ? ' poster="' + artifactUrl(ev.runId, lastShot) + '"' : "") + ' src="' + artifactUrl(ev.runId, ev.path) + '"></video>');
       }
       break;
     case "browser-snapshot":
-      Object.assign(browserState, { runId: ev.runId, url: ev.url, title: ev.title, shot: ev.screenshotPath });
+      browserState.runId = ev.runId;
+      browserState.history.push({ shot: ev.screenshotPath, url: ev.url, title: ev.title, ts: ev.ts });
+      if (browserState.history.length > SHOT_HISTORY_CAP) browserState.history.shift();
       renderBrowserPanel(browserState);
       break;
     // browser-action-started/-completed duplicate the mcp__browser__* tool-call/result lines already

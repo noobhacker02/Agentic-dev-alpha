@@ -84,8 +84,8 @@ know for "an agent is working, and sometimes needs a yes/no from me."
   for. See `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
 - **The header** shows the task, run status, elapsed time, total cost and connection state.
 - **A side panel** shows approval counts, saved "don't ask again" rules, the live browser (page
-  title, URL, latest screenshot), files changed, and decisions (worker proposals vs. ones you
-  recorded).
+  title, URL, a gallery of every screenshot this run -- see below), files changed, and decisions
+  (worker proposals vs. ones you recorded).
 - **The bottom input** takes a trusted decision whenever nothing is waiting: type it and press
   Enter.
 - **A theme toggle** in the header switches between this dark, Claude-Code-terminal-style look (the
@@ -125,6 +125,11 @@ What never becomes a rule, and always asks:
 - `curl`/`wget` to anywhere but localhost, `ssh`
 - `sudo`/`env`/`xargs`/`bash`, and interpreters' inline code (`python3 -c`, `python3 -O -c`,
   `node -e`)
+- `export`/`set`/`declare`/`typeset`/`unset`/`alias`/`unalias`/`readonly` -- these mutate shell state
+  (env vars, options, aliases) that outlives the one command, in the same persistent shell the agent's
+  session keeps across separate Bash calls; a rule for one exact approved line wouldn't help since the
+  risk is a *later*, already-trusted rule (`Bash(npm test:*)`) silently running under an environment
+  someone else changed
 - anything with `$(…)`, backticks, heredocs, or output redirected to a file
 - any command whose words expand at run time (`cat $F`)
 - a command after a `cd` that leaves `--dir`
@@ -144,6 +149,16 @@ two; it's a CSS skin (`:root[data-theme="desktop"]` in `ui/index.html`), not a s
 implementation, and the choice is remembered per-browser in `localStorage`.
 
 ![The same dashboard in the Desktop theme](screenshots/approval-ui/06-desktop-theme.png)
+
+### The browser panel is a live view, not one frame
+
+Every screenshot the agent takes with `--browser` used to just replace the last one in the panel --
+whatever it was looking at a minute ago was already gone. It's now a gallery: every snapshot this run
+stays available as a thumbnail strip, the main view follows the newest one automatically, and a small
+pulsing dot next to "Browser · active" (plus a slow breathe on the active phase's own stepper icon)
+signals the run is still doing something between events instead of the panel looking frozen. Click an
+older thumbnail to look back at it -- a "jump to live" button appears so you're not stuck there once
+the run moves on.
 
 ### The terminal is a real interface too
 

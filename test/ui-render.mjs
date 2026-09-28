@@ -82,9 +82,12 @@ const seq = [
   { type: "tool-result", runId, phase: "builder", toolUseId: "t1", toolName: "", isError: false, summary: "File created successfully", ts: ts() },
   { type: "tool-call", runId, phase: "builder", toolUseId: "b1", toolName: "mcp__browser__open", toolInput: { url: "http://127.0.0.1:9999" }, ts: ts() },
   { type: "browser-session-started", runId, browserSessionId: "bs-1", ts: ts() },
-  { type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/", title: "agent-loop demo", screenshotPath: shotPath, ts: ts() },
+  { type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/", title: "agent-loop demo (before)", screenshotPath: shotPath, ts: ts() },
   { type: "tool-result", runId, phase: "builder", toolUseId: "b1", toolName: "", isError: false, summary: "Opened http://127.0.0.1:9999. Title: demo", ts: ts() },
-  { type: "browser-session-ended", runId, browserSessionId: "bs-1", status: "completed", ts: ts() },
+  { type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/done", title: "agent-loop demo (after)", screenshotPath: shotPath, ts: ts() },
+  // browser-session-ended is emitted later (after the browser-panel checks below), not here, so
+  // there's a real window where the session is still live to assert the live indicator against --
+  // otherwise this whole scenario would already be over before any interactive test block runs.
   { type: "usage", runId, phase: "builder", role: "phase", costUsd: 0.3, turns: 12, durationMs: 90000, ts: ts() },
   {
     type: "phase-end", runId, phase: "builder", attempt: 1,
@@ -185,13 +188,28 @@ bus.emitEvent({ type: "run-end", runId, status: "failed", ts: ts() });
 await page.waitForSelector(".blk.run-end");
 assert.ok((await page.locator(".blk.run-end").innerText()).includes("$0.38"), "the final summary carries total cost");
 
-// --- browser panel
-await page.waitForSelector("#browser-panel.live img");
-const imgLoaded = await page.locator("#browser-panel img").evaluate((img) => img.complete && img.naturalWidth > 0);
+// --- browser panel: live indicator, and a gallery of every snapshot this run (not just the latest)
+await page.waitForSelector("#browser-panel.live img.shot-main");
+const imgLoaded = await page.locator("#browser-panel img.shot-main").evaluate((img) => img.complete && img.naturalWidth > 0);
 assert.ok(imgLoaded, "the browser panel's screenshot actually loads");
 assert.ok((await page.locator("#browser-panel").innerText()).includes("agent-loop demo"));
 console.log("[ok] browser panel shows the real screenshot and page title");
+assert.strictEqual(await page.locator("#browser-panel .live-dot").count(), 1, "an active browser session shows a live indicator");
+assert.strictEqual(await page.locator("#browser-panel .shot-gallery img").count(), 2, "every snapshot this run appears in the gallery, not just the latest");
+assert.ok((await page.locator("#browser-panel div").first().innerText()) === "agent-loop demo (after)", "the main view follows the newest snapshot by default");
+await page.locator('#browser-panel .shot-gallery img[data-idx="0"]').click();
+assert.ok((await page.locator("#browser-panel div").first().innerText()) === "agent-loop demo (before)", "clicking an older thumbnail pins the view to it");
+assert.strictEqual(await page.locator("#browser-panel .shot-jump-live").count(), 1, "pinned to an old snapshot: a way back to live appears");
+await page.locator("#browser-panel .shot-jump-live").click();
+assert.ok((await page.locator("#browser-panel div").first().innerText()) === "agent-loop demo (after)", "jump to live returns to the newest snapshot");
+assert.strictEqual(await page.locator("#browser-panel .shot-jump-live").count(), 0, "back at live: the jump-back control is gone");
+console.log("[ok] browser panel: live indicator, full snapshot gallery, pin-to-older + jump back to live");
 await page.screenshot({ path: join(shotsOut, "01-full-dashboard-with-browser-panel.png") });
+
+bus.emitEvent({ type: "browser-session-ended", runId, browserSessionId: "bs-1", status: "completed", ts: ts() });
+await page.waitForFunction(() => !document.querySelector("#browser-panel .live-dot"));
+assert.strictEqual(await page.locator("#browser-panel .shot-gallery img").count(), 2, "the gallery survives the session ending");
+console.log("[ok] the live indicator disappears once the browser session actually ends");
 
 // --- Desktop theme: same DOM, same events, pure CSS reskin -- captured at the same populated state
 // as the shot above so the two are a fair visual comparison. Toggled back afterward so it doesn't
@@ -210,6 +228,18 @@ await page.waitForFunction(() => document.getElementById("status")?.textContent 
 await page.waitForFunction((n) => document.querySelectorAll("#transcript .blk").length >= n, before, { timeout: 5000 });
 assert.strictEqual(await page.locator("#cost").innerText(), "0.38", "cost is rebuilt from replayed usage events");
 console.log(`[ok] reload replays the full transcript (${before} blocks) and header state`);
+
+// --- adversarial: a real page's title/URL reach the browser panel and its gallery thumbnails
+// (title/url attribute) as literal text, not markup -- a compromised or malicious page could set
+// document.title to anything, and this is a new sink this session added (the gallery's per-thumbnail
+// title attribute), so it gets its own check rather than assuming the file's existing escaping
+// coverage automatically extends to code written after it.
+const nastyTitle = '</script><script>window.__pwned=1</script><img src=x onerror="window.__pwned=2">';
+bus.emitEvent({ type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/" + nastyTitle, title: nastyTitle, screenshotPath: shotPath, ts: ts() });
+await page.waitForFunction((n) => document.querySelectorAll("#browser-panel .shot-gallery img").length === n, 3, { timeout: 5000 });
+assert.ok((await page.locator("#browser-panel").innerText()).includes(nastyTitle), "the nasty title reaches the DOM as literal text");
+assert.strictEqual(await page.evaluate(() => window.__pwned), undefined, "it never actually executes");
+console.log("[ok] a hostile page title/URL in the browser panel and its gallery thumbnails stays inert text");
 
 assert.deepStrictEqual(consoleErrors, [], `console errors: ${JSON.stringify(consoleErrors)}`);
 assert.deepStrictEqual(pageErrors, [], `page errors: ${JSON.stringify(pageErrors)}`);
