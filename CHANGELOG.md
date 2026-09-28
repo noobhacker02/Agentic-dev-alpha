@@ -31,6 +31,19 @@ All notable changes to this project are documented here. Format follows
   added. Verified against a real fake-SDK scenario's actual audit database, not just synthetic test
   data, before considering it done. Regression test in `test/plumbing.mjs` asserting repair-count,
   cost, and rule-reuse aggregation are each exactly right, not just "some number came out."
+- **`docs/RESEARCH-COMPUTER-USE-AND-MULTI-AGENT.md`**: read-only review of two real projects
+  (`NousResearch/hermes-agent`, `openclaw/openclaw`) for computer-use and multi-agent-coordination
+  ideas. Finding worth having in writing: both projects wrap the same third-party driver for
+  desktop/OS-level control rather than implementing it themselves, and neither has moved past
+  system-prompt-only defense against prompt injection from on-screen content — not something to
+  borrow, a real open problem agent-loop would have to solve structurally before adding any desktop
+  capability, the same way `browser-tools.ts`'s localhost check had to move from "checked once" to
+  "enforced continuously." Also settles an open design question about multi-agent coordination: a
+  real, shipping multi-agent system (OpenClaw's "swarm") solves "don't do duplicate work" through
+  bounded, coordinator-mediated fan-out with structured outputs, explicitly *not* a shared mutable
+  notebook between peer agents — its own docs warn that a shared log without lane contracts just
+  coordinates chaos. No code changes from this round; agent-loop's phases still run strictly
+  sequentially, so there's no concurrent-agents scenario for either idea to apply to yet.
 - **Terminal transcript and approvals** (`src/terminal.ts`): the same transcript and prompt in the
   terminal, so a run can be driven without the browser. Whichever side answers first wins.
 - **Saved run report**: every run writes a self-contained `report.html` next to its artifacts. It
