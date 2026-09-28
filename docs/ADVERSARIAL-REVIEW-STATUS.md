@@ -72,6 +72,32 @@ at every step, not just once at the end.
   scenario. New permanent stress scenario (`test/stress/pipeline_logic.sh` case K); all 11 suites and
   now 11 stress scenarios still pass.
 
+- **Cost-tracking accuracy across repair/retry loops and API-failure paths** — the entire stress
+  suite never actually exercised the usage-EMISSION code in `src/phases.ts`/`src/overseer.ts` at
+  all: `test/stress/fake-sdk/sdk.mjs`'s `query()` only ever yielded an `assistant` message, never
+  the `result` message that carries `total_cost_usd`, so cost tracking under a real multi-attempt
+  repair loop had zero coverage (`test/ui-render.mjs` only checks the UI's summing of hand-fed
+  synthetic events, not the pipeline's own emission). Fixed by having the fake SDK yield a fixed
+  $0.01 `result` after every completed call, then wired a permanent automated check into
+  `pipeline_logic.sh`'s shared `runit()` so every scenario's printed "Cost: $X.XX" is checked
+  against `0.01 × completed calls`, not spot-checked manually.
+  This immediately found two real issues, both fixed:
+  1. The check itself first compared against *attempted* calls, not *completed* ones, and
+     misfired on `overseer-throws` (2 attempts logged, but the Overseer's call throws
+     synchronously before its generator ever runs, so it never emits a `result` — correctly $0).
+     Traced with the raw call log and CLI output before concluding this was the check's bug, not
+     the pipeline's: `overseer.ts`/`phases.ts` correctly only add cost when a `result` actually
+     arrives. Fixed by having the fake SDK mark completions separately from call attempts, and
+     comparing against completions.
+  2. That fix's own shell idiom (`` grep -c ... || echo 0 ``) double-printed `"0\n0"` on a
+     real zero-match file, because `grep -c` already prints `0` to stdout before exiting `1` —
+     caught by testing the idiom standalone against a real zero-match file before trusting it,
+     not by reasoning that it "should" work. Fixed with `` count=$(grep -c ... 2>/dev/null); count=${count:-0} ``,
+     which only substitutes on a genuinely empty result (missing file), verified against both a
+     zero-match file and a missing file directly.
+  All 11 stress scenarios and the full 80-assertion unit suite pass with the corrected check in
+  place; see `CHANGELOG.md` for the full diff.
+
 ## Not yet adversarially reviewed
 
 Flagging these honestly rather than implying full coverage — this is what "keep checking" means next:
@@ -81,9 +107,6 @@ Flagging these honestly rather than implying full coverage — this is what "kee
   leave `test:ui`'s existing assertions passing, but not yet put through the same adversarial lens
   as the rest of this list (e.g., can the `phaseCounts` breakdown or `esc()`-wrapped labels be made
   to render something unintended by a sufficiently adversarial phase/tool name?).
-- **Cost-tracking accuracy** (`usage` events, the header's running total) — never checked against a
-  case where a phase retries/repairs repeatedly; is total cost ever double-counted or dropped across
-  a repair loop?
 - **`data-dir.ts`'s hash-based run directory naming** — collision behavior if two different
   `--dir` values happen to produce the same truncated SHA-256 prefix (astronomically unlikely, but
   never actually reasoned through or tested).

@@ -59,5 +59,17 @@ export function query({ prompt, options }) {
     if (sc === "trivial-skip" && phase === "planner") verdict.suggestedSkip = ["test-designer"];
     text = "done\n```json\n" + JSON.stringify(verdict) + "\n```";
   }
-  return (async function* () { yield { type: "assistant", message: { content: [{ type: "text", text }] } }; })();
+  // A fixed, uniform cost per call (whether worker or Overseer) so cost-tracking across a real
+  // retry/repair loop -- previously never exercised here at all, since this generator never used to
+  // yield a "result" message, meaning src/phases.ts's/src/overseer.ts's usage-event emission had
+  // zero stress coverage -- can be checked exactly: total cost should equal 0.01 * completed calls.
+  // "Completed" matters, not just "attempted": overseer-throws throws synchronously above, before
+  // this generator ever runs, so that call never reaches the "result" marker below and correctly
+  // contributes $0 -- pipeline_logic.sh's cost check counts result markers, not call-log lines, so
+  // it stays correct for that scenario without special-casing it.
+  return (async function* () {
+    yield { type: "assistant", message: { content: [{ type: "text", text }] } };
+    if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, result: true }) + "\n");
+    yield { type: "result", total_cost_usd: 0.01, num_turns: 1, duration_ms: 10 };
+  })();
 }

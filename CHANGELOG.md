@@ -93,6 +93,20 @@ what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not 
   (`test/stress/pipeline_logic.sh` case K) and asserted `gatekeeper` is never actually invoked. Held:
   both `overseer.ts`'s own bounds check and `pipeline.ts`'s `isValidRepairTarget` correctly reject it
   and fall back to a same-phase repair every time. All 11 suites and now 11 stress scenarios pass.
+- **Cost-tracking accuracy across repair/retry loops** had zero coverage in the stress suite: the
+  fake SDK (`test/stress/fake-sdk/sdk.mjs`) never yielded a `result` message at all, so
+  `phases.ts`'s/`overseer.ts`'s usage-EMISSION code (as opposed to the UI's already-tested summing
+  of hand-fed events) was never actually exercised under a real multi-attempt run. Fixed the fake SDK
+  to emit a fixed $0.01 `result` per completed call, then made the check permanent and automatic —
+  wired into `pipeline_logic.sh`'s shared `runit()` so every scenario's printed cost is checked
+  against `0.01 × completed calls`, not spot-checked by hand. That check immediately caught two real
+  bugs in itself before it was trustworthy: comparing against *attempted* calls instead of
+  *completed* ones (falsely flagged `overseer-throws`, where the Overseer's call throws before its
+  generator ever runs and correctly reports $0), and a `grep -c ... || echo 0` idiom that
+  double-prints `"0\n0"` on a genuine zero-match file because `grep -c` already writes `0` to stdout
+  before its exit status makes `||` fire. Both fixed and re-verified with a standalone repro before
+  trusting the check; see `docs/ADVERSARIAL-REVIEW-STATUS.md` for the full trace. All 11 stress
+  scenarios and the 80-assertion unit suite pass with the check in place.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh

@@ -15,7 +15,32 @@ runit() { # scenario port [extra args...]
   FAKE_SCENARIO=$sc FAKE_LOG=$log timeout 60 "${NODE[@]}" run "build a thing" --dir "$OUT/ws-$sc" --no-approval --port "$port" "$@" > "$full" 2>&1
   local rc=$?
   grep -E "finished with|FAKE|Error" "$full" | head -2
-  echo "  exit=$rc  llm_calls=$(wc -l < "$log" 2>/dev/null || echo 0)"
+  local calls completed
+  # grep -c prints "0" (exit 1) on a real zero-match file but nothing (exit 2) on a missing one --
+  # `|| echo 0` would double-print "0\n0" in the first case since grep's own "0" already reached
+  # stdout before the exit status made `||` fire; ${var:-0} instead only substitutes on the empty
+  # (missing-file) case, so it's the one plain composition that comes out right in both.
+  calls=$(grep -c '"overseer"' "$log" 2>/dev/null); calls=${calls:-0}
+  completed=$(grep -c '"result":true' "$log" 2>/dev/null); completed=${completed:-0}
+  echo "  exit=$rc  llm_calls=$calls"
+  # Every fake LLM call that actually completes (worker or Overseer) reports a fixed $0.01 cost via
+  # its own "result" message (test/stress/fake-sdk/sdk.mjs), so the CLI's printed total must equal
+  # 0.01 * completed-calls exactly. Deliberately counts completions, not call attempts: a call that
+  # throws before its generator ever runs (overseer-throws) never gets a result and correctly costs
+  # $0, so using raw llm_calls here would produce a false mismatch on that scenario. Applied to every
+  # scenario, not spot-checked once, because this is the only place the real usage-EMISSION code in
+  # src/phases.ts/src/overseer.ts gets exercised under a repair/retry loop -- test/ui-render.mjs only
+  # checks the UI's summing of hand-fed events.
+  if [ "$completed" -gt 0 ]; then
+    local expected actual
+    expected=$(awk -v n="$completed" 'BEGIN{printf "%.2f", n*0.01}')
+    actual=$(sed -n 's/^Cost: \$\([0-9.]*\).*/\1/p' "$full")
+    if [ "$actual" = "$expected" ]; then
+      echo "  OK: cost \$$actual matches $completed completed calls x \$0.01"
+    else
+      echo "  FAIL: cost tracking mismatch -- expected \$$expected for $completed completed calls, CLI printed \$${actual:-<none>}"
+    fi
+  fi
 }
 
 db_path_for() { sed -n 's/^Audit database:    //p' "$OUT/full-$1.log"; }
