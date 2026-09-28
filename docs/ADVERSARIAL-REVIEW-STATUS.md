@@ -98,18 +98,39 @@ at every step, not just once at the end.
   All 11 stress scenarios and the full 80-assertion unit suite pass with the corrected check in
   place; see `CHANGELOG.md` for the full diff.
 
+- **This session's new UI code** (`phaseCounts` breakdown in `renderDock()`, the per-phase
+  `wait-badge` in `renderStepper()`) — traced both new `innerHTML` sinks source-to-sink rather than
+  assuming the existing "every innerHTML write is escaped" finding still covered code written after
+  it. `renderDock()`'s breakdown line (`ui/index.html:464`) is built from `state.pending[].phase`
+  and passed through `esc()` before insertion (`ui/index.html:468`) — safe regardless of what
+  reaches it. `renderStepper()`'s per-phase label (`ui/index.html:370`) is inserted unescaped, but
+  its only source is `PHASES` (`ui/index.html:282`), a hardcoded five-element literal array baked
+  into the client script — never a server event, tool name, or LLM-authored text — so there is no
+  channel for adversarial content to reach that sink at all. Confirmed by reading the actual
+  assignment, not inferred from the variable's name.
+
+- **`data-dir.ts`'s hash-based run-directory naming** — reasoned-through and then verified against
+  running code, not left as a "seems fine" note. Two failure modes checked: (1) accidental/adversarial
+  collision between two *different* projects — the directory name is `${label}-${hash}`, where
+  `label` (the sanitized basename) collides easily and by itself (e.g. `~/work/myapp` and
+  `~/personal/myapp` both sanitize to `myapp`), but `hash` is 16 hex chars (64 bits) of
+  `sha256(resolve(absWorkDir))`; ran both paths through the real function and got different hashes
+  (`myproj-7db5779d9ca5cb42` vs `myproj-3679abae05b9f876`) — a full collision needs both parts to
+  match, and forcing the hash half by choice of `--dir` string is a 2^64 preimage search, while
+  accidental collision needs the birthday bound on 64 bits (~2^32 same-basename projects on one
+  machine) to become likely — neither is reachable in practice for a single-user local CLI tool. (2)
+  The opposite failure — the *same* directory hashing differently depending on how it's spelled,
+  which would silently split one project's audit trail into two — checked with a trailing slash,
+  a `.` segment, and a `..` segment against the real function: all four spellings of the same
+  directory produced the identical hash, because `path.resolve()` normalizes before hashing. Both
+  properties (different real paths reliably differ; the same real path never does) hold as run.
+
 ## Not yet adversarially reviewed
 
-Flagging these honestly rather than implying full coverage — this is what "keep checking" means next:
-
-- **The new UI code from this session itself** (the Desktop theme, the motion/animation CSS, the
-  per-phase approval-visibility badges) — built and manually verified to render correctly and to
-  leave `test:ui`'s existing assertions passing, but not yet put through the same adversarial lens
-  as the rest of this list (e.g., can the `phaseCounts` breakdown or `esc()`-wrapped labels be made
-  to render something unintended by a sufficiently adversarial phase/tool name?).
-- **`data-dir.ts`'s hash-based run directory naming** — collision behavior if two different
-  `--dir` values happen to produce the same truncated SHA-256 prefix (astronomically unlikely, but
-  never actually reasoned through or tested).
+Nothing outstanding from this round. Every item opened in this document has a resolution above
+(either "fixed, tested, pushed" or "checked, confirmed no live attack surface") — treat this section
+as empty until the next round of adversarial review opens a new one, which is expected: "keep
+checking" means this list is a queue, not a one-time audit.
 
 ## Verification discipline used throughout
 

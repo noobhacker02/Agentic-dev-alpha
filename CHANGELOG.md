@@ -107,6 +107,17 @@ what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not 
   before its exit status makes `||` fire. Both fixed and re-verified with a standalone repro before
   trusting the check; see `docs/ADVERSARIAL-REVIEW-STATUS.md` for the full trace. All 11 stress
   scenarios and the 80-assertion unit suite pass with the check in place.
+- **This session's own new UI code** (the `phaseCounts` breakdown, the stepper's `wait-badge`) —
+  traced both new `innerHTML` sinks rather than assuming they inherited the prior "every innerHTML
+  write is escaped" finding automatically. The breakdown line passes through `esc()`; the stepper's
+  per-phase label doesn't, but its only source is the hardcoded `PHASES` literal, never server or
+  LLM-authored text — confirmed by reading the assignment, not inferred from the name.
+- **`data-dir.ts`'s hash-based run-directory naming** — ran the real function against same-basename
+  different-path inputs (got different hashes, so no accidental merge) and against four different
+  spellings of the *same* path — trailing slash, `.`/`..` segments (got the identical hash each
+  time, so `path.resolve()`'s normalization correctly prevents a real project's audit trail from
+  silently splitting in two). A full collision between different projects needs both the sanitized
+  basename and 64 bits of hash to match, which is infeasible by chance or by choice of `--dir`.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh
