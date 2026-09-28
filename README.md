@@ -125,7 +125,7 @@ machine's directory layout.
 | `src/data-dir.ts` | Resolves where the audit database lives — always outside `--dir` |
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
-| `src/cli.ts` | `agent-loop run "<task>"` entry point |
+| `src/cli.ts` | `agent-loop run "<task>"` and `agent-loop insights` entry points |
 | `test/approval-server.mjs` | No-LLM test of the approval server's access control (token, Origin, Host) and pending-approval replay |
 | `test/tool-and-path-scope.mjs` | No-LLM test of per-phase tool restriction, `--dir` path scoping, and `minimalEnv()` |
 | `test/data-dir.mjs` | No-LLM test that the audit database always resolves outside `--dir` |
@@ -197,6 +197,18 @@ anyway. `--no-approval` skips approvals entirely; only the safety net still appl
 
 **[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 13 for the same
 task, with screenshots, videos, and exactly which rules can and can't become "don't ask again".
+
+### `agent-loop insights`
+
+```bash
+node dist/cli.js insights [--dir <workDir>] [--data-dir <path>]
+```
+
+A self-analysis report over every run ever recorded against a `--dir`'s audit database: which
+phases get repaired most (and how often), total and per-phase cost, and which "don't ask again"
+rules actually get reused versus created once and never touched again. Built entirely from data
+already recorded for `run` itself (`src/store.ts`'s `getInsights()`) — nothing new to opt into first,
+so it reflects every run's history, not just ones made after some new tracking was added.
 
 ## Browser Agent (Stages 1–2)
 

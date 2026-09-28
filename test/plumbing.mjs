@@ -114,6 +114,48 @@ console.log("[ok] WS->server->bus: human decision resolves the pending hook prom
   console.log("[ok] WS->server->bus->store: recording a decision persists it as a trusted decision");
 }
 
+// --- getInsights(): the self-analysis report agent-loop's own CLI (`agent-loop insights`) prints,
+// built entirely from data already recorded for other reasons. Uses a second run with distinct
+// phase names (builder/verifier) so its assertions aren't coupled to the planner phase set up above.
+{
+  const run2 = store.createRun("insights test task", dir);
+  let p = store.startPhase(run2.id, "builder", 1);
+  store.finishPhase(p.id, { completed: true, outcome: "fail", headline: "fail1", details: "", concerns: [], blockingFindings: ["x"] });
+  p = store.startPhase(run2.id, "builder", 2);
+  store.finishPhase(p.id, { completed: true, outcome: "fail", headline: "fail2", details: "", concerns: [], blockingFindings: ["x"] });
+  p = store.startPhase(run2.id, "builder", 3);
+  store.finishPhase(p.id, { completed: true, outcome: "pass", headline: "pass", details: "", concerns: [], blockingFindings: [] });
+  p = store.startPhase(run2.id, "verifier", 1);
+  store.finishPhase(p.id, { completed: true, outcome: "pass", headline: "ok", details: "", concerns: [], blockingFindings: [] });
+
+  store.logEvent(run2.id, "builder", "usage", { costUsd: 0.05 });
+  store.logEvent(run2.id, "builder", "usage", { costUsd: 0.07 });
+  store.logEvent(run2.id, "verifier", "usage", { costUsd: 0.02 });
+
+  store.logEvent(run2.id, "builder", "approval-auto-allowed", { rule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-auto-allowed", { rule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm run lint:*)" }); // never reused
+
+  store.finishRun(run2.id, "failed");
+
+  const insights = store.getInsights();
+  assert.strictEqual(insights.totalRuns, 2, "counts every run recorded, not just the latest");
+  assert.strictEqual(insights.byStatus.failed, 1);
+  const builderStats = insights.byPhase.find((x) => x.name === "builder");
+  assert.strictEqual(builderStats.runs, 1);
+  assert.strictEqual(builderStats.repairedRuns, 1, "3 attempts on one run counts as one repaired run, not three");
+  assert.strictEqual(builderStats.avgAttempts, 3);
+  const verifierStats = insights.byPhase.find((x) => x.name === "verifier");
+  assert.strictEqual(verifierStats.repairedRuns, 0);
+  assert.ok(Math.abs(insights.totalCost - 0.14) < 1e-9, `totalCost was ${insights.totalCost}`);
+  assert.ok(Math.abs(insights.costByPhase.builder - 0.12) < 1e-9);
+  assert.ok(Math.abs(insights.costByPhase.verifier - 0.02) < 1e-9);
+  assert.deepStrictEqual(insights.topRules, [{ rule: "Bash(npm test:*)", count: 2 }]);
+  assert.deepStrictEqual(insights.neverReusedRules, ["Bash(npm run lint:*)"]);
+  console.log("[ok] store.getInsights(): repair frequency, cost, and rule-reuse aggregate correctly across runs");
+}
+
 ws.close();
 await close();
 store.close();

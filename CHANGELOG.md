@@ -22,6 +22,15 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **`agent-loop insights`**: a self-analysis CLI report over every run ever recorded against a
+  `--dir`'s audit database — which phases get repaired most (and how often), total and per-phase
+  cost, and which "don't ask again" rules actually get reused versus created once and never touched
+  again. Built entirely from `Store.getInsights()` querying data already recorded for other reasons
+  (phase attempts, verdicts, `usage`/`approval-auto-allowed`/`approval-resolved` events) — no new
+  instrumentation, so it covers every run's history, not just ones made after some new tracking was
+  added. Verified against a real fake-SDK scenario's actual audit database, not just synthetic test
+  data, before considering it done. Regression test in `test/plumbing.mjs` asserting repair-count,
+  cost, and rule-reuse aggregation are each exactly right, not just "some number came out."
 - **Terminal transcript and approvals** (`src/terminal.ts`): the same transcript and prompt in the
   terminal, so a run can be driven without the browser. Whichever side answers first wins.
 - **Saved run report**: every run writes a self-contained `report.html` next to its artifacts. It
