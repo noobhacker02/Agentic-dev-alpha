@@ -136,6 +136,30 @@ await page.waitForSelector("#decision-input");
 await page.waitForFunction(() => document.getElementById("rules").innerText.includes("Bash(npm test:*)"), undefined, { timeout: 5000 });
 console.log("[ok] prompt pinned at the bottom; key 2 = approve + don't ask again; rule shows in the side panel");
 
+// --- several approvals pending at once: real parallel tool calls within the SAME phase, the only
+// way this can happen (pipeline.ts awaits each phase fully before starting the next, so two
+// DIFFERENT phases can never both have a pending approval -- confirmed against pipeline.ts's own
+// control flow, not assumed, since an earlier draft of this screenshot showed two phases waiting at
+// once, which is impossible in the real product).
+{
+  const calls = [
+    { toolUseId: "p1", toolName: "Bash", toolInput: { command: "npm run lint" } },
+    { toolUseId: "p2", toolName: "Bash", toolInput: { command: "npm run typecheck" } },
+    { toolUseId: "p3", toolName: "Write", toolInput: { file_path: `${workDir}/health.test.js`, content: "..." } },
+  ];
+  for (const c of calls) bus.emitEvent({ type: "tool-call", runId, phase: "builder", ts: ts(), ...c });
+  const reqs = calls.map((c) => bus.requestApproval({ runId, phase: "builder", ...c }));
+  await page.waitForFunction(() => document.querySelector(".wait-badge")?.textContent === "3", undefined, { timeout: 5000 });
+  assert.ok((await page.locator("#prompt .count").innerText()).includes("3 waiting"), "the dock names how many are waiting and which phase");
+  await page.screenshot({ path: join(shotsOut, "07-multiple-pending-approvals.png") });
+  for (const [i, r] of reqs.entries()) {
+    bus.resolveApproval(r.requestId, { decision: "allow" });
+    bus.emitEvent({ type: "approval-resolved", runId, phase: "builder", requestId: r.requestId, toolUseId: calls[i].toolUseId, decision: "allow", auto: false, ts: ts() });
+  }
+  await page.waitForFunction(() => !document.querySelector("#prompt"), undefined, { timeout: 5000 });
+  console.log("[ok] several real parallel tool calls in one phase all show as pending; dock names the breakdown");
+}
+
 // --- reject with feedback
 bus.emitEvent({ type: "tool-call", runId, phase: "builder", toolUseId: "t3", toolName: "Bash", toolInput: { command: "rm -r build && npm run build" }, ts: ts() });
 const req2 = bus.requestApproval({ runId, phase: "builder", toolUseId: "t3", toolName: "Bash", toolInput: { command: "rm -r build && npm run build" } });
@@ -168,6 +192,16 @@ assert.ok(imgLoaded, "the browser panel's screenshot actually loads");
 assert.ok((await page.locator("#browser-panel").innerText()).includes("agent-loop demo"));
 console.log("[ok] browser panel shows the real screenshot and page title");
 await page.screenshot({ path: join(shotsOut, "01-full-dashboard-with-browser-panel.png") });
+
+// --- Desktop theme: same DOM, same events, pure CSS reskin -- captured at the same populated state
+// as the shot above so the two are a fair visual comparison. Toggled back afterward so it doesn't
+// change what theme every later assertion/screenshot in this file runs under.
+await page.locator("#theme-toggle").click();
+await page.waitForFunction(() => document.documentElement.dataset.theme === "desktop");
+await page.screenshot({ path: join(shotsOut, "06-desktop-theme.png") });
+await page.locator("#theme-toggle").click();
+await page.waitForFunction(() => document.documentElement.dataset.theme !== "desktop");
+console.log("[ok] desktop theme toggles via the header button and back");
 
 // --- reload: the whole transcript comes back from the server's replay
 const before = await page.locator("#transcript .blk").count();

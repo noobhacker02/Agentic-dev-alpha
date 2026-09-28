@@ -147,6 +147,17 @@ what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not 
   `test/terminal.mjs` alone — checked that their target state is set synchronously in-process before
   any `await`, not across a real network/DB round-trip, so there's no equivalent race there. All 11
   suites (81 assertions) and 11 stress scenarios pass; re-ran the two fixed files 10 times each clean.
+- **Two of the four documentation screenshots, and the demo-video `.mp4` conversion, weren't actually
+  automated.** `06-desktop-theme.png` and `07-multiple-pending-approvals.png` were made with
+  throwaway one-off Playwright scripts, run once and deleted — nothing would catch them going stale.
+  The `.webm`→`.mp4` conversion was manual, unrecorded `ffmpeg` commands. Fixed by folding both
+  screenshots into `test/ui-render.mjs`'s existing event sequence (already part of `npm test`/CI):
+  the multi-approval shot drives three real parallel tool calls in one phase via
+  `bus.requestApproval` and asserts the dock's "3 waiting" text first; the theme shot clicks the real
+  `#theme-toggle` button and asserts `data-theme` actually changed. Added `test/e2e/convert-to-mp4.sh`
+  for the video conversion, verified against a synthetic `ffmpeg testsrc`/`sine` `.webm` (no API
+  cost) with `ffprobe` confirming real H.264/yuv420p+AAC output at the correct duration. All 11
+  suites (83 assertions) and 11 stress scenarios pass.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh

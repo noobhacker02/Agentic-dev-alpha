@@ -149,6 +149,24 @@ at every step, not just once at the end.
   (81 assertions) and 11 stress scenarios still pass; re-ran the two fixed files 10 times each with
   no failures.
 
+- **Two of the four documentation screenshots, and the `.webm`→`.mp4` demo-video conversion, weren't
+  actually automated** — asked directly whether the video/screenshot process was "checked and
+  automated and tested," and it wasn't, fully. `01-full-dashboard...png` and `02-permission-
+  prompt.png` were already captured by `test/ui-render.mjs` (part of `npm test`/CI, regenerated and
+  asserted-on every run), but `06-desktop-theme.png` and `07-multiple-pending-approvals.png` were
+  made with throwaway one-off Playwright scripts, written once and deleted — nothing would catch them
+  going stale if the UI changed. The `.mp4` conversion was manual, ad-hoc `ffmpeg` commands run once
+  by hand, not captured anywhere. Fixed by folding both screenshots into `test/ui-render.mjs`'s
+  existing, already-CI-covered event sequence (the multi-approval one drives three *real* parallel
+  tool calls in the same phase via `bus.requestApproval`, the same realistic scenario corrected
+  earlier this round, and asserts the dock's "3 waiting" text before shooting; the theme one clicks
+  the real `#theme-toggle` button and asserts `data-theme` actually changed), and by writing
+  `test/e2e/convert-to-mp4.sh`, a small checked-in script. Verified the script for real — not just
+  written and assumed to work — by generating a synthetic test `.webm` with `ffmpeg`'s `testsrc`/
+  `sine` filters (no real recording needed, no API cost) and confirming via `ffprobe` that the output
+  is genuinely H.264/`yuv420p`+AAC at the correct duration, plus that its bare-usage error path exits
+  cleanly. All 11 suites (now 83 assertions) and 11 stress scenarios still pass.
+
 ## Not yet adversarially reviewed
 
 Nothing outstanding from this round. Every item opened in this document has a resolution above

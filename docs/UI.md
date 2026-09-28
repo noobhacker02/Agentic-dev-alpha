@@ -188,8 +188,9 @@ what it actually did to the app, not just its claims about it. Example (real run
 npm run build && npm test            # 11 suites, no API key; includes a real-Chromium UI test
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
-                                     # writes <out>/run.webm -- pipe through `ffmpeg -i run.webm out.mp4`
-                                     # (with a real, non-Playwright-bundled ffmpeg) for an .mp4 copy
+                                     # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm
+                                     # makes an .mp4 copy for docs/sharing (needs a real, non-Playwright-
+                                     # bundled ffmpeg: the sandboxed one has no H.264 encoder or MP4 muxer)
 ```
 
 `test/ui-render.mjs` drives the real page in a real Chromium. It checks the stepper, cost, collapsed
