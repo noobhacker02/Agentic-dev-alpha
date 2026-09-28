@@ -47,13 +47,22 @@ once at the end.
 - Path handling, home-directory resolution, and the SQLite store across Linux/macOS/Windows — all go
   through `node:path`/`node:os`/`node:sqlite`, no OS-specific assumptions found.
 
+## Checked this round, confirmed no live attack surface
+
+- **`store.ts`'s `searchLogs()` FTS5 query construction** — the search term binds through a
+  parameterized `?` placeholder (no traditional SQL injection), but SQLite's FTS5 module still
+  parses that bound string as a *query expression* with its own syntax (`AND`/`OR`/`NOT`, phrase
+  quoting, column filters), so a malformed term could still throw at the FTS5 layer rather than the
+  SQL layer. Turns out moot: `searchLogs()` is called from exactly one place in the entire codebase
+  — `test/plumbing.mjs`, with the hardcoded literal `"fox"` — never from the CLI, the server, the
+  WebSocket handlers, or the Overseer. No untrusted (or even user-supplied) input reaches it today.
+  Not hardening speculatively against an input path that doesn't exist; revisit if this method is
+  ever actually wired to a real caller.
+
 ## Not yet adversarially reviewed
 
 Flagging these honestly rather than implying full coverage — this is what "keep checking" means next:
 
-- **`store.ts`'s FTS5 query construction** — is a phase's own free-text summary (which can contain
-  arbitrary characters, including ones with meaning in SQLite's FTS5 query syntax) ever passed into
-  a search query unescaped, rather than only ever indexed as content? Not yet checked.
 - **`overseer.ts`'s decision-parsing** — `parseVerdict`-equivalent robustness against a
   deliberately malformed or adversarial Overseer response beyond what F3's terminal-states fix
   already covers.
