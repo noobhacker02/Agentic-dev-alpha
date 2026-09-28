@@ -72,6 +72,13 @@ All notable changes to this project are documented here. Format follows
   political and not genuinely dark — this sits on the same screen as destructive-command approval
   prompts, so the tone stays professional rather than undermining what's actually being reviewed
   there.
+- **`docs/INSPIRATION-POKEHARNESS.md`**: a friend's repo (a local desktop app visualizing coding-agent
+  CLI sessions as animated walkers) was reviewed for ideas ahead of the live browser-panel work above.
+  Documents what it does well, what's weak, and — honestly — separates what actually transferred (the
+  render-loop idea, reimplemented as CSS animation, not ported code) from what didn't (its PTY-output
+  scraping, which agent-loop has no use for since it already gets structured events; its battle-hit
+  coalescing, which would hide information a dev tool's transcript needs to keep). No Pokémon theming
+  anywhere in agent-loop — the visual language stays the existing dark-terminal/light-desktop look.
 
 ### Fixed
 - The screenshot tool's base64 image data was dumped into the transcript, the log index and every
