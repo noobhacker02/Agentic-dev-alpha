@@ -26,8 +26,8 @@ these once.
 | 11 | `dev-workflow`'s git hooks only looked for `python3`; many Windows Python installs only have `python` | Dev-Skill repo | Medium (portability) |
 
 Every row has a permanent regression test, and the full suite (11 test files, no API cost) plus
-`test/stress/pipeline_logic.sh` (10 scenarios) pass after each one — re-run at every step, not just
-once at the end.
+`test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
+at every step, not just once at the end.
 
 ## Checked and confirmed already safe (no fix needed)
 
@@ -59,13 +59,23 @@ once at the end.
   Not hardening speculatively against an input path that doesn't exist; revisit if this method is
   ever actually wired to a real caller.
 
+- **`overseer.ts`'s decision-parsing against a hallucinated forward `repairTarget`** — an unrecognized
+  `action` value safely falls through to the same conservative default as an unparseable response
+  (traced, not just assumed). The one path with no prior test coverage at all: an Overseer decision
+  claiming `repairTarget` is a phase *later* in the pipeline than the one that just failed (e.g.
+  `planner` fails but the decision claims `gatekeeper` needs the redo). Both `overseer.ts`'s own
+  bounds check and `pipeline.ts`'s `isValidRepairTarget` are supposed to reject this — added a new
+  fake-SDK scenario (`forward-repair`) that hallucinates exactly this on every turn and asserted, via
+  the same-run log, that `gatekeeper` (searched for its `write GATEKEEP.md` instruction) is never
+  actually invoked. Held: the run correctly falls back to a same-phase repair every time and
+  terminates cleanly once the retry budget is exhausted, exactly like the existing `always-retry`
+  scenario. New permanent stress scenario (`test/stress/pipeline_logic.sh` case K); all 11 suites and
+  now 11 stress scenarios still pass.
+
 ## Not yet adversarially reviewed
 
 Flagging these honestly rather than implying full coverage — this is what "keep checking" means next:
 
-- **`overseer.ts`'s decision-parsing** — `parseVerdict`-equivalent robustness against a
-  deliberately malformed or adversarial Overseer response beyond what F3's terminal-states fix
-  already covers.
 - **The new UI code from this session itself** (the Desktop theme, the motion/animation CSS, the
   per-phase approval-visibility badges) — built and manually verified to render correctly and to
   leave `test:ui`'s existing assertions passing, but not yet put through the same adversarial lens

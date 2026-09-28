@@ -80,6 +80,20 @@ Reviewed the codebase for Linux/macOS/Windows portability, beyond the git-hooks 
   Linux/macOS. `src/bash-analysis.ts` is shell-syntax-aware, not OS-aware, so it behaves identically
   once a command reaches it. See the new "Platform support" section in `README.md`.
 
+### Testing
+Continued the same adversarial-review effort onto previously-unexercised paths; full findings and
+what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not duplicated here.
+- **`store.ts`'s `searchLogs()`** — checked whether a phase's own free-text content could reach it
+  and be interpreted as FTS5 query syntax rather than plain SQL (already safe via the parameterized
+  placeholder). Moot: `searchLogs()` has exactly one caller in the whole codebase, a smoke test with
+  the hardcoded literal `"fox"` — never the CLI, server, WebSocket handlers, or Overseer.
+- **`overseer.ts`/`pipeline.ts`'s repair-target validation against a hallucinated *forward* target**
+  (a failing `planner` but the decision claims `gatekeeper` needs the redo) had no test coverage at
+  all before this. Added a fake-SDK scenario that hallucinates exactly this every turn
+  (`test/stress/pipeline_logic.sh` case K) and asserted `gatekeeper` is never actually invoked. Held:
+  both `overseer.ts`'s own bounds check and `pipeline.ts`'s `isValidRepairTarget` correctly reject it
+  and fall back to a same-phase repair every time. All 11 suites and now 11 stress scenarios pass.
+
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh
   adversarial pass on the Browser Agent (new code from this session, previously only checked by my

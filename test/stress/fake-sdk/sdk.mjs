@@ -32,6 +32,12 @@ export function query({ prompt, options }) {
     if (sc === "overseer-throws") throw new Error("API 529 overloaded");
     if (sc === "always-retry")
       text = `\`\`\`json\n{"action":"repair","repairTarget":"${targetPhase}","reasoning":"try again","feedbackForRepair":"fix it"}\n\`\`\``;
+    // A hallucinated/adversarial repairTarget *later* in the pipeline than the phase that just ran
+    // (builder failing but claiming "gatekeeper" needs the redo) -- both overseer.ts's own bounds
+    // check and pipeline.ts's isValidRepairTarget are supposed to reject this and fall back to a
+    // same-phase repair. Never actually exercised by any other scenario here before this one.
+    else if (sc === "forward-repair")
+      text = `\`\`\`json\n{"action":"repair","repairTarget":"gatekeeper","reasoning":"pretend forward repair","feedbackForRepair":"nope"}\n\`\`\``;
     else if (sc === "garbage-overseer") text = "I think it's fine!";
     else text = '```json\n{"action":"continue","reasoning":"looks settled per DECISIONS.md"}\n```';
   } else {
@@ -41,7 +47,7 @@ export function query({ prompt, options }) {
     // "trivial-skip" is the one scenario meant to reach a clean "done" (to prove the Planner's
     // suggestedSkip actually shrinks the run), so it's excluded from the otherwise-unconditional
     // gatekeeper failure every other scenario relies on.
-    const fail = sc === "always-retry" || sc === "garbage-overseer" || (phase === "gatekeeper" && sc !== "trivial-skip");
+    const fail = sc === "always-retry" || sc === "forward-repair" || sc === "garbage-overseer" || (phase === "gatekeeper" && sc !== "trivial-skip");
     const verdict = {
       completed: true,
       outcome: fail ? "fail" : "pass",

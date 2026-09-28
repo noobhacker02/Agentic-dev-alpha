@@ -26,6 +26,12 @@ echo "### C: Overseer API error                                 (correct: run ma
 node --no-warnings -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);console.log('  run status in DB:',d.prepare('select status from runs').all().map(r=>r.status))" "$(db_path_for overseer-throws)"
 echo "### D: Overseer returns garbage                           (correct: safe fallback; this one holds)"; runit garbage-overseer 5105
 echo "### E: builder writes DECISIONS.md pre-approving failures (correct: phase-written entries not 'settled')"; runit injected-decisions 5106
+echo "### K: Overseer hallucinates a forward repairTarget         (correct: rejected, never actually reaches it)"; runit forward-repair 5111
+if grep -q 'write GATEKEEP\.md' "$OUT/log-forward-repair.jsonl" 2>/dev/null; then
+  echo "  FAIL: gatekeeper was actually invoked despite the forward repairTarget being invalid"
+else
+  echo "  OK: gatekeeper was never invoked -- the forward target was rejected every time"
+fi
 echo "### F: flags before the task                              (correct: task still parsed)"
 FAKE_SCENARIO=x timeout 20 "${NODE[@]}" run --no-approval "build a thing" --port 5107 --dir "$OUT/ws-f" 2>&1 | head -1
 echo "### G: port already in use                                (correct: clear error message)"
