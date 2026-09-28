@@ -214,7 +214,7 @@ function instrumented(
   opts: CreateBrowserToolServerOptions,
   toolName: string,
   input: unknown,
-  fn: () => Promise<{ text: string; extra?: Record<string, unknown> }>
+  fn: () => Promise<{ text: string }>
 ) {
   return (async () => {
     const actionId = randomUUID();
@@ -228,7 +228,7 @@ function instrumented(
       input,
       ts: new Date().toISOString(),
     });
-    let result: { text: string; extra?: Record<string, unknown> };
+    let result: { text: string };
     let isError = false;
     try {
       result = await fn();
@@ -401,7 +401,13 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
           path: filePath,
           ts: new Date().toISOString(),
         });
-        return { text: `Screenshot saved to ${filePath}`, extra: { filePath } };
+        // The filename is enough for a human reading the transcript to know a screenshot was taken;
+        // the full path is local-machine/sandbox structure (temp dir layout, possibly a username)
+        // that has no reason to be visible text in the transcript, the SQLite index, every
+        // WebSocket message, and by extension any screenshot or saved report someone shares --
+        // exactly what happened to this project's own docs/UI.md demo media. The real path is
+        // still available internally via the browser-snapshot/browser-artifact-created events above.
+        return { text: `Screenshot saved (${fileName})` };
       });
       return {
         content: [

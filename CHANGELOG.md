@@ -155,6 +155,32 @@ All notable changes to this project are documented here. Format follows
     with that exact URL's port and token succeeds. New regression test (`test/approval-server.mjs`)
     covers `--port 0` end-to-end. All 11 suites and `pipeline_logic.sh` still pass.
 
+- **A dedicated adversarial pass on the UI and video/screenshot artifacts** (full report:
+  `docs/LEAK-REVIEW-ui-video.md`) found one real leak and confirmed three other suspects already
+  safe.
+  - **Real, and already visible in this project's own public demo media**: the browser tool's
+    `screenshot` result named the file's full absolute path (`Screenshot saved to <dataDir>/
+    browser-artifacts/<runId>/screenshot-....png`), which flows straight into the transcript, the
+    SQLite index, every WebSocket message, and any saved report. Unlike file-tool paths, this was
+    never relativized. Confirmed by extracting frames from `docs/media/after-new-ui-real-run-5x.webm`
+    and reading `docs/screenshots/approval-ui/04-after-real-run.png` -- both real, both already
+    public -- which show the literal sandbox path this ran in. On a real user's machine the
+    equivalent would be their own home directory/username.
+  - Fixed: the tool now reports only the filename; the real path stays available internally via the
+    `browser-snapshot`/`browser-artifact-created` events already emitted alongside it, which the UI
+    already uses to build artifact URLs without ever rendering the raw path as text.
+  - Checked and confirmed already safe: every other `innerHTML` write in `ui/index.html` is escaped
+    (traced source-to-sink); `artifactUrl()`'s unescaped use in `href`/`src` is safe because its
+    inputs are `encodeURIComponent`-ed and never user-controlled; `report.html`'s embedded event JSON
+    is `<`-escaped against script injection (existing test); its output path is built from a
+    server-generated UUID, not attacker-influenced.
+  - New regression test (`test/browser-tools.mjs`): the screenshot tool's visible text must never
+    contain a path separator; the real path (for verifying a real file was written) now comes from
+    the internal `browser-snapshot` event instead. All 11 suites and `pipeline_logic.sh` still pass.
+  - Not yet done: the two already-public demo files above still show the pre-fix path and need
+    regenerating against the fixed code to actually clear the leak from GitHub -- costs a small
+    amount of real API spend, so it's flagged in the report rather than done unprompted.
+
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were
   registerable but unused; this actually plugs them in.
