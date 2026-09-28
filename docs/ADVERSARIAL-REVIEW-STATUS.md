@@ -126,6 +126,29 @@ at every step, not just once at the end.
   directory produced the identical hash, because `path.resolve()` normalizes before hashing. Both
   properties (different real paths reliably differ; the same real path never does) hold as run.
 
+- **CI actually failed once, for real, in this project's own history** (run #16, commit `f395a61`,
+  the Desktop-theme UI commit) — found by checking GitHub Actions run history after the user asked
+  "did the build fail," not by assuming green because the *next* push passed. `npm test` failed at
+  `test/plumbing.mjs:95`, asserting a `record-decision` WebSocket round-trip broadcasts its event.
+  Confirmed that commit touched only `ui/index.html`, docs, and screenshots (`git show --stat`) — it
+  could not have caused a server/bus-side WS timing failure. Root cause: the test sends the WS
+  message, then does a *fixed* `setTimeout(r, 200)` sleep and checks the received-events buffer
+  exactly once — a structural race (send → server → bus → a synchronous SQLite write → broadcast →
+  client receive, all needing to finish inside 200ms) that will occasionally lose on a loaded runner
+  regardless of how rarely it's actually observed. Tried to reproduce it 35 times (15 idle, 20 under
+  artificial 4-core CPU saturation) and couldn't — consistent with a rare CI-specific hiccup, not a
+  deterministic bug, but the pattern is racy by construction either way and had already failed for
+  real once. Fixed by replacing both fixed-sleep-then-check-once waits in `test/plumbing.mjs`, and
+  the equivalent one in `test/approval-server.mjs` (which had a better fix available: the server's
+  own `replay-complete` sentinel, always sent right after replay finishes, is a deterministic
+  condition to poll for instead of a guessed duration), with a `waitFor(predicate, {timeoutMs})`
+  poller — faster on a healthy machine, robust under load. Checked the same pattern in
+  `test/approval-rules.mjs` and `test/terminal.mjs` (both use short sleeps too) and left them alone:
+  their target state is set synchronously in-process before any `await` in the code path under test,
+  not across a real WS/HTTP/SQLite round-trip, so there's no equivalent race to fix. All 11 suites
+  (81 assertions) and 11 stress scenarios still pass; re-ran the two fixed files 10 times each with
+  no failures.
+
 ## Not yet adversarially reviewed
 
 Nothing outstanding from this round. Every item opened in this document has a resolution above

@@ -132,6 +132,21 @@ what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not 
   time, so `path.resolve()`'s normalization correctly prevents a real project's audit trail from
   silently splitting in two). A full collision between different projects needs both the sanitized
   basename and 64 bits of hash to match, which is infeasible by chance or by choice of `--dir`.
+- **CI actually failed once for real** (run #16, the Desktop-theme commit) — found by checking
+  GitHub Actions history after being asked whether the build had failed, not assumed green because
+  later pushes passed. `npm test` failed at `test/plumbing.mjs:95` (a `record-decision` WS broadcast
+  assertion); confirmed the failing commit touched only `ui/index.html`/docs/screenshots, so it
+  could not have caused it. Root cause: a fixed `setTimeout(r, 200)` sleep followed by a single
+  check of an asynchronously-populated events buffer — a structural race across a real WS→server→
+  bus→SQLite-write→broadcast round-trip that will occasionally lose under a loaded runner, however
+  rarely. Tried 35 times (15 idle, 20 under 4-core CPU saturation) without reproducing it locally —
+  consistent with a rare CI-specific hiccup, not proof the pattern is safe. Replaced both occurrences
+  in `test/plumbing.mjs`, and the equivalent one in `test/approval-server.mjs` (fixed to poll for the
+  server's own `replay-complete` sentinel instead of guessing a duration), with a
+  `waitFor(predicate, {timeoutMs})` poller. Left the short sleeps in `test/approval-rules.mjs` and
+  `test/terminal.mjs` alone — checked that their target state is set synchronously in-process before
+  any `await`, not across a real network/DB round-trip, so there's no equivalent race there. All 11
+  suites (81 assertions) and 11 stress scenarios pass; re-ran the two fixed files 10 times each clean.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh

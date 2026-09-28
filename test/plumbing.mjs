@@ -50,6 +50,20 @@ console.log("[ok] server: WebSocket client connected");
 const received = [];
 ws.on("message", (raw) => received.push(JSON.parse(raw.toString())));
 
+// A fixed sleep-then-check-once wait is a race: it passed 22 straight local/CI runs, then failed for
+// real in CI (a WS round-trip -- send, server, bus, a synchronous SQLite write, broadcast, client
+// receive -- taking just over 200ms under a loaded runner). Polling for the real condition is both
+// faster on a healthy machine (resolves the moment the event arrives, not after a fixed wait) and
+// correct under load (keeps waiting up to a generous ceiling instead of giving up at a fixed point).
+async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return true;
+}
+
 // Simulate a PreToolUse hook requesting approval.
 const { requestId, wait } = bus.requestApproval({
   runId: run.id,
@@ -59,9 +73,8 @@ const { requestId, wait } = bus.requestApproval({
   toolInput: { command: "echo hi" },
 });
 
-await new Promise((r) => setTimeout(r, 200));
 assert.ok(
-  received.some((e) => e.type === "approval-request" && e.requestId === requestId),
+  await waitFor(() => received.some((e) => e.type === "approval-request" && e.requestId === requestId)),
   "approval-request event should reach the WS client"
 );
 console.log("[ok] bus->server->WS: approval-request event broadcast to client");
@@ -91,9 +104,8 @@ console.log("[ok] WS->server->bus: human decision resolves the pending hook prom
 {
   const before = received.length;
   ws.send(JSON.stringify({ type: "record-decision", runId: run.id, phase: "planner", text: "Use SQLite, not Postgres." }));
-  await new Promise((r) => setTimeout(r, 200));
   assert.ok(
-    received.slice(before).some((e) => e.type === "trusted-decision-recorded" && e.text === "Use SQLite, not Postgres."),
+    await waitFor(() => received.slice(before).some((e) => e.type === "trusted-decision-recorded" && e.text === "Use SQLite, not Postgres.")),
     "recording a decision over WS should broadcast a trusted-decision-recorded event"
   );
   const stored = store.getTrustedDecisions(run.id);
