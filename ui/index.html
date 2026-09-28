@@ -46,6 +46,20 @@
   .step[data-state="skipped"] { color: var(--faint); border-style: dashed; }
   .step .badge { font-size: 11px; color: var(--yellow); }
   .step .cost { font-size: 11px; color: var(--dim); }
+  /* Which phase has an approval waiting is visible on the stepper itself, not just at the bottom
+     dock (which only ever shows one prompt at a time). Phases run strictly sequentially
+     (pipeline.ts awaits each one before starting the next), so this only ever lights up the single
+     active phase -- but that phase alone can have several calls waiting at once (real parallel tool
+     use in one assistant turn each fires its own approval-request before any of them resolve), and
+     the count badge is what actually surfaces that. Styled as a soft ambient glow in the same
+     accent color already used throughout, not a hard outline -- present enough to catch the eye,
+     quiet enough to sit next to five other steps without shouting. */
+  .step[data-waiting="1"] { animation: pulse-glow 2.2s ease-in-out infinite; }
+  .wait-badge {
+    display: inline-flex; align-items: center; justify-content: center; min-width: 14px; height: 14px;
+    padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 700; line-height: 1;
+  }
 
   /* body: transcript + side panel */
   .body { flex: 1; min-height: 0; display: flex; }
@@ -67,7 +81,7 @@
   @media (max-width: 1000px) { aside { display: none; } }
 
   /* transcript blocks */
-  .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; }
+  .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; animation: blk-in .2s ease-out; }
   .blk::before { position: absolute; left: 0; top: 0; }
   .blk.text::before { content: "⏺"; color: var(--text); }
   .blk.tool::before { content: "⏺"; color: var(--accent); }
@@ -108,10 +122,16 @@
   #jump { display: none; position: sticky; bottom: 10px; margin: 0 auto; width: max-content; padding: 4px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
   #jump.show { display: block; }
 
-  /* bottom dock: permission prompt or status line + decision input */
-  #dock { flex: none; border-top: 1px solid var(--line); background: var(--bg); padding: 10px 22px 12px; }
+  /* bottom dock: permission prompt or status line + decision input. Translucent + blurred (macOS
+     sheet/vibrancy style) rather than a flat opaque bar, so it reads as floating over the transcript
+     instead of abruptly cutting it off when a prompt appears. */
+  #dock {
+    flex: none; padding: 10px 22px 12px;
+    background: rgba(31, 30, 29, .74); border-top: 1px solid rgba(255, 255, 255, .08);
+    backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  }
   #dock .inner { max-width: 960px; margin: 0 auto; }
-  .prompt { border: 1px solid var(--blue); border-radius: 8px; padding: 10px 14px; }
+  .prompt { border: 1px solid var(--blue); border-radius: 8px; padding: 10px 14px; animation: sheet-in .22s cubic-bezier(.16,1,.3,1); }
   .prompt .title { color: var(--blue); font-weight: 700; }
   .prompt .count { color: var(--dim); float: right; }
   .prompt .body { margin: 8px 0; padding: 8px 10px; background: var(--panel); border-radius: 6px; max-height: 34vh; overflow: auto; white-space: pre-wrap; word-break: break-word; }
@@ -133,6 +153,97 @@
   input[type=text] { flex: 1; background: none; border: 0; outline: none; color: var(--text); font: inherit; }
   .inputrow:focus-within { border-color: var(--dim); }
   .smallbtn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  #theme-toggle { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
+
+  /* ---------- "Desktop" theme: a lighter, Claude-Desktop-style chat-card look, opt-in via the
+     header toggle (persisted in localStorage). Overriding the color/font custom properties above
+     handles most of it for free, since body/header/stepper/aside/dock already read them; the rest
+     is restyling the transcript's flat "⏺ line" blocks into rounded avatar-badge cards. */
+  :root[data-theme="desktop"] {
+    color-scheme: light;
+    --bg: #f7f5f2; --panel: #ffffff; --panel-2: #efebe4; --line: #e6e0d6;
+    --text: #2b2924; --dim: #6e685d; --faint: #a39c8c;
+    --accent: #cc7c52; --green: #2f8f52; --red: #d64545; --yellow: #a9790a; --blue: #4f5fd1; --cyan: #1f8a92;
+    --mono: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+  :root[data-theme="desktop"] header { box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  :root[data-theme="desktop"] .brand { font-weight: 800; }
+  :root[data-theme="desktop"] #stepper { box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  :root[data-theme="desktop"] .step { border-radius: 999px; background: var(--panel-2); }
+  :root[data-theme="desktop"] .step[data-state="active"] { background: #fbe7dc; }
+  :root[data-theme="desktop"] .step[data-state="pass"] { background: #e5f4ea; }
+  :root[data-theme="desktop"] .step[data-state="fail"] { background: #fbe4e4; }
+  :root[data-theme="desktop"] #transcript { max-width: 760px; }
+  :root[data-theme="desktop"] .blk {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 14px 16px 14px 48px; box-shadow: 0 1px 2px rgba(0,0,0,.03); margin-bottom: 14px;
+  }
+  :root[data-theme="desktop"] .blk::before {
+    top: 14px; left: 14px; width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1;
+    background: var(--panel-2); color: var(--text);
+  }
+  :root[data-theme="desktop"] .blk.text::before { background: var(--accent); color: #fff; }
+  :root[data-theme="desktop"] .blk.tool::before { background: #eceeff; color: var(--blue); }
+  :root[data-theme="desktop"] .blk.tool.ok::before { background: #e5f4ea; color: var(--green); }
+  :root[data-theme="desktop"] .blk.tool.err::before, :root[data-theme="desktop"] .blk.tool.denied::before { background: #fbe4e4; color: var(--red); }
+  :root[data-theme="desktop"] .blk.verdict::before { background: #e5f4ea; color: var(--green); }
+  :root[data-theme="desktop"] .blk.verdict.fail::before { background: #fbe4e4; color: var(--red); }
+  :root[data-theme="desktop"] .blk.overseer::before { background: #eceeff; color: var(--blue); }
+  :root[data-theme="desktop"] .blk.note::before { background: #fbf1d8; color: var(--yellow); }
+  :root[data-theme="desktop"] .blk.trusted::before { background: #e5f4ea; color: var(--green); }
+  :root[data-theme="desktop"] .blk.thinking { background: transparent; border: none; box-shadow: none; padding: 0 0 0 30px; }
+  :root[data-theme="desktop"] .blk.thinking::before { position: absolute; background: none; width: auto; height: auto; border-radius: 0; top: 0; left: 0; font-size: 14px; }
+  :root[data-theme="desktop"] .blk.run-end { padding: 14px 18px; }
+  :root[data-theme="desktop"] .out { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; margin-top: 6px; }
+  :root[data-theme="desktop"] .tag { border-radius: 999px; }
+  :root[data-theme="desktop"] #dock {
+    background: rgba(247, 245, 242, .55); border-top: 1px solid rgba(0, 0, 0, .05);
+    backdrop-filter: blur(16px) saturate(1.5); -webkit-backdrop-filter: blur(16px) saturate(1.5);
+  }
+  :root[data-theme="desktop"] .prompt {
+    border: 1px solid rgba(0, 0, 0, .06); border-radius: 18px;
+    background: rgba(255, 255, 255, .72); box-shadow: 0 8px 30px rgba(0, 0, 0, .12);
+    backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  }
+  :root[data-theme="desktop"] .prompt .body { background: rgba(239, 235, 228, .75); }
+  :root[data-theme="desktop"] .opt { border-radius: 10px; padding: 6px 10px 6px 26px; }
+  :root[data-theme="desktop"] .opt:hover, :root[data-theme="desktop"] .opt.sel { background: var(--panel-2); }
+  :root[data-theme="desktop"] .inputrow { border-radius: 999px; background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.06); border-color: transparent; }
+  :root[data-theme="desktop"] aside { border-left: none; box-shadow: -1px 0 3px rgba(0,0,0,.03); }
+
+  /* ---------- motion: smooth without being distracting. New blocks and the permission sheet ease
+     in instead of popping; interactive elements transition instead of snapping; switching themes
+     cross-fades the colors instead of flashing. All of it collapses to nothing for anyone who's
+     asked their OS for reduced motion. */
+  @keyframes blk-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes sheet-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 87, 0); } 50% { box-shadow: 0 0 10px 1px rgba(217, 119, 87, .38); } }
+  .step[data-waiting="1"] { border-color: var(--accent); }
+  /* The exact tool call a pending approval is for, highlighted in the transcript -- not just the
+     stepper badge and the bottom dock, so it's unambiguous which line an approval belongs to even
+     with several tool calls on screen. A thin accent-colored bar that gently breathes, not a ring
+     around the whole line -- present, not loud. */
+  .blk.tool.awaiting { animation: blk-in .2s ease-out, pulse-glow-blk 2.2s ease-in-out infinite; }
+  @keyframes pulse-glow-blk { 0%, 100% { box-shadow: -2px 0 0 0 rgba(217, 119, 87, .5); } 50% { box-shadow: -2px 0 8px 1px rgba(217, 119, 87, .38); } }
+  html { transition: background-color .25s ease; }
+  body, header, #stepper, aside, #dock, .step, .blk, .tag, .opt, .smallbtn, #theme-toggle,
+  #run-state, .inputrow, #jump {
+    transition: background-color .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
+  }
+  .step, .opt, .smallbtn, #theme-toggle, #jump, button {
+    transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .1s ease;
+  }
+  .step:hover { transform: translateY(-1px); }
+  .opt:active, .smallbtn:active, #theme-toggle:active { transform: scale(.96); }
+  #theme-toggle { transition: background-color .15s ease, transform .15s ease, opacity .15s ease; }
+  #theme-toggle:hover { opacity: .85; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important; scroll-behavior: auto !important;
+    }
+  }
 </style>
 </head>
 <body>
@@ -143,6 +254,7 @@
   <span class="stat">⏱ <b id="elapsed">0s</b></span>
   <span class="stat">$ <b id="cost">0.00</b></span>
   <span id="status">connecting…</span>
+  <button id="theme-toggle" type="button" title="Switch look">💬</button>
 </header>
 <nav id="stepper"></nav>
 <div class="body">
@@ -251,7 +363,11 @@ function renderStepper() {
     const icon = { pending: "○", active: "◐", pass: "✓", fail: "✗", skipped: "–" }[st];
     const reps = state.repairs[p] ? '<span class="badge">↺' + state.repairs[p] + "</span>" : "";
     const cost = state.phaseCost[p] ? '<span class="cost">$' + state.phaseCost[p].toFixed(2) + "</span>" : "";
-    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"><span class="icon">' + icon + "</span>" + p + reps + cost + "</button>";
+    // A phase with an approval waiting gets its own badge on the stepper -- which agent needs you
+    // should be visible at a glance, not just at the bottom dock (which only ever shows one at a time).
+    const waitingHere = state.pending.filter((x) => x.phase === p).length;
+    const flag = waitingHere ? '<span class="wait-badge" title="' + waitingHere + " approval" + (waitingHere > 1 ? "s" : "") + ' waiting">' + (waitingHere > 1 ? waitingHere : "!") + "</span>" : "";
+    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"' + (waitingHere ? ' data-waiting="1"' : "") + '><span class="icon">' + icon + "</span>" + p + reps + cost + flag + "</button>";
   }).join("");
 }
 $("stepper").addEventListener("click", (e) => {
@@ -338,9 +454,18 @@ function renderDock() {
     ["deny", "No, and tell the agent what to do differently <span class=\"k\">(esc)</span>"],
   ];
   state.sel = Math.min(state.sel, opts.length - 1);
+  // Break the queue down by phase, not just a bare count. In practice this is almost always one
+  // phase repeated (phases run strictly sequentially, so the queue is never split across phases;
+  // it's parallel tool calls within the one active phase that stack up, e.g. "3 waiting —
+  // builder ×3"), but naming it -- rather than a bare "1 of 3" -- makes that fact visible instead
+  // of implied, and the grouped form still reads correctly on the rare multi-phase edge case too.
+  const phaseCounts = {};
+  for (const p of state.pending) phaseCounts[p.phase] = (phaseCounts[p.phase] || 0) + 1;
+  const breakdown = Object.entries(phaseCounts).map(([ph, n]) => ph + (n > 1 ? " ×" + n : "")).join(", ");
+  const countLabel = state.pending.length > 1 ? state.pending.length + " waiting — " + breakdown : "";
   dockInner.innerHTML =
     '<div class="prompt" id="prompt" data-request="' + esc(ev.requestId) + '">' +
-    '<span class="count">' + (state.pending.length > 1 ? "1 of " + state.pending.length + " waiting" : "") + "</span>" +
+    '<span class="count">' + esc(countLabel) + "</span>" +
     '<div class="title">' + esc(title) + '</div><div class="body">' + body + "</div>" +
     '<div class="why">' + esc(ev.phase) + " wants to run this" + (ev.rule ? "" : " · chained/complex command: will ask every time") + "</div>" +
     '<div class="q">Do you want to proceed?</div>' +
@@ -378,6 +503,9 @@ document.addEventListener("keydown", (e) => {
 function toolBlock(id) { return state.tools.get(id); }
 function tagTool(id, cls, text) {
   const t = toolBlock(id); if (!t) return;
+  // The exact call waiting on you gets its own pulsing highlight in the transcript, not just the
+  // stepper badge -- easy to spot the one that matters even when you're scrolled away from the dock.
+  t.classList.toggle("awaiting", cls === "wait");
   let tag = t.querySelector(".tag"); if (!tag) { tag = document.createElement("span"); t.querySelector(".line").appendChild(tag); }
   tag.className = "tag " + cls; tag.textContent = text;
 }
@@ -529,6 +657,20 @@ function resetForReplay() {
   transcript.innerHTML = ""; state.tools.clear(); state.files.clear();
   Object.assign(state, { phaseState: {}, phaseCost: {}, repairs: {}, pending: [], cost: 0, asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], decisions: [], live: false });
 }
+// ---------- theme: dark terminal-style (default) or a lighter "Desktop" chat-card look
+const THEME_KEY = "agent-loop-theme";
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch {}
+  const btn = $("theme-toggle");
+  btn.textContent = t === "desktop" ? "🖥" : "💬";
+  btn.title = t === "desktop" ? "Switch to terminal look" : "Switch to Desktop look";
+}
+let savedTheme = "terminal";
+try { savedTheme = localStorage.getItem(THEME_KEY) || "terminal"; } catch {}
+applyTheme(savedTheme);
+$("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "desktop" ? "terminal" : "desktop");
+
 renderStepper(); renderHeader();
 if (REPLAY) {
   $("status").textContent = "saved report";

@@ -76,13 +76,21 @@ know for "an agent is working, and sometimes needs a yes/no from me."
   goes back to the agent as the reason. `Write` shows the file as `+` lines and `Edit` shows
   `-`/`+`. The tab title shows `(1) approval needed`.
 - **A phase stepper**, `planner ✓ $0.06 · test-designer – · builder ◐ ↺1 · verifier ○ ·
-  gatekeeper ○`, shows each phase's state, cost and repair count. Click a step to jump to it.
+  gatekeeper ○`, shows each phase's state, cost and repair count. Click a step to jump to it. When a
+  phase has an approval waiting it gets a count badge and a soft accent glow -- real parallel tool
+  calls can leave several waiting on the *same* phase at once (phases themselves run strictly
+  sequentially, so two different phases never both have something pending), and each of those exact
+  tool-call lines gets the same glow in the transcript so it's unambiguous which one an approval is
+  for. See `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
 - **The header** shows the task, run status, elapsed time, total cost and connection state.
 - **A side panel** shows approval counts, saved "don't ask again" rules, the live browser (page
   title, URL, latest screenshot), files changed, and decisions (worker proposals vs. ones you
   recorded).
 - **The bottom input** takes a trusted decision whenever nothing is waiting: type it and press
   Enter.
+- **A theme toggle** in the header switches between this dark, Claude-Code-terminal-style look (the
+  default) and a lighter "Desktop" theme — rounded avatar-badge cards, sans-serif type — without
+  changing any of the underlying data or behavior. Persisted per-browser in `localStorage`.
 
 ![New UI, real run](screenshots/approval-ui/04-after-real-run.png)
 
@@ -125,6 +133,17 @@ What never becomes a rule, and always asks:
 ones. Two of those adversarial cases were real holes found while building this: `cat $F` would have
 produced a rule matching whatever `$F` held, and `python3 -O -c "…"` would have produced
 `Bash(python3 -O:*)`, allowing any inline Python after `-O`. Both are closed and tested.
+
+### Two looks for the same dashboard
+
+The default theme is styled after Claude Code's own terminal UI on purpose — see above. Clicking the
+header's toggle switches to a lighter "Desktop" theme instead: the same events, the same DOM, the
+same behavior, just restyled into rounded avatar-badge cards on a light background instead of flat
+monospace lines on dark. Nothing about what data is shown or how approvals work changes between the
+two; it's a CSS skin (`:root[data-theme="desktop"]` in `ui/index.html`), not a second
+implementation, and the choice is remembered per-browser in `localStorage`.
+
+![The same dashboard in the Desktop theme](screenshots/approval-ui/06-desktop-theme.png)
 
 ### The terminal is a real interface too
 

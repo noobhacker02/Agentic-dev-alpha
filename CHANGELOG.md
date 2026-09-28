@@ -33,6 +33,27 @@ All notable changes to this project are documented here. Format follows
 - **`npm test`** and **CI** (`.github/workflows/test.yml`) run all 11 no-API suites, including real
   Chromium.
 - **`test/e2e/record-run.mjs`**: records a real run as video plus per-phase screenshots and a summary.
+- **A second "Desktop" theme for the run UI**, toggled from the header (persisted per-browser in
+  `localStorage`): the same DOM, the same events, the same behavior as the default dark
+  Claude-Code-terminal-style dashboard, just restyled -- light background, rounded avatar-badge
+  transcript cards, sans-serif type -- via `:root[data-theme="desktop"]` CSS in `ui/index.html`, not
+  a second implementation. Screenshot: `docs/screenshots/approval-ui/06-desktop-theme.png`.
+- **Smoother motion throughout the UI**: new transcript blocks and the permission sheet ease in
+  instead of popping in instantly; interactive elements (steps, options, buttons) transition instead
+  of snapping; switching themes cross-fades colors. All of it collapses under
+  `prefers-reduced-motion: reduce`. The permission dock/sheet is also translucent and
+  backdrop-blurred in both themes (a macOS vibrancy look) instead of a flat opaque bar, so it reads
+  as floating over the transcript rather than abruptly cutting it off when a prompt appears.
+- **Which phase has an approval waiting is now visible without scrolling to the bottom dock.**
+  Checked against `pipeline.ts`'s own control flow first (phases run strictly sequentially -- each
+  one is `await`ed before the next starts -- so two *different* phases can never both have a pending
+  approval; only real parallel tool calls within the *same* phase can leave several waiting at once).
+  The active phase gets a count badge on the stepper, the exact tool-call line(s) get a soft
+  accent-colored glow in the transcript, and the dock names the breakdown ("3 waiting — builder
+  ×3") instead of a bare "1 of 3". Initially built with a harsh bright-yellow outline; redone in the
+  same clay/orange accent already used for the brand mark and active-phase state, as a soft ambient
+  glow rather than a hard ring, after review. Screenshot:
+  `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
 
 ### Fixed
 - The screenshot tool's base64 image data was dumped into the transcript, the log index and every
