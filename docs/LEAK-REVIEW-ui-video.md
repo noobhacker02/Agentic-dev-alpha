@@ -102,12 +102,15 @@ report gets written either. No fix needed here.
   produces `Screenshot saved (screenshot-<ts>-<id>.png)` with no directory component, verified via
   the updated test.
 
-## Open item
+## Finding #2: resolved
 
-Regenerate `docs/screenshots/approval-ui/04-after-real-run.png` and
-`docs/media/after-new-ui-real-run-5x.webm` against the fixed code so the public demo no longer shows
-the pre-fix path leak (finding #2). Costs a real, small amount of API spend to re-record; not done
-automatically here pending confirmation.
+Regenerated both files with a fresh real run (`test/e2e/record-run.mjs --browser --smart`, same task
+as the original recording). `docs/screenshots/approval-ui/04-after-real-run.png` and
+`docs/media/after-new-ui-real-run-5x.webm` now show the fixed code's actual output --
+`Screenshot saved (screenshot-<ts>-<id>.png)` and `[image]`, no path, no base64. Confirmed by loading
+the fresh run's own saved `report.html` in a real headless Chromium and by re-extracting frames from
+the new video with `ffmpeg`. `docs/UI.md`, `docs/screenshots/INDEX.md`, and `README.md` were updated
+to match (stats, descriptions, and direct links to the `docs/media/*.webm` recordings).
 
 ## Round 2: independent re-check against the fixed code
 

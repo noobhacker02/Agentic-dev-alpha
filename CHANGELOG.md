@@ -177,9 +177,13 @@ All notable changes to this project are documented here. Format follows
   - New regression test (`test/browser-tools.mjs`): the screenshot tool's visible text must never
     contain a path separator; the real path (for verifying a real file was written) now comes from
     the internal `browser-snapshot` event instead. All 11 suites and `pipeline_logic.sh` still pass.
-  - Not yet done: the two already-public demo files above still show the pre-fix path and need
-    regenerating against the fixed code to actually clear the leak from GitHub -- costs a small
-    amount of real API spend, so it's flagged in the report rather than done unprompted.
+  - **Regenerated**: ran a fresh real `agent-loop run` (`test/e2e/record-run.mjs --browser --smart`,
+    same task) and replaced both `docs/screenshots/approval-ui/04-after-real-run.png` and
+    `docs/media/after-new-ui-real-run-5x.webm` with clean recordings from the fixed code -- confirmed
+    by re-extracting frames that neither the base64 dump nor the path shows up any more. Updated
+    `docs/UI.md`'s prose and stats table, `docs/screenshots/INDEX.md`'s descriptions, and added direct
+    links to the `docs/media/*.webm` recordings in `README.md` (previously only linked via the
+    screenshots index).
 
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were

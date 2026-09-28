@@ -170,7 +170,7 @@ Shell commands that only read inside `--dir` (`ls`, `cat`, `grep`, `git status`,
 ask, the same way `Read`/`Grep` never did. Pass `--strict-approval` to be asked about every shell command
 anyway. `--no-approval` skips approvals entirely; only the safety net still applies.
 
-**[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 16 for the same
+**[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 13 for the same
 task, with screenshots, videos, and exactly which rules can and can't become "don't ask again".
 
 ## Browser Agent (Stages 1–2)
@@ -194,6 +194,14 @@ Real screenshots — not mockups — of both the tools themselves and the full d
 ![Dashboard with the browser panel](docs/screenshots/approval-ui/01-full-dashboard-with-browser-panel.png)
 
 More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
+Real session recordings (GitHub won't play `.webm` inline — click through to download and watch):
+
+- [`docs/media/before-old-ui-real-run-5x.webm`](docs/media/before-old-ui-real-run-5x.webm) — the old UI, same
+  task, 53 approval clicks, 5× speed.
+- [`docs/media/after-new-ui-real-run-5x.webm`](docs/media/after-new-ui-real-run-5x.webm) — the current UI, same
+  task, 13 approval prompts, 5× speed.
+- [`docs/media/agent-browser-session-2x.webm`](docs/media/agent-browser-session-2x.webm) — the agent's own
+  `--browser` session testing the app it built, 2× speed.
 
 Deliberately scoped to local-only for now — `open` refuses anything but `http://localhost`/`127.0.0.1`. A real
 domain allowlist, cloud worker isolation, and multi-user auth are later stages, not this one; see

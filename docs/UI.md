@@ -2,7 +2,9 @@
 
 Every number and picture here comes from real runs of `agent-loop run` against the real model, with a
 real Chromium clicking the real UI (`test/e2e/record-run.mjs`), graded afterwards by hidden tests the
-agents never saw. Recorded 2026-09-24.
+agents never saw. Recorded 2026-09-24. The "after" screenshot and video were re-recorded 2026-09-28
+after an adversarial review found the screenshot tool leaking its full local filesystem path into the
+transcript (`docs/LEAK-REVIEW-ui-video.md`) — the numbers below are from that fresh run.
 
 ## What changed, in numbers
 
@@ -12,9 +14,9 @@ data point.
 
 | | Old UI | New UI |
 | --- | --- | --- |
-| Approval prompts, todo app | 53 | **16** |
+| Approval prompts, todo app | 53 | **13** |
 | Approval prompts, Roman numerals | 24 | **11** |
-| Things on screen, todo app | 356 cards | **103** blocks |
+| Things on screen, todo app | 356 cards | **98** blocks |
 | Where the Approve button is | somewhere in 356 cards | **always at the bottom** |
 | Answer without the mouse | no | **1 / 2 / 3, y / n, Esc** |
 | Cost shown | nowhere | **header + per phase** |
@@ -86,9 +88,13 @@ know for "an agent is working, and sometimes needs a yes/no from me."
 
 Video (real run, 5× speed): [`media/after-new-ui-real-run-5x.webm`](media/after-new-ui-real-run-5x.webm)
 
-This real-run screenshot is also how the next bug turned up. The agent's `screenshot` tool returned
-its image as base64, and that base64 went straight into the transcript (bottom of the picture). Image
-blocks now show as `[image]`; the picture itself is in the browser panel.
+An earlier version of this exact screenshot is also how two real bugs turned up. The agent's
+`screenshot` tool returned its image as base64, which went straight into the transcript, and also
+named the file's full local path (internal sandbox directory structure on one machine, potentially a
+real username on another). Image blocks now show as `[image]`; the picture itself is in the browser
+panel, and the tool names only the filename (see `docs/LEAK-REVIEW-ui-video.md` for the second one,
+found by a later adversarial pass). The screenshot and video above were re-recorded after both fixes
+landed, so neither leak is visible in them any more.
 
 ### Fewer prompts, without approving blindly
 
