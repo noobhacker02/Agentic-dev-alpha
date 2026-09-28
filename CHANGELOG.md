@@ -39,6 +39,25 @@ All notable changes to this project are documented here. Format follows
   WebSocket message.
 - agent-loop's own git hooks ran an outdated copy of the scanner (3 of 19 secret formats). They're
   synced to Dev-Skill's hardened version.
+- **`.githooks/pre-commit` and `.githooks/pre-push` only ever looked for a `python3` command.** Many
+  Windows Python installs only add `python`, not `python3`, to `PATH`. Confirmed empirically: removing
+  `python3` from `PATH` and leaving only `python` made the old hook fail outright (`python3 not
+  found`, exit 1); the fixed hook tries `python3` then `python`, verifying whichever it finds is
+  actually Python 3 (not a stray Python 2) before trusting it, and succeeds in the same scenario.
+  Synced into dev-workflow's canonical hook scripts (`Dev-Skill/dev-workflow/scripts/hooks/`) and both
+  installed copies (this repo's and Dev-Skill's own `.githooks/`).
+
+### Cross-platform audit
+Reviewed the codebase for Linux/macOS/Windows portability, beyond the git-hooks fix above.
+- Confirmed already fine: all path handling goes through `node:path` (`join`/`resolve`/`dirname`),
+  `src/data-dir.ts`'s home-directory resolution uses `node:os`'s `homedir()`, the store uses Node's
+  built-in `node:sqlite` (no native build step, no platform-specific binary), and
+  `dev-workflow/scripts/check_staged.py`'s line handling (`splitlines()`) already normalizes
+  `\r\n`/`\n`/`\r` uniformly.
+- Documented rather than "fixed" (it isn't a bug in this codebase): the `Bash` tool itself requires a
+  POSIX-ish shell, a Claude Agent SDK/CLI constraint — Git Bash or WSL on Windows, native on
+  Linux/macOS. `src/bash-analysis.ts` is shell-syntax-aware, not OS-aware, so it behaves identically
+  once a command reaches it. See the new "Platform support" section in `README.md`.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh

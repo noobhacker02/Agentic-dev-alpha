@@ -148,6 +148,31 @@ machine's directory layout.
   `agent-loop` from a genuinely clean terminal with only a bare `ANTHROPIC_API_KEY` set has not been
   independently verified here, even though it's how the SDK is documented to work.
 
+### Platform support
+
+Everything in this project's own code goes through Node's cross-platform APIs (`node:path`,
+`node:os`'s `homedir()`/`tmpdir()`, the built-in `node:sqlite`) rather than anything Unix-specific, so
+the pipeline, the store, the approval server and UI, and the Browser Agent run the same way on
+Linux, macOS, and Windows. Two things are worth knowing rather than papering over:
+
+- **The `Bash` tool itself needs a POSIX-ish shell.** That's the Claude Agent SDK/CLI's own
+  requirement, not something agent-loop implements — on Windows that means Git Bash or WSL (either
+  is enough; a plain `cmd.exe`/PowerShell-only setup isn't). `src/bash-analysis.ts`'s command
+  analysis is shell-syntax-aware, not OS-aware, so it behaves identically once a command reaches it
+  regardless of which OS is actually running that shell.
+- **`dev-workflow`'s git hooks** (`.githooks/pre-commit`, `.githooks/pre-push`) run under Git's own
+  bundled `sh`/bash interpreter on every platform (that's how Git for Windows already handles hook
+  shebangs), but used to hard-require a `python3` command specifically. Plenty of Windows Python
+  installs only add `python`, not `python3`, to `PATH` — confirmed by actually removing `python3`
+  from `PATH` and running the old hook (`[dev-workflow] python3 not found`, exit 1) versus the fixed
+  one (falls back to `python`, verifies it's really Python 3, succeeds). Both hooks now try `python3`
+  then `python`, verifying whichever is found is actually Python 3 before trusting it.
+
+Playwright/Chromium (`--browser`) needs `npx playwright install chromium` on any of the three OSes if
+a browser isn't already present — same command everywhere; the sandbox-path fallback in
+`launchBrowser()` (`src/browser-tools.ts`) only ever matters inside this project's own dev sandbox and
+is inert elsewhere.
+
 ## Usage
 
 ```bash

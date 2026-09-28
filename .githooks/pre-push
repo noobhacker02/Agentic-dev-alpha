@@ -5,11 +5,24 @@
 # stdin, one per updated ref. We turn each into a commit range and scan everything in it.
 set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="${PYTHON:-python3}"
 
-if ! command -v "$PY" >/dev/null 2>&1; then
-  echo "[dev-workflow] python3 not found — cannot run the pre-push safety checks." >&2
-  echo "[dev-workflow] Install python3, or set PYTHON=/path/to/python3, then retry." >&2
+# `python3` is the command name on Linux/macOS; many Windows installs (the standard python.org
+# installer, in particular) only put `python` on PATH, not `python3`. Try both, actually checking
+# each is really Python 3 (not a stray Python 2) before trusting it -- a confusing SyntaxError from
+# running this under Python 2 would be worse than a clear "not found" message.
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+      PY="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PY" ] || ! command -v "$PY" >/dev/null 2>&1; then
+  echo "[dev-workflow] no Python 3 interpreter found (tried python3, python) — cannot run the" >&2
+  echo "[dev-workflow] pre-push safety checks. Install Python 3, or set PYTHON=/path/to/python3." >&2
   exit 1
 fi
 
