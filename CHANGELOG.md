@@ -178,12 +178,19 @@ All notable changes to this project are documented here. Format follows
     contain a path separator; the real path (for verifying a real file was written) now comes from
     the internal `browser-snapshot` event instead. All 11 suites and `pipeline_logic.sh` still pass.
   - **Regenerated**: ran a fresh real `agent-loop run` (`test/e2e/record-run.mjs --browser --smart`,
-    same task) and replaced both `docs/screenshots/approval-ui/04-after-real-run.png` and
-    `docs/media/after-new-ui-real-run-5x.webm` with clean recordings from the fixed code -- confirmed
-    by re-extracting frames that neither the base64 dump nor the path shows up any more. Updated
-    `docs/UI.md`'s prose and stats table, `docs/screenshots/INDEX.md`'s descriptions, and added direct
-    links to the `docs/media/*.webm` recordings in `README.md` (previously only linked via the
-    screenshots index).
+    same task) and replaced both `docs/screenshots/approval-ui/04-after-real-run.png` and the "after"
+    demo video with clean recordings from the fixed code -- confirmed by re-extracting frames that
+    neither the base64 dump nor the path shows up any more. Updated `docs/UI.md`'s prose and stats
+    table, `docs/screenshots/INDEX.md`'s descriptions, and added direct links to the demo recordings
+    in `README.md` (previously only linked via the screenshots index).
+  - **Re-encoded all three `docs/media/*.webm` demo clips to `.mp4`** (H.264, via a full `ffmpeg`
+    install -- the sandboxed build bundled with Playwright only has a VP8/WebM encoder, no H.264 or
+    MP4 muxer at all) for far more universal playback support than WebM. This is a one-time
+    documentation change, not a product one: a real `agent-loop --browser` run still saves its own
+    session recording as `.webm` -- that's Playwright/Chromium's native recording format, with no
+    built-in transcoding step, and adding one for every real run wasn't asked for and isn't worth the
+    per-run overhead. Verified duration-for-duration parity (`ffprobe`) and re-extracted frames from
+    each new `.mp4` to confirm the content matches.
 
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were

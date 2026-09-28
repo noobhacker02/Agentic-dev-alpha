@@ -32,7 +32,7 @@ The code the agents wrote was already good. What made the tool unusable was ever
 
 ![Old UI, real run](screenshots/approval-ui/03-before-real-run.png)
 
-Video (real run, 5× speed): [`media/before-old-ui-real-run-5x.webm`](media/before-old-ui-real-run-5x.webm)
+Video (real run, 5× speed): [`media/before-old-ui-real-run-5x.mp4`](media/before-old-ui-real-run-5x.mp4)
 
 1. **Every event was its own card.** One browser click showed up five times: the tool call, "browser
    action started", "browser action completed", the tool result, then "Approval allow". A 4-minute
@@ -86,7 +86,7 @@ know for "an agent is working, and sometimes needs a yes/no from me."
 
 ![New UI, real run](screenshots/approval-ui/04-after-real-run.png)
 
-Video (real run, 5× speed): [`media/after-new-ui-real-run-5x.webm`](media/after-new-ui-real-run-5x.webm)
+Video (real run, 5× speed): [`media/after-new-ui-real-run-5x.mp4`](media/after-new-ui-real-run-5x.mp4)
 
 An earlier version of this exact screenshot is also how two real bugs turned up. The agent's
 `screenshot` tool returned its image as base64, which went straight into the transcript, and also
@@ -161,7 +161,7 @@ server and no token.
 
 With `--browser`, the agent's browser session is recorded as video. That's a watchable record of
 what it actually did to the app, not just its claims about it. Example (real run, 2× speed):
-[`media/agent-browser-session-2x.webm`](media/agent-browser-session-2x.webm).
+[`media/agent-browser-session-2x.mp4`](media/agent-browser-session-2x.mp4).
 
 ## Checking it yourself
 
@@ -169,6 +169,8 @@ what it actually did to the app, not just its claims about it. Example (real run
 npm run build && npm test            # 11 suites, no API key; includes a real-Chromium UI test
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
+                                     # writes <out>/run.webm -- pipe through `ffmpeg -i run.webm out.mp4`
+                                     # (with a real, non-Playwright-bundled ffmpeg) for an .mp4 copy
 ```
 
 `test/ui-render.mjs` drives the real page in a real Chromium. It checks the stepper, cost, collapsed
@@ -183,4 +185,7 @@ a reload replays everything and that the transcript survives the server shutting
   once approved. That needs a real sandbox.
 - The pipeline still doesn't pause to ask you a question. A contradiction ends the run and you
   restart it with the decision recorded.
-- Videos are WebM, which GitHub won't play inline. Download them to watch.
+- A real `--browser` run's own session recording (and the saved report next to it) is WebM —
+  Playwright/Chromium's native recording format, with no built-in re-encode step. The three demo
+  clips under `docs/media/` are one-time hand re-encoded `.mp4` copies for easier viewing in the repo,
+  not something `agent-loop` itself does per run.

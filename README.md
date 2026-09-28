@@ -194,14 +194,18 @@ Real screenshots — not mockups — of both the tools themselves and the full d
 ![Dashboard with the browser panel](docs/screenshots/approval-ui/01-full-dashboard-with-browser-panel.png)
 
 More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
-Real session recordings (GitHub won't play `.webm` inline — click through to download and watch):
+Real session recordings (`.mp4`, click through to view — GitHub still won't autoplay them inline in this
+text, but its own file viewer plays them, and any regular media player will too):
 
-- [`docs/media/before-old-ui-real-run-5x.webm`](docs/media/before-old-ui-real-run-5x.webm) — the old UI, same
+- [`docs/media/before-old-ui-real-run-5x.mp4`](docs/media/before-old-ui-real-run-5x.mp4) — the old UI, same
   task, 53 approval clicks, 5× speed.
-- [`docs/media/after-new-ui-real-run-5x.webm`](docs/media/after-new-ui-real-run-5x.webm) — the current UI, same
+- [`docs/media/after-new-ui-real-run-5x.mp4`](docs/media/after-new-ui-real-run-5x.mp4) — the current UI, same
   task, 13 approval prompts, 5× speed.
-- [`docs/media/agent-browser-session-2x.webm`](docs/media/agent-browser-session-2x.webm) — the agent's own
+- [`docs/media/agent-browser-session-2x.mp4`](docs/media/agent-browser-session-2x.mp4) — the agent's own
   `--browser` session testing the app it built, 2× speed.
+
+(A real `--browser` run itself still saves its own session recording as `.webm` — Chromium/Playwright's
+native recording format — these three are one-time re-encoded copies for easier viewing in the repo.)
 
 Deliberately scoped to local-only for now — `open` refuses anything but `http://localhost`/`127.0.0.1`. A real
 domain allowlist, cloud worker isolation, and multi-user auth are later stages, not this one; see

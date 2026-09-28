@@ -34,6 +34,6 @@ Real runs recorded as video by `test/e2e/record-run.mjs`, sped up and re-encoded
 
 | File | What it shows |
 | --- | --- |
-| `before-old-ui-real-run-5x.webm` | Old UI, todo-app task, 53 approval clicks, 5× speed. |
-| `after-new-ui-real-run-5x.webm` | New UI, same task, 13 approval prompts, 5× speed. Regenerated 2026-09-28 after the path-leak fix (`docs/LEAK-REVIEW-ui-video.md`); the original recording showed the pre-fix leaked path. |
-| `agent-browser-session-2x.webm` | The agent's own browser session testing the app it built, recorded automatically with `--browser`, 2× speed. |
+| `before-old-ui-real-run-5x.mp4` | Old UI, todo-app task, 53 approval clicks, 5× speed. |
+| `after-new-ui-real-run-5x.mp4` | New UI, same task, 13 approval prompts, 5× speed. Regenerated 2026-09-28 after the path-leak fix (`docs/LEAK-REVIEW-ui-video.md`); the original recording showed the pre-fix leaked path. |
+| `agent-browser-session-2x.mp4` | The agent's own browser session testing the app it built, recorded automatically with `--browser`, 2× speed. |

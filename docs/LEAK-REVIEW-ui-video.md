@@ -105,12 +105,17 @@ report gets written either. No fix needed here.
 ## Finding #2: resolved
 
 Regenerated both files with a fresh real run (`test/e2e/record-run.mjs --browser --smart`, same task
-as the original recording). `docs/screenshots/approval-ui/04-after-real-run.png` and
-`docs/media/after-new-ui-real-run-5x.webm` now show the fixed code's actual output --
-`Screenshot saved (screenshot-<ts>-<id>.png)` and `[image]`, no path, no base64. Confirmed by loading
-the fresh run's own saved `report.html` in a real headless Chromium and by re-extracting frames from
-the new video with `ffmpeg`. `docs/UI.md`, `docs/screenshots/INDEX.md`, and `README.md` were updated
-to match (stats, descriptions, and direct links to the `docs/media/*.webm` recordings).
+as the original recording). `docs/screenshots/approval-ui/04-after-real-run.png` and the re-recorded
+video (re-encoded to `docs/media/after-new-ui-real-run-5x.mp4`, see below) now show the fixed code's
+actual output -- `Screenshot saved (screenshot-<ts>-<id>.png)` and `[image]`, no path, no base64.
+Confirmed by loading the fresh run's own saved `report.html` in a real headless Chromium and by
+re-extracting frames from the new video with `ffmpeg`. `docs/UI.md`, `docs/screenshots/INDEX.md`, and
+`README.md` were updated to match (stats, descriptions, and direct links to the recordings).
+
+All three `docs/media/*.webm` files (Playwright's native recording format -- what `--browser` itself
+still produces on every real run; that part hasn't changed) were also re-encoded to `.mp4` (H.264, via
+a full `ffmpeg` install -- the sandboxed one bundled with Playwright only has a VP8/WebM encoder) so
+they're viewable with ordinary media players and preview more reliably, not just to address this leak.
 
 ## Round 2: independent re-check against the fixed code
 
