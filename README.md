@@ -125,7 +125,8 @@ machine's directory layout.
 | `src/data-dir.ts` | Resolves where the audit database lives — always outside `--dir` |
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
-| `src/cli.ts` | `agent-loop run "<task>"` entry point |
+| `src/cli.ts` | `agent-loop run "<task>"` and `agent-loop insights` entry points |
+| `src/text-safety.ts` | Strips terminal control/escape bytes before untrusted text reaches a real terminal — shared by `terminal.ts` and `cli.ts`'s `insights` report |
 | `test/approval-server.mjs` | No-LLM test of the approval server's access control (token, Origin, Host) and pending-approval replay |
 | `test/tool-and-path-scope.mjs` | No-LLM test of per-phase tool restriction, `--dir` path scoping, and `minimalEnv()` |
 | `test/data-dir.mjs` | No-LLM test that the audit database always resolves outside `--dir` |
@@ -134,6 +135,7 @@ machine's directory layout.
 | `test/resolve-skill-source.mjs` | Fetches the current `dev-workflow` skill (GitHub by default, local path as opt-in override) |
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
+| `test/insights-cli.mjs` | No-LLM test that `agent-loop insights` strips terminal control bytes from a stored rule before printing it |
 
 ## Requirements
 
@@ -147,6 +149,31 @@ machine's directory layout.
   already-authenticated Claude Code session, which passes its own auth through automatically — running
   `agent-loop` from a genuinely clean terminal with only a bare `ANTHROPIC_API_KEY` set has not been
   independently verified here, even though it's how the SDK is documented to work.
+
+### Platform support
+
+Everything in this project's own code goes through Node's cross-platform APIs (`node:path`,
+`node:os`'s `homedir()`/`tmpdir()`, the built-in `node:sqlite`) rather than anything Unix-specific, so
+the pipeline, the store, the approval server and UI, and the Browser Agent run the same way on
+Linux, macOS, and Windows. Two things are worth knowing rather than papering over:
+
+- **The `Bash` tool itself needs a POSIX-ish shell.** That's the Claude Agent SDK/CLI's own
+  requirement, not something agent-loop implements — on Windows that means Git Bash or WSL (either
+  is enough; a plain `cmd.exe`/PowerShell-only setup isn't). `src/bash-analysis.ts`'s command
+  analysis is shell-syntax-aware, not OS-aware, so it behaves identically once a command reaches it
+  regardless of which OS is actually running that shell.
+- **`dev-workflow`'s git hooks** (`.githooks/pre-commit`, `.githooks/pre-push`) run under Git's own
+  bundled `sh`/bash interpreter on every platform (that's how Git for Windows already handles hook
+  shebangs), but used to hard-require a `python3` command specifically. Plenty of Windows Python
+  installs only add `python`, not `python3`, to `PATH` — confirmed by actually removing `python3`
+  from `PATH` and running the old hook (`[dev-workflow] python3 not found`, exit 1) versus the fixed
+  one (falls back to `python`, verifies it's really Python 3, succeeds). Both hooks now try `python3`
+  then `python`, verifying whichever is found is actually Python 3 before trusting it.
+
+Playwright/Chromium (`--browser`) needs `npx playwright install chromium` on any of the three OSes if
+a browser isn't already present — same command everywhere; the sandbox-path fallback in
+`launchBrowser()` (`src/browser-tools.ts`) only ever matters inside this project's own dev sandbox and
+is inert elsewhere.
 
 ## Usage
 
@@ -170,8 +197,20 @@ Shell commands that only read inside `--dir` (`ls`, `cat`, `grep`, `git status`,
 ask, the same way `Read`/`Grep` never did. Pass `--strict-approval` to be asked about every shell command
 anyway. `--no-approval` skips approvals entirely; only the safety net still applies.
 
-**[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 16 for the same
+**[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 13 for the same
 task, with screenshots, videos, and exactly which rules can and can't become "don't ask again".
+
+### `agent-loop insights`
+
+```bash
+node dist/cli.js insights [--dir <workDir>] [--data-dir <path>]
+```
+
+A self-analysis report over every run ever recorded against a `--dir`'s audit database: which
+phases get repaired most (and how often), total and per-phase cost, and which "don't ask again"
+rules actually get reused versus created once and never touched again. Built entirely from data
+already recorded for `run` itself (`src/store.ts`'s `getInsights()`) — nothing new to opt into first,
+so it reflects every run's history, not just ones made after some new tracking was added.
 
 ## Browser Agent (Stages 1–2)
 
@@ -194,6 +233,18 @@ Real screenshots — not mockups — of both the tools themselves and the full d
 ![Dashboard with the browser panel](docs/screenshots/approval-ui/01-full-dashboard-with-browser-panel.png)
 
 More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
+Real session recordings (`.mp4`, click through to view — GitHub still won't autoplay them inline in this
+text, but its own file viewer plays them, and any regular media player will too):
+
+- [`docs/media/before-old-ui-real-run-5x.mp4`](docs/media/before-old-ui-real-run-5x.mp4) — the old UI, same
+  task, 53 approval clicks, 5× speed.
+- [`docs/media/after-new-ui-real-run-5x.mp4`](docs/media/after-new-ui-real-run-5x.mp4) — the current UI, same
+  task, 13 approval prompts, 5× speed.
+- [`docs/media/agent-browser-session-2x.mp4`](docs/media/agent-browser-session-2x.mp4) — the agent's own
+  `--browser` session testing the app it built, 2× speed.
+
+(A real `--browser` run itself still saves its own session recording as `.webm` — Chromium/Playwright's
+native recording format — these three are one-time re-encoded copies for easier viewing in the repo.)
 
 Deliberately scoped to local-only for now — `open` refuses anything but `http://localhost`/`127.0.0.1`. A real
 domain allowlist, cloud worker isolation, and multi-user auth are later stages, not this one; see

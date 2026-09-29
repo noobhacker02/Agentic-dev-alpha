@@ -2,6 +2,7 @@ import { emitKeypressEvents } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { EventBus } from "./bus.js";
 import type { AgentEvent } from "./types.js";
+import { stripTerminalControlBytes } from "./text-safety.js";
 
 /**
  * A Claude Code-style transcript in the terminal: "⏺ Tool(args)" per call, "⎿" for its result, the
@@ -30,14 +31,9 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
   const orange = c("38;5;173"), dim = c("2"), bold = c("1"), green = c("32"), red = c("31"), blue = c("38;5;147"), yellow = c("33");
   const width = () => Math.max(60, Math.min(out.columns ?? 100, 120));
   const write = (s: string) => out.write(s + "\n");
-  // Bash stdout/stderr, file content, a curl response body, and the model's own turn text (which
-  // can echo any of those back) all reach this terminal, and none of it is trustworthy: printed
-  // raw, a planted escape sequence could rewrite the terminal title, clear/overwrite what's on
-  // screen -- including the command text in the approval prompt a human is about to say yes to --
-  // or, via OSC 52 (which many terminal emulators honor), silently write to the real clipboard.
-  // Stripping every C0/C1 control byte except tab and newline removes anything that could ever
-  // start such a sequence, rather than trying to match specific known sequence shapes.
-  const strip = (s: string) => s.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
+  // See src/text-safety.ts: Bash output, file content, and the model's own turn text all reach this
+  // terminal, and none of it is trustworthy.
+  const strip = stripTerminalControlBytes;
   const rel = (p: unknown) => {
     const s = strip(String(p ?? ""));
     return opts.workDir && s.startsWith(opts.workDir + "/") ? s.slice(opts.workDir.length + 1) : s;

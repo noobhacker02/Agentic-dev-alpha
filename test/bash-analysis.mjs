@@ -115,4 +115,18 @@ expect("ls \u009b2J", null);
 expect("echo hi\r", null);
 console.log("[ok] commands containing escape/control bytes always ask and never become rules");
 
+
+// --- shell-state mutators never get a "don't ask again" rule either: they persist across separate
+// Bash calls in the same session (env vars, shell options, aliases), so a rule for one exact
+// approved export/set/declare/alias line would still be narrow, but letting it exist at all invites
+// a human to wave through a bland-looking "export NODE_OPTIONS=..." and, more importantly, running
+// it even once (approved on its own merits, or under --no-approval) silently changes what an
+// already-trusted rule like Bash(npm test:*) executes next time, without a fresh review.
+for (const cmd of [
+  "export LD_PRELOAD=/tmp/evil.so", "export NODE_OPTIONS=--require=/tmp/evil.js",
+  "declare -x MALICIOUS=1", "set -a", "unset PATH", "alias ls=\"rm -rf /\"", "unalias -a", "readonly X=1",
+]) {
+  assert.strictEqual(plan(cmd), null, `expected "${cmd}" to always ask (no rule), got ${JSON.stringify(plan(cmd))}`);
+}
+console.log("[ok] export/set/declare/unset/alias/readonly always ask -- never a reusable rule (they outlive one command)");
 console.log("\nALL BASH ANALYSIS TESTS PASSED");

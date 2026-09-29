@@ -176,7 +176,78 @@ export class Store {
       .all(query, limit) as Array<{ kind: string; content: string }>;
   }
 
+  /**
+   * `agent-loop insights`: a self-analysis report over this data dir's own run history, built
+   * entirely from data already recorded for other reasons (phase attempts, verdicts, usage events,
+   * auto-allow events) -- no new instrumentation, so it reflects every run ever made against this
+   * data dir, not just ones run after some new tracking was added.
+   */
+  getInsights(): Insights {
+    const totalRuns = (this.db.prepare("SELECT COUNT(*) as n FROM runs").get() as { n: number }).n;
+    const statusRows = this.db.prepare("SELECT status, COUNT(*) as n FROM runs GROUP BY status").all() as Array<{ status: string; n: number }>;
+    const byStatus: Record<string, number> = {};
+    for (const r of statusRows) byStatus[r.status] = r.n;
+
+    // A phase's attempt count for one run is the highest `attempt` row written for it; >1 means it
+    // was repaired at least once. Aggregated across every run, not just the latest.
+    const phaseRows = this.db
+      .prepare(
+        `SELECT name, MAX(attempt) as maxAttempt FROM phases GROUP BY run_id, name`
+      )
+      .all() as Array<{ name: PhaseName; maxAttempt: number }>;
+    const phaseStats = new Map<string, { runs: number; repaired: number; totalAttempts: number }>();
+    for (const row of phaseRows) {
+      const s = phaseStats.get(row.name) ?? { runs: 0, repaired: 0, totalAttempts: 0 };
+      s.runs++;
+      s.totalAttempts += row.maxAttempt;
+      if (row.maxAttempt > 1) s.repaired++;
+      phaseStats.set(row.name, s);
+    }
+    const byPhase = [...phaseStats.entries()]
+      .map(([name, s]) => ({ name: name as PhaseName, runs: s.runs, repairedRuns: s.repaired, avgAttempts: s.totalAttempts / s.runs }))
+      .sort((a, b) => b.repairedRuns - a.repairedRuns);
+
+    // Cost and rule-reuse both live inside events' free-form payload_json, not their own columns --
+    // parsed in JS rather than via SQLite's JSON1 functions, which this embedded build isn't
+    // guaranteed to have compiled in, for a report that only ever runs as an occasional CLI command.
+    const usageRows = this.db.prepare("SELECT phase, payload_json as p FROM events WHERE type = 'usage'").all() as Array<{ phase: string | null; p: string }>;
+    let totalCost = 0;
+    const costByPhase = new Map<string, number>();
+    for (const row of usageRows) {
+      const cost = (JSON.parse(row.p) as { costUsd?: number }).costUsd ?? 0;
+      totalCost += cost;
+      if (row.phase) costByPhase.set(row.phase, (costByPhase.get(row.phase) ?? 0) + cost);
+    }
+
+    const autoAllowRows = this.db.prepare("SELECT payload_json as p FROM events WHERE type = 'approval-auto-allowed'").all() as Array<{ p: string }>;
+    const ruleUseCounts = new Map<string, number>();
+    for (const row of autoAllowRows) {
+      const rule = (JSON.parse(row.p) as { rule?: string }).rule;
+      if (rule) ruleUseCounts.set(rule, (ruleUseCounts.get(rule) ?? 0) + 1);
+    }
+    const createdRuleRows = this.db.prepare("SELECT payload_json as p FROM events WHERE type = 'approval-resolved'").all() as Array<{ p: string }>;
+    const rulesCreated = new Set<string>();
+    for (const row of createdRuleRows) {
+      const rule = (JSON.parse(row.p) as { rememberedRule?: string }).rememberedRule;
+      if (rule) rulesCreated.add(rule);
+    }
+    const neverReusedRules = [...rulesCreated].filter((r) => !ruleUseCounts.has(r));
+    const topRules = [...ruleUseCounts.entries()].sort((a, b) => b[1] - a[1]).map(([rule, count]) => ({ rule, count }));
+
+    return { totalRuns, byStatus, byPhase, totalCost, costByPhase: Object.fromEntries(costByPhase), topRules, neverReusedRules };
+  }
+
   close() {
     this.db.close();
   }
+}
+
+export interface Insights {
+  totalRuns: number;
+  byStatus: Record<string, number>;
+  byPhase: Array<{ name: PhaseName; runs: number; repairedRuns: number; avgAttempts: number }>;
+  totalCost: number;
+  costByPhase: Record<string, number>;
+  topRules: Array<{ rule: string; count: number }>;
+  neverReusedRules: string[];
 }

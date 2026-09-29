@@ -118,6 +118,18 @@ const NEVER_RULE = new Set([
   // a `find .` rule would also match a find that deletes, `sed -i` edits any file, `mv x` moves it
   // anywhere, and `cd` then anything.
   "cd", "find", "sed", "awk", "cp", "mv", "ln", "tee", "truncate", "install", "open", "xdg-open",
+  // These mutate shell state that outlives the one command -- the same reason a leading VAR=value
+  // prefix (line ~171) is never read-only or rule-able, but broader: `export`/`set`/`declare` set an
+  // env var or shell option for the rest of the session's persistent shell (confirmed by the SDK's
+  // own CwdChangedHookInput, which exists because `cd` likewise persists across separate Bash calls
+  // within one session), not just the one line. A human approving `export NODE_OPTIONS=--require=x`
+  // or `export LD_PRELOAD=evil.so` once -- plausible, since it can look like routine dev config --
+  // would otherwise let it become a "don't ask again" rule, and worse, once it runs (approved on its
+  // own bland-looking merits, or under --no-approval) it silently changes what an *already-trusted*
+  // rule like `Bash(npm test:*)` actually executes the next time that rule auto-approves it, without
+  // the human ever reviewing that changed behavior. `alias`/`unalias` are the same risk for what a
+  // later bare command name resolves to.
+  "export", "set", "declare", "typeset", "unset", "alias", "unalias", "readonly",
 ]);
 /** Subcommands whose next word is what actually runs (`npm run build`, `npx vitest`). */
 const RUNNER_SUBS = new Set(["run", "run-script", "exec", "x", "dlx"]);

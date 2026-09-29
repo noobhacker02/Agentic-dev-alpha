@@ -113,19 +113,26 @@ function call(name, args) {
 }
 
 // 8. screenshot writes a real PNG file (checked by magic bytes, not just existence) and returns it
-// as inline image content too.
+// as inline image content too. The result text names only the filename -- the full local path is
+// never shown as visible text (it leaked local machine/sandbox directory structure into the
+// transcript, the SQLite index, every WebSocket message, and this project's own committed demo
+// screenshots/videos before this fix); the real path for this check comes from the internal
+// browser-snapshot event instead, the same one the UI's browser panel already uses.
 {
   const res = await call("screenshot", {});
   assert.ok(!res.isError, res.content[0]?.text);
-  const pathMatch = res.content[0].text.match(/saved to (.+\.png)/);
-  assert.ok(pathMatch, "screenshot result text should name the saved file");
-  const filePath = pathMatch[1];
+  assert.ok(!/[\\/]/.test(res.content[0].text), `screenshot result text must not contain a path: ${res.content[0].text}`);
+  const fileNameMatch = res.content[0].text.match(/\(([^()]+\.png)\)/);
+  assert.ok(fileNameMatch, "screenshot result text should name the saved file");
+  const snapshot = events.filter((e) => e.type === "browser-snapshot").pop();
+  const filePath = snapshot.screenshotPath;
+  assert.ok(filePath.endsWith(fileNameMatch[1]), "the internal event's path should match the filename shown in the transcript");
   assert.ok(existsSync(filePath), `screenshot file should exist at ${filePath}`);
   const bytes = readFileSync(filePath);
   assert.ok(bytes.length > 100 && bytes[0] === 0x89 && bytes[1] === 0x50, "saved file should be a real PNG (magic bytes)");
   const imageBlock = res.content.find((c) => c.type === "image");
   assert.ok(imageBlock && imageBlock.mimeType === "image/png" && imageBlock.data.length > 100, "should also return inline image content");
-  console.log("[ok] screenshot saves a real PNG artifact and returns it inline");
+  console.log("[ok] screenshot saves a real PNG artifact and returns it inline, without leaking its local path into the transcript");
 }
 
 // 9. calling a tool before any session exists (fresh runId) errors instead of crashing the process.

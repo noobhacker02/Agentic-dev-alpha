@@ -1,13 +1,14 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { EventBus } from "./bus.js";
-import { Store } from "./store.js";
+import { Store, type Insights } from "./store.js";
 import { startServer } from "./server.js";
 import { runPipeline } from "./pipeline.js";
 import { resolveDataDir } from "./data-dir.js";
 import { writeRunReport } from "./report.js";
 import { attachTerminal } from "./terminal.js";
 import { PHASES } from "./types.js";
+import { stripTerminalControlBytes } from "./text-safety.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
@@ -51,15 +52,57 @@ function parseNonNegativeInt(raw: string | boolean | undefined, flagName: string
   return n;
 }
 
+function printInsights(insights: Insights) {
+  console.log(`Runs recorded: ${insights.totalRuns}`);
+  if (insights.totalRuns === 0) {
+    console.log("No runs recorded against this data dir yet.");
+    return;
+  }
+  console.log("By outcome: " + Object.entries(insights.byStatus).map(([s, n]) => `${s}=${n}`).join(", "));
+  console.log(`\nTotal cost: $${insights.totalCost.toFixed(2)}`);
+  for (const p of insights.byPhase) {
+    const cost = insights.costByPhase[p.name];
+    console.log(
+      `  ${p.name.padEnd(14)} ${p.runs} run(s), repaired in ${p.repairedRuns} ` +
+      `(avg ${p.avgAttempts.toFixed(1)} attempt(s))` + (cost ? `, $${cost.toFixed(2)}` : "")
+    );
+  }
+  if (insights.topRules.length) {
+    console.log(`\nMost-reused "don't ask again" rules:`);
+    for (const r of insights.topRules.slice(0, 10)) console.log(`  ${r.count}x  ${stripTerminalControlBytes(r.rule)}`);
+  }
+  if (insights.neverReusedRules.length) {
+    console.log(`\nCreated but never reused (consider whether these are worth "don't ask again" at all):`);
+    for (const r of insights.neverReusedRules) console.log(`  ${stripTerminalControlBytes(r)}`);
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
+
+  if (cmd === "insights") {
+    const args = parseArgs(argv.slice(1));
+    const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
+    const dataDirOverride = typeof args["data-dir"] === "string" ? args["data-dir"] : process.env.AGENT_LOOP_DATA_DIR;
+    const dataDir = resolveDataDir(workDir, dataDirOverride);
+    const dbPath = join(dataDir, "agent-loop.db");
+    if (!existsSync(dbPath)) {
+      console.error(`No audit database found at ${dbPath} -- has "agent-loop run" ever been used against this --dir?`);
+      process.exit(1);
+    }
+    const store = new Store(dbPath);
+    printInsights(store.getInsights());
+    store.close();
+    return;
+  }
 
   if (cmd !== "run") {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser]
+  agent-loop insights [--dir <workDir>] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
@@ -72,6 +115,12 @@ Usage:
                    always outside --dir, since the agents have Write/Edit/Bash access there
   --browser        Give builder and verifier real headless-Chromium browser tools (Stage 1:
                    http://localhost/127.0.0.1 URLs only). Off by default.
+
+  insights         Self-analysis over every run ever recorded against a --dir's audit database:
+                   which phases get repaired most, total and per-phase cost, and which "don't ask
+                   again" rules actually get reused vs. created and never touched again. Built
+                   entirely from data already recorded for other reasons -- no separate tracking
+                   to turn on first.
 `);
     process.exit(cmd ? 1 : 0);
   }

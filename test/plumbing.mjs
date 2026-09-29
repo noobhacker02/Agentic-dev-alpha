@@ -50,6 +50,20 @@ console.log("[ok] server: WebSocket client connected");
 const received = [];
 ws.on("message", (raw) => received.push(JSON.parse(raw.toString())));
 
+// A fixed sleep-then-check-once wait is a race: it passed 22 straight local/CI runs, then failed for
+// real in CI (a WS round-trip -- send, server, bus, a synchronous SQLite write, broadcast, client
+// receive -- taking just over 200ms under a loaded runner). Polling for the real condition is both
+// faster on a healthy machine (resolves the moment the event arrives, not after a fixed wait) and
+// correct under load (keeps waiting up to a generous ceiling instead of giving up at a fixed point).
+async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return true;
+}
+
 // Simulate a PreToolUse hook requesting approval.
 const { requestId, wait } = bus.requestApproval({
   runId: run.id,
@@ -59,9 +73,8 @@ const { requestId, wait } = bus.requestApproval({
   toolInput: { command: "echo hi" },
 });
 
-await new Promise((r) => setTimeout(r, 200));
 assert.ok(
-  received.some((e) => e.type === "approval-request" && e.requestId === requestId),
+  await waitFor(() => received.some((e) => e.type === "approval-request" && e.requestId === requestId)),
   "approval-request event should reach the WS client"
 );
 console.log("[ok] bus->server->WS: approval-request event broadcast to client");
@@ -91,15 +104,56 @@ console.log("[ok] WS->server->bus: human decision resolves the pending hook prom
 {
   const before = received.length;
   ws.send(JSON.stringify({ type: "record-decision", runId: run.id, phase: "planner", text: "Use SQLite, not Postgres." }));
-  await new Promise((r) => setTimeout(r, 200));
   assert.ok(
-    received.slice(before).some((e) => e.type === "trusted-decision-recorded" && e.text === "Use SQLite, not Postgres."),
+    await waitFor(() => received.slice(before).some((e) => e.type === "trusted-decision-recorded" && e.text === "Use SQLite, not Postgres.")),
     "recording a decision over WS should broadcast a trusted-decision-recorded event"
   );
   const stored = store.getTrustedDecisions(run.id);
   assert.strictEqual(stored.length, 1);
   assert.strictEqual(stored[0].text, "Use SQLite, not Postgres.");
   console.log("[ok] WS->server->bus->store: recording a decision persists it as a trusted decision");
+}
+
+// --- getInsights(): the self-analysis report agent-loop's own CLI (`agent-loop insights`) prints,
+// built entirely from data already recorded for other reasons. Uses a second run with distinct
+// phase names (builder/verifier) so its assertions aren't coupled to the planner phase set up above.
+{
+  const run2 = store.createRun("insights test task", dir);
+  let p = store.startPhase(run2.id, "builder", 1);
+  store.finishPhase(p.id, { completed: true, outcome: "fail", headline: "fail1", details: "", concerns: [], blockingFindings: ["x"] });
+  p = store.startPhase(run2.id, "builder", 2);
+  store.finishPhase(p.id, { completed: true, outcome: "fail", headline: "fail2", details: "", concerns: [], blockingFindings: ["x"] });
+  p = store.startPhase(run2.id, "builder", 3);
+  store.finishPhase(p.id, { completed: true, outcome: "pass", headline: "pass", details: "", concerns: [], blockingFindings: [] });
+  p = store.startPhase(run2.id, "verifier", 1);
+  store.finishPhase(p.id, { completed: true, outcome: "pass", headline: "ok", details: "", concerns: [], blockingFindings: [] });
+
+  store.logEvent(run2.id, "builder", "usage", { costUsd: 0.05 });
+  store.logEvent(run2.id, "builder", "usage", { costUsd: 0.07 });
+  store.logEvent(run2.id, "verifier", "usage", { costUsd: 0.02 });
+
+  store.logEvent(run2.id, "builder", "approval-auto-allowed", { rule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-auto-allowed", { rule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm test:*)" });
+  store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm run lint:*)" }); // never reused
+
+  store.finishRun(run2.id, "failed");
+
+  const insights = store.getInsights();
+  assert.strictEqual(insights.totalRuns, 2, "counts every run recorded, not just the latest");
+  assert.strictEqual(insights.byStatus.failed, 1);
+  const builderStats = insights.byPhase.find((x) => x.name === "builder");
+  assert.strictEqual(builderStats.runs, 1);
+  assert.strictEqual(builderStats.repairedRuns, 1, "3 attempts on one run counts as one repaired run, not three");
+  assert.strictEqual(builderStats.avgAttempts, 3);
+  const verifierStats = insights.byPhase.find((x) => x.name === "verifier");
+  assert.strictEqual(verifierStats.repairedRuns, 0);
+  assert.ok(Math.abs(insights.totalCost - 0.14) < 1e-9, `totalCost was ${insights.totalCost}`);
+  assert.ok(Math.abs(insights.costByPhase.builder - 0.12) < 1e-9);
+  assert.ok(Math.abs(insights.costByPhase.verifier - 0.02) < 1e-9);
+  assert.deepStrictEqual(insights.topRules, [{ rule: "Bash(npm test:*)", count: 2 }]);
+  assert.deepStrictEqual(insights.neverReusedRules, ["Bash(npm run lint:*)"]);
+  console.log("[ok] store.getInsights(): repair frequency, cost, and rule-reuse aggregate correctly across runs");
 }
 
 ws.close();

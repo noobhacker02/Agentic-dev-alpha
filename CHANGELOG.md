@@ -22,6 +22,28 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **`agent-loop insights`**: a self-analysis CLI report over every run ever recorded against a
+  `--dir`'s audit database — which phases get repaired most (and how often), total and per-phase
+  cost, and which "don't ask again" rules actually get reused versus created once and never touched
+  again. Built entirely from `Store.getInsights()` querying data already recorded for other reasons
+  (phase attempts, verdicts, `usage`/`approval-auto-allowed`/`approval-resolved` events) — no new
+  instrumentation, so it covers every run's history, not just ones made after some new tracking was
+  added. Verified against a real fake-SDK scenario's actual audit database, not just synthetic test
+  data, before considering it done. Regression test in `test/plumbing.mjs` asserting repair-count,
+  cost, and rule-reuse aggregation are each exactly right, not just "some number came out."
+- **`docs/RESEARCH-COMPUTER-USE-AND-MULTI-AGENT.md`**: read-only review of two real projects
+  (`NousResearch/hermes-agent`, `openclaw/openclaw`) for computer-use and multi-agent-coordination
+  ideas. Finding worth having in writing: both projects wrap the same third-party driver for
+  desktop/OS-level control rather than implementing it themselves, and neither has moved past
+  system-prompt-only defense against prompt injection from on-screen content — not something to
+  borrow, a real open problem agent-loop would have to solve structurally before adding any desktop
+  capability, the same way `browser-tools.ts`'s localhost check had to move from "checked once" to
+  "enforced continuously." Also settles an open design question about multi-agent coordination: a
+  real, shipping multi-agent system (OpenClaw's "swarm") solves "don't do duplicate work" through
+  bounded, coordinator-mediated fan-out with structured outputs, explicitly *not* a shared mutable
+  notebook between peer agents — its own docs warn that a shared log without lane contracts just
+  coordinates chaos. No code changes from this round; agent-loop's phases still run strictly
+  sequentially, so there's no concurrent-agents scenario for either idea to apply to yet.
 - **Terminal transcript and approvals** (`src/terminal.ts`): the same transcript and prompt in the
   terminal, so a run can be driven without the browser. Whichever side answers first wins.
 - **Saved run report**: every run writes a self-contained `report.html` next to its artifacts. It
@@ -33,12 +55,170 @@ All notable changes to this project are documented here. Format follows
 - **`npm test`** and **CI** (`.github/workflows/test.yml`) run all 11 no-API suites, including real
   Chromium.
 - **`test/e2e/record-run.mjs`**: records a real run as video plus per-phase screenshots and a summary.
+- **A second "Desktop" theme for the run UI**, toggled from the header (persisted per-browser in
+  `localStorage`): the same DOM, the same events, the same behavior as the default dark
+  Claude-Code-terminal-style dashboard, just restyled -- light background, rounded avatar-badge
+  transcript cards, sans-serif type -- via `:root[data-theme="desktop"]` CSS in `ui/index.html`, not
+  a second implementation. Screenshot: `docs/screenshots/approval-ui/06-desktop-theme.png`.
+- **Smoother motion throughout the UI**: new transcript blocks and the permission sheet ease in
+  instead of popping in instantly; interactive elements (steps, options, buttons) transition instead
+  of snapping; switching themes cross-fades colors. All of it collapses under
+  `prefers-reduced-motion: reduce`. The permission dock/sheet is also translucent and
+  backdrop-blurred in both themes (a macOS vibrancy look) instead of a flat opaque bar, so it reads
+  as floating over the transcript rather than abruptly cutting it off when a prompt appears.
+- **Which phase has an approval waiting is now visible without scrolling to the bottom dock.**
+  Checked against `pipeline.ts`'s own control flow first (phases run strictly sequentially -- each
+  one is `await`ed before the next starts -- so two *different* phases can never both have a pending
+  approval; only real parallel tool calls within the *same* phase can leave several waiting at once).
+  The active phase gets a count badge on the stepper, the exact tool-call line(s) get a soft
+  accent-colored glow in the transcript, and the dock names the breakdown ("3 waiting — builder
+  ×3") instead of a bare "1 of 3". Initially built with a harsh bright-yellow outline; redone in the
+  same clay/orange accent already used for the brand mark and active-phase state, as a soft ambient
+  glow rather than a hard ring, after review. Screenshot:
+  `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
+- **The browser panel is now a live view with a full snapshot history, not a single frame that
+  silently gets replaced.** Every `browser-snapshot` this run is kept (capped at 24) and shown as a
+  gallery strip below the main image; clicking an older thumbnail pins the view to it and a
+  "jump to live" control appears, so looking back at an earlier state doesn't fight the run for
+  control of the display. A small pulsing dot next to "Browser · active" (and a slow breathe on the
+  active phase's stepper icon) signals "still working" continuously between discrete WebSocket
+  events, instead of the panel looking frozen until the next one arrives — the DOM-native
+  equivalent of the persistent, dirty-flag-gated render loop a reviewed reference project
+  (see `docs/INSPIRATION-POKEHARNESS.md`) uses a Pixi ticker for; here it's just CSS animation,
+  which the browser's own compositor already runs independently of JS/events. New regression test:
+  a hostile page `title`/`url` reaching the gallery's new `title` attribute sink stays inert text
+  (`test/ui-render.mjs`).
+- **A few rotating one-liners in the idle status line** instead of a single static "Waiting for a run
+  to start." — picked by wall-clock time so they change every 8s rather than flicker per-tick.
+  Deliberately dry/self-deprecating dev humor (commit messages, force-pushes, stale TODOs), not
+  political and not genuinely dark — this sits on the same screen as destructive-command approval
+  prompts, so the tone stays professional rather than undermining what's actually being reviewed
+  there.
+- **`docs/INSPIRATION-POKEHARNESS.md`**: a friend's repo (a local desktop app visualizing coding-agent
+  CLI sessions as animated walkers) was reviewed for ideas ahead of the live browser-panel work above.
+  Documents what it does well, what's weak, and — honestly — separates what actually transferred (the
+  render-loop idea, reimplemented as CSS animation, not ported code) from what didn't (its PTY-output
+  scraping, which agent-loop has no use for since it already gets structured events; its battle-hit
+  coalescing, which would hide information a dev tool's transcript needs to keep). No Pokémon theming
+  anywhere in agent-loop — the visual language stays the existing dark-terminal/light-desktop look.
 
 ### Fixed
 - The screenshot tool's base64 image data was dumped into the transcript, the log index and every
   WebSocket message.
 - agent-loop's own git hooks ran an outdated copy of the scanner (3 of 19 secret formats). They're
   synced to Dev-Skill's hardened version.
+- **`.githooks/pre-commit` and `.githooks/pre-push` only ever looked for a `python3` command.** Many
+  Windows Python installs only add `python`, not `python3`, to `PATH`. Confirmed empirically: removing
+  `python3` from `PATH` and leaving only `python` made the old hook fail outright (`python3 not
+  found`, exit 1); the fixed hook tries `python3` then `python`, verifying whichever it finds is
+  actually Python 3 (not a stray Python 2) before trusting it, and succeeds in the same scenario.
+  Synced into dev-workflow's canonical hook scripts (`Dev-Skill/dev-workflow/scripts/hooks/`) and both
+  installed copies (this repo's and Dev-Skill's own `.githooks/`).
+
+### Security
+- **`export`/`set`/`declare`/`unset`/`alias`/`unalias`/`readonly` were missing from
+  `bash-analysis.ts`'s `NEVER_RULE`.** These mutate shell state that outlives the one command they
+  ran in — the exact same risk class the code already blocked for the *inline* `VAR=value cmd`
+  prefix form, just in the broader, more persistent standalone form. Concretely: a human could
+  approve a bland-looking `export NODE_OPTIONS=--require=/tmp/evil.js` (or `LD_PRELOAD=…`) once,
+  either directly or by clicking "don't ask again," and — because the SDK's Bash tool keeps one
+  persistent shell across calls in a session (confirmed via its own `CwdChangedHookInput`, which
+  exists for the identical reason `cd` persists across calls) — every *already-approved* rule like
+  `Bash(npm test:*)` would then silently run under that changed environment the next time it
+  auto-approved, without the human ever reviewing the new behavior. Fixed by adding these to
+  `NEVER_RULE`, so they always ask like `env`/`eval`/`exec`/`cd` already do. Regression test added
+  (`test/bash-analysis.mjs`); all 11 suites (now 81 assertions) and 11 stress scenarios pass.
+- **`agent-loop insights` could echo a raw terminal escape sequence to a real terminal.** The same
+  vulnerability class as an earlier fix in `src/terminal.ts` (untrusted text reaching a real terminal
+  unsanitized), in a code path that didn't exist yet when that fix landed. A "don't ask again" rule
+  is built from real Bash command text (`bash-analysis.ts`), which doesn't strip non-Bash-meaningful
+  bytes from a command word — confirmed empirically that a command containing a clear-screen/
+  cursor-home sequence (`\x1b[2J\x1b[H`) that doesn't happen to fall on a Bash separator character
+  survives into the stored rule string verbatim. `insights` then printed that rule with a plain
+  `console.log`, with no sanitization at all — unlike the live approval terminal, which already
+  strips control bytes before printing anything untrusted. Fixed by extracting `terminal.ts`'s
+  private escape-stripping helper into a shared `src/text-safety.ts` (`stripTerminalControlBytes`)
+  so the one regex that matters can't quietly drift out of sync between the two call sites, and
+  applying it to every rule `insights` prints. Regression test (`test/insights-cli.mjs`) spawns the
+  real CLI against a database seeded with a rule containing a real escape sequence and asserts no
+  raw control byte reaches actual stdout, while the rest of the rule text still prints.
+
+### Cross-platform audit
+Reviewed the codebase for Linux/macOS/Windows portability, beyond the git-hooks fix above.
+- Confirmed already fine: all path handling goes through `node:path` (`join`/`resolve`/`dirname`),
+  `src/data-dir.ts`'s home-directory resolution uses `node:os`'s `homedir()`, the store uses Node's
+  built-in `node:sqlite` (no native build step, no platform-specific binary), and
+  `dev-workflow/scripts/check_staged.py`'s line handling (`splitlines()`) already normalizes
+  `\r\n`/`\n`/`\r` uniformly.
+- Documented rather than "fixed" (it isn't a bug in this codebase): the `Bash` tool itself requires a
+  POSIX-ish shell, a Claude Agent SDK/CLI constraint — Git Bash or WSL on Windows, native on
+  Linux/macOS. `src/bash-analysis.ts` is shell-syntax-aware, not OS-aware, so it behaves identically
+  once a command reaches it. See the new "Platform support" section in `README.md`.
+
+### Testing
+Continued the same adversarial-review effort onto previously-unexercised paths; full findings and
+what's still unreviewed are tracked in `docs/ADVERSARIAL-REVIEW-STATUS.md`, not duplicated here.
+- **`store.ts`'s `searchLogs()`** — checked whether a phase's own free-text content could reach it
+  and be interpreted as FTS5 query syntax rather than plain SQL (already safe via the parameterized
+  placeholder). Moot: `searchLogs()` has exactly one caller in the whole codebase, a smoke test with
+  the hardcoded literal `"fox"` — never the CLI, server, WebSocket handlers, or Overseer.
+- **`overseer.ts`/`pipeline.ts`'s repair-target validation against a hallucinated *forward* target**
+  (a failing `planner` but the decision claims `gatekeeper` needs the redo) had no test coverage at
+  all before this. Added a fake-SDK scenario that hallucinates exactly this every turn
+  (`test/stress/pipeline_logic.sh` case K) and asserted `gatekeeper` is never actually invoked. Held:
+  both `overseer.ts`'s own bounds check and `pipeline.ts`'s `isValidRepairTarget` correctly reject it
+  and fall back to a same-phase repair every time. All 11 suites and now 11 stress scenarios pass.
+- **Cost-tracking accuracy across repair/retry loops** had zero coverage in the stress suite: the
+  fake SDK (`test/stress/fake-sdk/sdk.mjs`) never yielded a `result` message at all, so
+  `phases.ts`'s/`overseer.ts`'s usage-EMISSION code (as opposed to the UI's already-tested summing
+  of hand-fed events) was never actually exercised under a real multi-attempt run. Fixed the fake SDK
+  to emit a fixed $0.01 `result` per completed call, then made the check permanent and automatic —
+  wired into `pipeline_logic.sh`'s shared `runit()` so every scenario's printed cost is checked
+  against `0.01 × completed calls`, not spot-checked by hand. That check immediately caught two real
+  bugs in itself before it was trustworthy: comparing against *attempted* calls instead of
+  *completed* ones (falsely flagged `overseer-throws`, where the Overseer's call throws before its
+  generator ever runs and correctly reports $0), and a `grep -c ... || echo 0` idiom that
+  double-prints `"0\n0"` on a genuine zero-match file because `grep -c` already writes `0` to stdout
+  before its exit status makes `||` fire. Both fixed and re-verified with a standalone repro before
+  trusting the check; see `docs/ADVERSARIAL-REVIEW-STATUS.md` for the full trace. All 11 stress
+  scenarios and the 80-assertion unit suite pass with the check in place.
+- **This session's own new UI code** (the `phaseCounts` breakdown, the stepper's `wait-badge`) —
+  traced both new `innerHTML` sinks rather than assuming they inherited the prior "every innerHTML
+  write is escaped" finding automatically. The breakdown line passes through `esc()`; the stepper's
+  per-phase label doesn't, but its only source is the hardcoded `PHASES` literal, never server or
+  LLM-authored text — confirmed by reading the assignment, not inferred from the name.
+- **`data-dir.ts`'s hash-based run-directory naming** — ran the real function against same-basename
+  different-path inputs (got different hashes, so no accidental merge) and against four different
+  spellings of the *same* path — trailing slash, `.`/`..` segments (got the identical hash each
+  time, so `path.resolve()`'s normalization correctly prevents a real project's audit trail from
+  silently splitting in two). A full collision between different projects needs both the sanitized
+  basename and 64 bits of hash to match, which is infeasible by chance or by choice of `--dir`.
+- **CI actually failed once for real** (run #16, the Desktop-theme commit) — found by checking
+  GitHub Actions history after being asked whether the build had failed, not assumed green because
+  later pushes passed. `npm test` failed at `test/plumbing.mjs:95` (a `record-decision` WS broadcast
+  assertion); confirmed the failing commit touched only `ui/index.html`/docs/screenshots, so it
+  could not have caused it. Root cause: a fixed `setTimeout(r, 200)` sleep followed by a single
+  check of an asynchronously-populated events buffer — a structural race across a real WS→server→
+  bus→SQLite-write→broadcast round-trip that will occasionally lose under a loaded runner, however
+  rarely. Tried 35 times (15 idle, 20 under 4-core CPU saturation) without reproducing it locally —
+  consistent with a rare CI-specific hiccup, not proof the pattern is safe. Replaced both occurrences
+  in `test/plumbing.mjs`, and the equivalent one in `test/approval-server.mjs` (fixed to poll for the
+  server's own `replay-complete` sentinel instead of guessing a duration), with a
+  `waitFor(predicate, {timeoutMs})` poller. Left the short sleeps in `test/approval-rules.mjs` and
+  `test/terminal.mjs` alone — checked that their target state is set synchronously in-process before
+  any `await`, not across a real network/DB round-trip, so there's no equivalent race there. All 11
+  suites (81 assertions) and 11 stress scenarios pass; re-ran the two fixed files 10 times each clean.
+- **Two of the four documentation screenshots, and the demo-video `.mp4` conversion, weren't actually
+  automated.** `06-desktop-theme.png` and `07-multiple-pending-approvals.png` were made with
+  throwaway one-off Playwright scripts, run once and deleted — nothing would catch them going stale.
+  The `.webm`→`.mp4` conversion was manual, unrecorded `ffmpeg` commands. Fixed by folding both
+  screenshots into `test/ui-render.mjs`'s existing event sequence (already part of `npm test`/CI):
+  the multi-approval shot drives three real parallel tool calls in one phase via
+  `bus.requestApproval` and asserts the dock's "3 waiting" text first; the theme shot clicks the real
+  `#theme-toggle` button and asserts `data-theme` actually changed. Added `test/e2e/convert-to-mp4.sh`
+  for the video conversion, verified against a synthetic `ffmpeg testsrc`/`sine` `.webm` (no API
+  cost) with `ffprobe` confirming real H.264/yuv420p+AAC output at the correct duration. All 11
+  suites (83 assertions) and 11 stress scenarios pass.
 
 ### Security
 - **A page opened by the browser tools could escape the Stage 1 local-only boundary.** A fresh
@@ -168,6 +348,43 @@ All notable changes to this project are documented here. Format follows
   - Re-verified: `startServer(bus, 0, {})` now prints a real, reachable URL, and a client connecting
     with that exact URL's port and token succeeds. New regression test (`test/approval-server.mjs`)
     covers `--port 0` end-to-end. All 11 suites and `pipeline_logic.sh` still pass.
+
+- **A dedicated adversarial pass on the UI and video/screenshot artifacts** (full report:
+  `docs/LEAK-REVIEW-ui-video.md`) found one real leak and confirmed three other suspects already
+  safe.
+  - **Real, and already visible in this project's own public demo media**: the browser tool's
+    `screenshot` result named the file's full absolute path (`Screenshot saved to <dataDir>/
+    browser-artifacts/<runId>/screenshot-....png`), which flows straight into the transcript, the
+    SQLite index, every WebSocket message, and any saved report. Unlike file-tool paths, this was
+    never relativized. Confirmed by extracting frames from `docs/media/after-new-ui-real-run-5x.webm`
+    and reading `docs/screenshots/approval-ui/04-after-real-run.png` -- both real, both already
+    public -- which show the literal sandbox path this ran in. On a real user's machine the
+    equivalent would be their own home directory/username.
+  - Fixed: the tool now reports only the filename; the real path stays available internally via the
+    `browser-snapshot`/`browser-artifact-created` events already emitted alongside it, which the UI
+    already uses to build artifact URLs without ever rendering the raw path as text.
+  - Checked and confirmed already safe: every other `innerHTML` write in `ui/index.html` is escaped
+    (traced source-to-sink); `artifactUrl()`'s unescaped use in `href`/`src` is safe because its
+    inputs are `encodeURIComponent`-ed and never user-controlled; `report.html`'s embedded event JSON
+    is `<`-escaped against script injection (existing test); its output path is built from a
+    server-generated UUID, not attacker-influenced.
+  - New regression test (`test/browser-tools.mjs`): the screenshot tool's visible text must never
+    contain a path separator; the real path (for verifying a real file was written) now comes from
+    the internal `browser-snapshot` event instead. All 11 suites and `pipeline_logic.sh` still pass.
+  - **Regenerated**: ran a fresh real `agent-loop run` (`test/e2e/record-run.mjs --browser --smart`,
+    same task) and replaced both `docs/screenshots/approval-ui/04-after-real-run.png` and the "after"
+    demo video with clean recordings from the fixed code -- confirmed by re-extracting frames that
+    neither the base64 dump nor the path shows up any more. Updated `docs/UI.md`'s prose and stats
+    table, `docs/screenshots/INDEX.md`'s descriptions, and added direct links to the demo recordings
+    in `README.md` (previously only linked via the screenshots index).
+  - **Re-encoded all three `docs/media/*.webm` demo clips to `.mp4`** (H.264, via a full `ffmpeg`
+    install -- the sandboxed build bundled with Playwright only has a VP8/WebM encoder, no H.264 or
+    MP4 muxer at all) for far more universal playback support than WebM. This is a one-time
+    documentation change, not a product one: a real `agent-loop --browser` run still saves its own
+    session recording as `.webm` -- that's Playwright/Chromium's native recording format, with no
+    built-in transcoding step, and adding one for every real run wasn't asked for and isn't worth the
+    per-run overhead. Verified duration-for-duration parity (`ffprobe`) and re-extracted frames from
+    each new `.mp4` to confirm the content matches.
 
 ### Added (earlier)
 - **Browser Agent Stage 2: real pipeline wiring + a live dashboard panel.** Stage 1's tools were

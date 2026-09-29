@@ -28,6 +28,20 @@ function tryConnect({ host = "127.0.0.1", token = srv.token, headers = {} } = {}
   });
 }
 
+// A fixed sleep-then-check-once wait on a real WS round-trip is a race under load (confirmed for
+// real in CI: an equivalent pattern in test/plumbing.mjs passed 22 straight runs, then failed once
+// on a loaded runner). Polling for the server's own "replay-complete" sentinel -- sent right after
+// every pending event has been replayed to a newly-connected socket, unconditionally, even when
+// nothing was pending -- is a deterministic condition to wait for instead of guessing a duration.
+async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 10 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return true;
+}
+
 function httpGet(path, headers = {}) {
   return new Promise((resolve, reject) => {
     request({ host: "127.0.0.1", port: PORT, path, headers }, (res) => {
@@ -83,7 +97,7 @@ const { requestId, wait } = bus.requestApproval({ runId: "r", phase: "builder", 
 
 const late = await tryConnect({ headers: { Origin: OWN_ORIGIN } });
 assert.strictEqual(late.result, "open");
-await new Promise((r) => setTimeout(r, 300));
+assert.ok(await waitFor(() => late.received.some((e) => e.type === "replay-complete")), "replay should finish");
 const approvals = late.received.filter((e) => e.type === "approval-request");
 assert.deepStrictEqual(approvals.map((e) => e.requestId), [requestId], "only the still-pending request is replayed");
 console.log("[ok] tab opened after the request: pending approval replayed, already-decided one not");

@@ -2,7 +2,9 @@
 
 Every number and picture here comes from real runs of `agent-loop run` against the real model, with a
 real Chromium clicking the real UI (`test/e2e/record-run.mjs`), graded afterwards by hidden tests the
-agents never saw. Recorded 2026-09-24.
+agents never saw. Recorded 2026-09-24. The "after" screenshot and video were re-recorded 2026-09-28
+after an adversarial review found the screenshot tool leaking its full local filesystem path into the
+transcript (`docs/LEAK-REVIEW-ui-video.md`) — the numbers below are from that fresh run.
 
 ## What changed, in numbers
 
@@ -12,9 +14,9 @@ data point.
 
 | | Old UI | New UI |
 | --- | --- | --- |
-| Approval prompts, todo app | 53 | **16** |
+| Approval prompts, todo app | 53 | **13** |
 | Approval prompts, Roman numerals | 24 | **11** |
-| Things on screen, todo app | 356 cards | **103** blocks |
+| Things on screen, todo app | 356 cards | **98** blocks |
 | Where the Approve button is | somewhere in 356 cards | **always at the bottom** |
 | Answer without the mouse | no | **1 / 2 / 3, y / n, Esc** |
 | Cost shown | nowhere | **header + per phase** |
@@ -30,7 +32,7 @@ The code the agents wrote was already good. What made the tool unusable was ever
 
 ![Old UI, real run](screenshots/approval-ui/03-before-real-run.png)
 
-Video (real run, 5× speed): [`media/before-old-ui-real-run-5x.webm`](media/before-old-ui-real-run-5x.webm)
+Video (real run, 5× speed): [`media/before-old-ui-real-run-5x.mp4`](media/before-old-ui-real-run-5x.mp4)
 
 1. **Every event was its own card.** One browser click showed up five times: the tool call, "browser
    action started", "browser action completed", the tool result, then "Approval allow". A 4-minute
@@ -74,21 +76,33 @@ know for "an agent is working, and sometimes needs a yes/no from me."
   goes back to the agent as the reason. `Write` shows the file as `+` lines and `Edit` shows
   `-`/`+`. The tab title shows `(1) approval needed`.
 - **A phase stepper**, `planner ✓ $0.06 · test-designer – · builder ◐ ↺1 · verifier ○ ·
-  gatekeeper ○`, shows each phase's state, cost and repair count. Click a step to jump to it.
+  gatekeeper ○`, shows each phase's state, cost and repair count. Click a step to jump to it. When a
+  phase has an approval waiting it gets a count badge and a soft accent glow -- real parallel tool
+  calls can leave several waiting on the *same* phase at once (phases themselves run strictly
+  sequentially, so two different phases never both have something pending), and each of those exact
+  tool-call lines gets the same glow in the transcript so it's unambiguous which one an approval is
+  for. See `docs/screenshots/approval-ui/07-multiple-pending-approvals.png`.
 - **The header** shows the task, run status, elapsed time, total cost and connection state.
 - **A side panel** shows approval counts, saved "don't ask again" rules, the live browser (page
-  title, URL, latest screenshot), files changed, and decisions (worker proposals vs. ones you
-  recorded).
+  title, URL, a gallery of every screenshot this run -- see below), files changed, and decisions
+  (worker proposals vs. ones you recorded).
 - **The bottom input** takes a trusted decision whenever nothing is waiting: type it and press
   Enter.
+- **A theme toggle** in the header switches between this dark, Claude-Code-terminal-style look (the
+  default) and a lighter "Desktop" theme — rounded avatar-badge cards, sans-serif type — without
+  changing any of the underlying data or behavior. Persisted per-browser in `localStorage`.
 
 ![New UI, real run](screenshots/approval-ui/04-after-real-run.png)
 
-Video (real run, 5× speed): [`media/after-new-ui-real-run-5x.webm`](media/after-new-ui-real-run-5x.webm)
+Video (real run, 5× speed): [`media/after-new-ui-real-run-5x.mp4`](media/after-new-ui-real-run-5x.mp4)
 
-This real-run screenshot is also how the next bug turned up. The agent's `screenshot` tool returned
-its image as base64, and that base64 went straight into the transcript (bottom of the picture). Image
-blocks now show as `[image]`; the picture itself is in the browser panel.
+An earlier version of this exact screenshot is also how two real bugs turned up. The agent's
+`screenshot` tool returned its image as base64, which went straight into the transcript, and also
+named the file's full local path (internal sandbox directory structure on one machine, potentially a
+real username on another). Image blocks now show as `[image]`; the picture itself is in the browser
+panel, and the tool names only the filename (see `docs/LEAK-REVIEW-ui-video.md` for the second one,
+found by a later adversarial pass). The screenshot and video above were re-recorded after both fixes
+landed, so neither leak is visible in them any more.
 
 ### Fewer prompts, without approving blindly
 
@@ -111,6 +125,11 @@ What never becomes a rule, and always asks:
 - `curl`/`wget` to anywhere but localhost, `ssh`
 - `sudo`/`env`/`xargs`/`bash`, and interpreters' inline code (`python3 -c`, `python3 -O -c`,
   `node -e`)
+- `export`/`set`/`declare`/`typeset`/`unset`/`alias`/`unalias`/`readonly` -- these mutate shell state
+  (env vars, options, aliases) that outlives the one command, in the same persistent shell the agent's
+  session keeps across separate Bash calls; a rule for one exact approved line wouldn't help since the
+  risk is a *later*, already-trusted rule (`Bash(npm test:*)`) silently running under an environment
+  someone else changed
 - anything with `$(…)`, backticks, heredocs, or output redirected to a file
 - any command whose words expand at run time (`cat $F`)
 - a command after a `cd` that leaves `--dir`
@@ -119,6 +138,27 @@ What never becomes a rule, and always asks:
 ones. Two of those adversarial cases were real holes found while building this: `cat $F` would have
 produced a rule matching whatever `$F` held, and `python3 -O -c "…"` would have produced
 `Bash(python3 -O:*)`, allowing any inline Python after `-O`. Both are closed and tested.
+
+### Two looks for the same dashboard
+
+The default theme is styled after Claude Code's own terminal UI on purpose — see above. Clicking the
+header's toggle switches to a lighter "Desktop" theme instead: the same events, the same DOM, the
+same behavior, just restyled into rounded avatar-badge cards on a light background instead of flat
+monospace lines on dark. Nothing about what data is shown or how approvals work changes between the
+two; it's a CSS skin (`:root[data-theme="desktop"]` in `ui/index.html`), not a second
+implementation, and the choice is remembered per-browser in `localStorage`.
+
+![The same dashboard in the Desktop theme](screenshots/approval-ui/06-desktop-theme.png)
+
+### The browser panel is a live view, not one frame
+
+Every screenshot the agent takes with `--browser` used to just replace the last one in the panel --
+whatever it was looking at a minute ago was already gone. It's now a gallery: every snapshot this run
+stays available as a thumbnail strip, the main view follows the newest one automatically, and a small
+pulsing dot next to "Browser · active" (plus a slow breathe on the active phase's own stepper icon)
+signals the run is still doing something between events instead of the panel looking frozen. Click an
+older thumbnail to look back at it -- a "jump to live" button appears so you're not stuck there once
+the run moves on.
 
 ### The terminal is a real interface too
 
@@ -155,7 +195,7 @@ server and no token.
 
 With `--browser`, the agent's browser session is recorded as video. That's a watchable record of
 what it actually did to the app, not just its claims about it. Example (real run, 2× speed):
-[`media/agent-browser-session-2x.webm`](media/agent-browser-session-2x.webm).
+[`media/agent-browser-session-2x.mp4`](media/agent-browser-session-2x.mp4).
 
 ## Checking it yourself
 
@@ -163,6 +203,9 @@ what it actually did to the app, not just its claims about it. Example (real run
 npm run build && npm test            # 11 suites, no API key; includes a real-Chromium UI test
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
+                                     # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm
+                                     # makes an .mp4 copy for docs/sharing (needs a real, non-Playwright-
+                                     # bundled ffmpeg: the sandboxed one has no H.264 encoder or MP4 muxer)
 ```
 
 `test/ui-render.mjs` drives the real page in a real Chromium. It checks the stepper, cost, collapsed
@@ -177,4 +220,7 @@ a reload replays everything and that the transcript survives the server shutting
   once approved. That needs a real sandbox.
 - The pipeline still doesn't pause to ask you a question. A contradiction ends the run and you
   restart it with the decision recorded.
-- Videos are WebM, which GitHub won't play inline. Download them to watch.
+- A real `--browser` run's own session recording (and the saved report next to it) is WebM —
+  Playwright/Chromium's native recording format, with no built-in re-encode step. The three demo
+  clips under `docs/media/` are one-time hand re-encoded `.mp4` copies for easier viewing in the repo,
+  not something `agent-loop` itself does per run.
