@@ -29,11 +29,16 @@ function findSandboxPreinstalledChrome(): string | undefined {
   return existsSync(exe) ? exe : undefined;
 }
 
+/** WebRTC talks UDP straight past context.route() (which only sees HTTP requests), so a page could
+ * reach any host through a STUN/TURN "server" (confirmed: 4 UDP packets to a non-allowed host).
+ * With no proxy configured, this policy leaves WebRTC no UDP path at all. */
+const LAUNCH_ARGS = ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp"];
+
 async function launchBrowser(): Promise<Browser> {
   const explicit = process.env.AGENT_LOOP_CHROME_PATH;
-  if (explicit) return chromium.launch({ executablePath: explicit, headless: true });
+  if (explicit) return chromium.launch({ executablePath: explicit, headless: true, args: LAUNCH_ARGS });
   try {
-    return await chromium.launch({ headless: true });
+    return await chromium.launch({ headless: true, args: LAUNCH_ARGS });
   } catch (err) {
     const fallback = findSandboxPreinstalledChrome();
     if (!fallback) {
@@ -43,7 +48,7 @@ async function launchBrowser(): Promise<Browser> {
           `to an existing Chrome/Chromium binary.`
       );
     }
-    return chromium.launch({ executablePath: fallback, headless: true });
+    return chromium.launch({ executablePath: fallback, headless: true, args: LAUNCH_ARGS });
   }
 }
 
@@ -61,6 +66,7 @@ interface BrowserSession {
 const MAX_SCREENSHOTS_PER_SESSION = 50;
 
 const LOCAL_URL_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
+const LOCAL_WS_RE = /^wss?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
 
 /**
  * The one gate for Stage 1's "local-only" boundary -- shared by both `open()`'s own check AND the
@@ -108,6 +114,18 @@ export class BrowserSessionManager {
       const url = route.request().url();
       if (isAllowedBrowserUrl(url)) await route.continue();
       else await route.abort("blockedbyclient");
+    });
+    // context.route() never sees WebSockets (confirmed: a local page opened ws:// to a non-allowed
+    // host and sent data out while the same page's fetch() was blocked), so they need their own gate.
+    await context.routeWebSocket(/.*/, (ws) => {
+      if (LOCAL_WS_RE.test(ws.url())) ws.connectToServer();
+      else ws.close({ code: 1008, reason: "blocked by agent-loop: only local hosts are reachable" });
+    });
+    // Belt and braces for the launch flag above: pages never get a WebRTC constructor to call.
+    await context.addInitScript({
+      content: `for (const k of ["RTCPeerConnection", "webkitRTCPeerConnection", "RTCDataChannel"]) {
+        try { Object.defineProperty(globalThis, k, { value: undefined, configurable: false }); } catch (e) {}
+      }`,
     });
     const page = await context.newPage();
     const session: BrowserSession = { browserSessionId: randomUUID(), browser, context, page, screenshotCount: 0 };

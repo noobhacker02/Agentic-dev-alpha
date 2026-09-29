@@ -213,6 +213,18 @@ as video. Full write-up with screenshots and videos: [docs/UI.md](UI.md).
 | Output quality | hidden graders | Unchanged and good: todo app 9/9, Roman numerals 4,040/4,040 |
 | Dev-Skill triggers on only 3 of 8 ordinary coding requests | held-out A/B, real model | Fixed in Dev-Skill: 8/8, 0/2 false triggers |
 
+## Round 3: checking the follow-up fixes
+
+Three later fixes landed after Round 2: browser containment, package-install rules and terminal
+escape stripping. Each closed a real hole. Attacking them the same way found a gap in each; all
+three are now closed, with regression tests that fail without the fix.
+
+| Fix | Gap found | Status |
+| --- | --- | --- |
+| Browser: request guard for non-local hosts | WebSocket to a non-allowed host connected and sent data; WebRTC sent 4 UDP packets | **Fixed**: WebSocket gate, WebRTC UDP disabled |
+| No rule for package installs | 8 bypasses: `python3 -m pip`, `uv pip`, `uv add`, `bun add`, `poetry add`, `pipenv install`, `deno install` | **Fixed**: all 11 cases ask every time |
+| Terminal strips escape bytes | Rule text wasn't stripped: `npm run <ESC>[2J…` cleared the screen inside the prompt | **Fixed** |
+
 ## Fix plan
 
 Work top to bottom. The first five are security holes someone could exploit today.
