@@ -126,6 +126,7 @@ machine's directory layout.
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
 | `src/cli.ts` | `agent-loop run "<task>"` and `agent-loop insights` entry points |
+| `src/text-safety.ts` | Strips terminal control/escape bytes before untrusted text reaches a real terminal — shared by `terminal.ts` and `cli.ts`'s `insights` report |
 | `test/approval-server.mjs` | No-LLM test of the approval server's access control (token, Origin, Host) and pending-approval replay |
 | `test/tool-and-path-scope.mjs` | No-LLM test of per-phase tool restriction, `--dir` path scoping, and `minimalEnv()` |
 | `test/data-dir.mjs` | No-LLM test that the audit database always resolves outside `--dir` |
@@ -134,6 +135,7 @@ machine's directory layout.
 | `test/resolve-skill-source.mjs` | Fetches the current `dev-workflow` skill (GitHub by default, local path as opt-in override) |
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
+| `test/insights-cli.mjs` | No-LLM test that `agent-loop insights` strips terminal control bytes from a stored rule before printing it |
 
 ## Requirements
 

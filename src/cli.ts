@@ -8,6 +8,7 @@ import { resolveDataDir } from "./data-dir.js";
 import { writeRunReport } from "./report.js";
 import { attachTerminal } from "./terminal.js";
 import { PHASES } from "./types.js";
+import { stripTerminalControlBytes } from "./text-safety.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
@@ -68,11 +69,11 @@ function printInsights(insights: Insights) {
   }
   if (insights.topRules.length) {
     console.log(`\nMost-reused "don't ask again" rules:`);
-    for (const r of insights.topRules.slice(0, 10)) console.log(`  ${r.count}x  ${r.rule}`);
+    for (const r of insights.topRules.slice(0, 10)) console.log(`  ${r.count}x  ${stripTerminalControlBytes(r.rule)}`);
   }
   if (insights.neverReusedRules.length) {
     console.log(`\nCreated but never reused (consider whether these are worth "don't ask again" at all):`);
-    for (const r of insights.neverReusedRules) console.log(`  ${r}`);
+    for (const r of insights.neverReusedRules) console.log(`  ${stripTerminalControlBytes(r)}`);
   }
 }
 

@@ -25,8 +25,9 @@ these once.
 | 10 | Browser screenshot tool printed its full local filesystem path into the transcript/index/every WebSocket message — already visible in this project's own public demo screenshot and video | `src/browser-tools.ts` | Medium (info disclosure, proven via own repo) |
 | 11 | `dev-workflow`'s git hooks only looked for `python3`; many Windows Python installs only have `python` | Dev-Skill repo | Medium (portability) |
 | 12 | `export`/`set`/`declare`/`unset`/`alias`/`readonly` were missing from `NEVER_RULE`: a bland-looking `export LD_PRELOAD=…`/`NODE_OPTIONS=…` could earn a "don't ask again" rule, and — worse — once it ran (one human approval, or under `--no-approval`) it silently changed what an *already-trusted* rule like `Bash(npm test:*)` actually executed next, since env/alias state persists across Bash calls in the same session (confirmed via the SDK's own `CwdChangedHookInput`, which exists for the identical reason `cd` persists) but a rule's text match doesn't account for it | `src/bash-analysis.ts` | High (undermines every existing "don't ask again" rule, not just its own) |
+| 13 | `agent-loop insights` (this session's own new feature) could echo a raw terminal escape sequence to a real terminal — the same class as finding #7, in a code path that didn't exist when #7 was fixed. A rule built from real Bash command text can carry a control byte verbatim (confirmed: `npm \x1b[2J\x1b[Htest` survives into a stored rule unstripped when the bytes don't land on a Bash separator), and `insights` printed rules with no sanitization at all | `src/cli.ts` | High (defeats the same trust boundary #7 exists to protect, in a new sink) |
 
-Every row has a permanent regression test, and the full suite (11 test files, no API cost) plus
+Every row has a permanent regression test, and the full suite (12 test files, no API cost) plus
 `test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
 at every step, not just once at the end.
 
@@ -166,6 +167,21 @@ at every step, not just once at the end.
   `sine` filters (no real recording needed, no API cost) and confirming via `ffprobe` that the output
   is genuinely H.264/`yuv420p`+AAC at the correct duration, plus that its bare-usage error path exits
   cleanly. All 11 suites (now 83 assertions) and 11 stress scenarios still pass.
+
+- **`agent-loop insights` reading the audit database while a real run is actively writing to the
+  same file** — the obvious question for a new CLI command that reads the same SQLite file a live
+  run writes to. A process-level race (start a real fake-SDK run backgrounded, poll `insights`
+  against it every ~400ms) turned out not to prove anything: the fake SDK's calls are near-instant,
+  so the whole run finished before the first read ever fired — a genuine "verify, don't assume the
+  test proved what it looks like it proved" catch, not a pass. Replaced it with a direct in-process
+  test: two separate `Store` handles opened on the same file, one looping 500 real
+  create-run/start-phase/log-event/finish-phase/finish-run writes, the other calling `getInsights()`
+  500 times, both interleaved via real async scheduling (`setImmediate`) rather than hoping OS
+  scheduling happens to overlap them. Zero exceptions on either side — `PRAGMA journal_mode = WAL`
+  (already set in `store.ts`) does what it's supposed to: readers never block on, or get blocked by,
+  a concurrent writer. Not made a permanent test file, since it's verifying SQLite's own WAL
+  guarantee rather than agent-loop's own logic, and 500 real interleaved operations with zero
+  failures is a strong enough empirical signal for a guarantee that library already documents.
 
 ## Not yet adversarially reviewed
 

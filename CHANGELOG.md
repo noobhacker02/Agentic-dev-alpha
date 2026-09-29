@@ -128,6 +128,20 @@ All notable changes to this project are documented here. Format follows
   auto-approved, without the human ever reviewing the new behavior. Fixed by adding these to
   `NEVER_RULE`, so they always ask like `env`/`eval`/`exec`/`cd` already do. Regression test added
   (`test/bash-analysis.mjs`); all 11 suites (now 81 assertions) and 11 stress scenarios pass.
+- **`agent-loop insights` could echo a raw terminal escape sequence to a real terminal.** The same
+  vulnerability class as an earlier fix in `src/terminal.ts` (untrusted text reaching a real terminal
+  unsanitized), in a code path that didn't exist yet when that fix landed. A "don't ask again" rule
+  is built from real Bash command text (`bash-analysis.ts`), which doesn't strip non-Bash-meaningful
+  bytes from a command word — confirmed empirically that a command containing a clear-screen/
+  cursor-home sequence (`\x1b[2J\x1b[H`) that doesn't happen to fall on a Bash separator character
+  survives into the stored rule string verbatim. `insights` then printed that rule with a plain
+  `console.log`, with no sanitization at all — unlike the live approval terminal, which already
+  strips control bytes before printing anything untrusted. Fixed by extracting `terminal.ts`'s
+  private escape-stripping helper into a shared `src/text-safety.ts` (`stripTerminalControlBytes`)
+  so the one regex that matters can't quietly drift out of sync between the two call sites, and
+  applying it to every rule `insights` prints. Regression test (`test/insights-cli.mjs`) spawns the
+  real CLI against a database seeded with a rule containing a real escape sequence and asserts no
+  raw control byte reaches actual stdout, while the rest of the rule text still prints.
 
 ### Cross-platform audit
 Reviewed the codebase for Linux/macOS/Windows portability, beyond the git-hooks fix above.
