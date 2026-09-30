@@ -25,10 +25,11 @@
     "test:ui": "node --experimental-sqlite --no-warnings test/ui-render.mjs",
     "test:terminal": "node test/terminal.mjs",
     "test:insights": "node --experimental-sqlite --no-warnings test/insights-cli.mjs",
-    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:report && npm run -s test:browser-tools && npm run -s test:ui && npm run -s test:insights",
+    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:report && npm run -s test:browser-tools && npm run -s test:browser-cu && npm run -s test:ui && npm run -s test:insights",
     "test:report": "node test/report.mjs",
     "test:rules": "node test/approval-rules.mjs",
-    "test:bash": "node test/bash-analysis.mjs"
+    "test:bash": "node test/bash-analysis.mjs",
+    "test:browser-cu": "node test/browser-computer-use.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.280",

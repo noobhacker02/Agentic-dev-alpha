@@ -22,6 +22,24 @@ assert.ok(text.includes("⏺ Read(server.js)"), "tool calls print as ⏺ Tool(ar
 assert.ok(text.includes("⎿  a … +2 lines"), "results print as one ⎿ line with a count of the rest");
 console.log("[ok] transcript lines: ⏺ Read(server.js) / ⎿  a … +2 lines");
 
+// Browser tool labels name what was acted on: a ref, a point on a screenshot, a tab, a key on a ref.
+{
+  const shapes = [
+    [{ ref: "s2e5" }, "mcp__browser__click", "⏺ browser.click(s2e5)"],
+    [{ x: 120, y: 44, snapshotId: "shot-3" }, "mcp__browser__click_at", "⏺ browser.click_at(120, 44 @ shot-3)"],
+    [{ tabId: "t2" }, "mcp__browser__switch_tab", "⏺ browser.switch_tab(t2)"],
+    [{ key: "Enter", ref: "s2e1" }, "mcp__browser__press", "⏺ browser.press(Enter on s2e1)"],
+    [{ ref: "s2e7", values: ["Blue"] }, "mcp__browser__select_option", "⏺ browser.select_option(s2e7 = Blue)"],
+    [{ dy: 400 }, "mcp__browser__scroll", "⏺ browser.scroll(dx 0, dy 400)"],
+    [{ url: "http://localhost:3000/" }, "mcp__browser__open", "⏺ browser.open(http://localhost:3000/)"],
+  ];
+  shapes.forEach(([toolInput, toolName, want], n) => {
+    bus.emitEvent({ type: "tool-call", runId, phase: "builder", toolUseId: `b${n}`, toolName, toolInput, ts: ts() });
+    assert.ok(text.includes(want), `expected ${want} in the transcript`);
+  });
+  console.log("[ok] browser labels show refs, screenshot points, tabs, and select values");
+}
+
 // 2 = yes, and don't ask again
 bus.emitEvent({ type: "tool-call", runId, phase: "builder", toolUseId: "t2", toolName: "Bash", toolInput: { command: "npm test" }, ts: ts() });
 const r1 = bus.requestApproval({ runId, phase: "builder", toolUseId: "t2", toolName: "Bash", toolInput: { command: "npm test" }, rule: "Bash(npm test:*)" });

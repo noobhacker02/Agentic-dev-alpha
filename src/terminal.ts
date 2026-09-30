@@ -42,9 +42,18 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     const t = strip(String(s ?? "")).replace(/\s+/g, " ").trim();
     return t.length > n ? t.slice(0, n - 1) + "…" : t;
   };
+  /** What a browser tool acted on: a URL, a ref, a selector, a tab, or a point on a screenshot. */
+  const browserArg = (tool: string, i: Record<string, unknown>): unknown => {
+    const target = i.url ?? i.ref ?? i.selector ?? i.tabId ?? (i.x !== undefined ? `${i.x}, ${i.y} @ ${i.snapshotId}` : undefined);
+    if (tool === "press") return target !== undefined ? `${i.key} on ${target}` : i.key;
+    if (tool === "select_option") return `${target} = ${Array.isArray(i.values) ? i.values.join(", ") : ""}`;
+    if (target !== undefined) return target;
+    if (i.dx !== undefined || i.dy !== undefined) return `dx ${i.dx ?? 0}, dy ${i.dy ?? 0}`;
+    return i.text ?? i.key ?? "";
+  };
   const label = (name: string, i: Record<string, unknown> = {}) => {
     const b = name.match(/^mcp__browser__(\w+)$/);
-    if (b) return `browser.${b[1]}(${short(i.url ?? i.selector ?? i.text ?? i.key ?? "", 70)})`;
+    if (b) return `browser.${b[1]}(${short(browserArg(b[1], i), 70)})`;
     if (name === "Bash") return `Bash(${short(i.command, 90)})`;
     if (["Read", "Write", "Edit", "NotebookEdit"].includes(name)) return `${name}(${rel(i.file_path ?? i.notebook_path)})`;
     if (name === "Glob") return `Glob(${short(i.pattern, 70)})`;

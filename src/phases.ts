@@ -191,10 +191,14 @@ through the approval UI carries that authority.`;
 
   const browserEnabled = opts.browser && BROWSER_ENABLED_PHASES.includes(opts.phase);
   if (browserEnabled) {
-    userPrompt += `\n\nYou have real browser tools available (mcp__browser__open/inspect/click/fill/press/wait/
-screenshot) backed by an actual headless Chromium instance, useful for exercising a running web app. Stage 1:
-open() only accepts http://localhost or http://127.0.0.1 URLs. Every browser action goes through the same
-human-approval flow as Bash or Write.`;
+    userPrompt += `\n\nYou have real browser tools (mcp__browser__*) backed by an actual headless Chromium
+instance, useful for exercising a running web app. Only http://localhost or http://127.0.0.1 URLs load, in any
+tab. Work like this: open a URL, then inspect -- it lists interactive elements with refs like s1e3. Pass a ref
+to click, fill, press, hover, select_option or scroll; refs expire when you inspect again, the page navigates,
+or you switch tabs, so re-inspect when told a ref is stale. For things refs can't reach (a canvas, a custom
+widget), screenshot returns a snapshotId: click_at/scroll_at take x,y read off that image plus its snapshotId,
+and are refused once the page scrolls, resizes or navigates. Popups become tabs: list_tabs, switch_tab,
+close_tab. Every browser action goes through the same human-approval flow as Bash or Write.`;
   }
 
   let lastAssistantText = "";

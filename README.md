@@ -136,6 +136,9 @@ machine's directory layout.
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
 | `test/insights-cli.mjs` | No-LLM test that `agent-loop insights` strips terminal control bytes from a stored rule before printing it |
+| `src/browser-tools.ts` | The 15 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
+| `test/browser-tools.mjs` | Real-Chromium tests of the original browser tools: containment, the screenshot cap, `close()` never throwing |
+| `test/browser-computer-use.mjs` | Real-Chromium tests of refs, screenshot-bound `click_at`/`scroll_at`, tabs, hover/select/scroll, and every leak channel (WebSocket, WebRTC, service worker, popups) against a counted non-allowed host, with a no-defence control run |
 
 ## Requirements
 
@@ -212,15 +215,29 @@ rules actually get reused versus created once and never touched again. Built ent
 already recorded for `run` itself (`src/store.ts`'s `getInsights()`) — nothing new to opt into first,
 so it reflects every run's history, not just ones made after some new tracking was added.
 
-## Browser Agent (Stages 1–2)
+## Browser Agent
 
-Phases can drive a real, headless Chromium instance through seven tools — `open`, `inspect`, `click`, `fill`,
-`press`, `wait`, `screenshot` (`src/browser-tools.ts`) — registered as a real in-process MCP server via the
-SDK's own `createSdkMcpServer`/`tool()`. Custom tools surface as `mcp__browser__*` in the same `tool_name` field
-the existing safety/path-scope/sensitive-file/approval hooks already read, so a browser action gets exactly the
-same treatment as `Bash` or `Write`: never auto-approved, always visible in the live UI, always subject to the
-safety net. A `BrowserSessionManager` keeps one browser/page alive per run across agent-loop's separate
-per-phase SDK sessions, since the browser context needs to outlive any single phase call.
+Phases can drive a real, headless Chromium instance through 15 tools (`src/browser-tools.ts`), registered
+as a real in-process MCP server via the SDK's own `createSdkMcpServer`/`tool()`:
+
+- **Navigate and read:** `open`, `inspect`, `wait`, `screenshot`.
+- **Act on an element:** `click`, `fill`, `press`, `hover`, `select_option`, `scroll`.
+- **Act on a point in a screenshot:** `click_at`, `scroll_at`.
+- **Tabs:** `list_tabs`, `switch_tab`, `close_tab`.
+
+`inspect` lists interactive elements with refs like `s1e3`. The element tools take a ref (preferred) or a
+CSS selector. Refs and screenshot `snapshotId`s fail closed: once the page has moved on (a newer inspect, a
+navigation, a scroll, a resize, a tab switch), they're refused, never silently re-resolved.
+
+Custom tools surface as `mcp__browser__*` in the same `tool_name` field the existing
+safety/path-scope/sensitive-file/approval hooks already read. So a browser action gets exactly the same
+treatment as `Bash` or `Write`: never auto-approved, always visible in the live UI, always subject to the
+safety net. A `BrowserSessionManager` keeps one browser and its tabs alive per run across agent-loop's
+separate per-phase SDK sessions.
+
+Only `localhost`/`127.0.0.1` is reachable, from every tab and frame. That's enforced on requests,
+WebSockets, WebRTC and service workers, each layer added after a real exploit got through without it.
+[`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) has the full reference and evidence.
 
 Pass `--browser` to `agent-loop run` to give `builder` and `verifier` these tools (off by default). Screenshots
 are written outside `--dir`, under `<data dir>/browser-artifacts/<runId>/`, and served read-only at

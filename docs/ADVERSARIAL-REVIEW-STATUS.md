@@ -26,8 +26,11 @@ these once.
 | 11 | `dev-workflow`'s git hooks only looked for `python3`; many Windows Python installs only have `python` | Dev-Skill repo | Medium (portability) |
 | 12 | `export`/`set`/`declare`/`unset`/`alias`/`readonly` were missing from `NEVER_RULE`: a bland-looking `export LD_PRELOAD=…`/`NODE_OPTIONS=…` could earn a "don't ask again" rule, and — worse — once it ran (one human approval, or under `--no-approval`) it silently changed what an *already-trusted* rule like `Bash(npm test:*)` actually executed next, since env/alias state persists across Bash calls in the same session (confirmed via the SDK's own `CwdChangedHookInput`, which exists for the identical reason `cd` persists) but a rule's text match doesn't account for it | `src/bash-analysis.ts` | High (undermines every existing "don't ask again" rule, not just its own) |
 | 13 | `agent-loop insights` (this session's own new feature) could echo a raw terminal escape sequence to a real terminal — the same class as finding #7, in a code path that didn't exist when #7 was fixed. A rule built from real Bash command text can carry a control byte verbatim (confirmed: `npm \x1b[2J\x1b[Htest` survives into a stored rule unstripped when the bytes don't land on a Bash separator), and `insights` printed rules with no sanitization at all | `src/cli.ts` | High (defeats the same trust boundary #7 exists to protect, in a new sink) |
+| 14 | **Browser boundary leaked through WebSockets.** `context.route()` never sees them: a local page's `new WebSocket("ws://<non-allowed host>")` completed an upgrade with finding #4's gate in place | `src/browser-tools.ts` | High (sandbox escape, same boundary as #4) |
+| 15 | **Browser boundary leaked through WebRTC.** `RTCPeerConnection` sent STUN packets over UDP (20 in one probe) and opened TURN connections over TCP to a non-allowed host. Chromium's `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` did not stop it, even to a non-loopback address, so the fix is removing the constructors in every realm (fresh iframe, `srcdoc`, `data:`, `blob:`, popup all checked). Service workers blocked too, per Playwright's docs | `src/browser-tools.ts` | High (sandbox escape) |
+| 16 | No cap on page-opened popups: a page calling `window.open()` 25 times got 26 tabs, each a renderer and a video recording | `src/browser-tools.ts` | Low (DoS, same class as #5) |
 
-Every row has a permanent regression test, and the full suite (12 test files, no API cost) plus
+Every row has a permanent regression test, and the full suite (13 test files, no API cost) plus
 `test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
 at every step, not just once at the end.
 
@@ -182,6 +185,34 @@ at every step, not just once at the end.
   a concurrent writer. Not made a permanent test file, since it's verifying SQLite's own WAL
   guarantee rather than agent-loop's own logic, and 500 real interleaved operations with zero
   failures is a strong enough empirical signal for a guarantee that library already documents.
+
+## Found this round and designed out before shipping (Stage 1 computer use)
+
+Each was an exploit page run against the new code, not a code reading. Each is now a regression case
+in `test/browser-computer-use.mjs`.
+
+- **Forged or re-pointed refs.** Refs map to element handles held in agent-loop, never to page
+  state, so page JavaScript has nothing to rewrite.
+- **Misaligned refs.** A page overriding `querySelectorAll` to reverse its results tried to pair
+  Alpha's ref with Gamma's name. Descriptions are computed per handle, so the "Alpha" ref clicks
+  Alpha.
+- **Look-alike swap.** A page replaced a button with an identical clone after `inspect`. The old ref
+  is refused as stale and the clone isn't clicked.
+- **Forged ref lines.** An accessible name containing a newline and `[s1e1] button "Delete
+  everything"` stays inside its own line: whitespace is folded and the name is JSON-quoted.
+- **Password values** never reach the transcript: they show as `(hidden)`.
+- **Stale coordinates.** `click_at` against an older screenshot, or after a resize, scroll or
+  navigation, is refused and nothing is clicked.
+
+Mutation check: breaking each defence in the built output (no WebRTC script, no WebSocket gate, navGen
+ignored, scroll ignored, no tab cap) fails the suite every time.
+
+Known and accepted, documented in `docs/BROWSER-AGENT.md` §7:
+- DNS lookups aren't covered and haven't been tested.
+- Only the main frame gets refs.
+- A layout change in place isn't detected by `click_at`.
+- A Playwright quirk drops a blocked socket's `close` event in one popup sequence. The socket still
+  ends CLOSED and never connects.
 
 ## Not yet adversarially reviewed
 

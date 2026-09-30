@@ -22,7 +22,37 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
-- **`specs/computer-use/SPEC.md`** (planned, not yet built): a staged plan for computer use.
+- **Computer use, Stage 1: browser tools that act on refs, screenshot points and tabs**
+  (`specs/computer-use/SPEC.md`, reference in the new `docs/BROWSER-AGENT.md`). Eight tools join the
+  original seven:
+  - **Refs.** `inspect` now lists interactive elements as `[s4e3] button "Save" id="save-btn"`, with
+    value, checked state and select options. `click`, `fill`, `press`, `hover`, `select_option` and
+    `scroll` take a `ref` or a `selector`.
+    - Each ref maps to a live element handle held in agent-loop, so page JavaScript can't forge one or
+      re-point it.
+    - Each line is described from exactly the element its ref resolves to. A test page that reverses
+      `querySelectorAll` can't pair Alpha's ref with Gamma's name.
+    - A ref is refused, never re-resolved, after a newer `inspect`, any navigation (pushState included),
+      a tab switch, or the element being replaced, even by an identical clone.
+    - Hostile names can't forge extra ref lines. Password values show as `(hidden)`.
+  - **Screenshot-bound coordinates.** `screenshot` returns a `snapshotId` and captures in CSS pixels.
+    `click_at` and `scroll_at` need that id, and they refuse:
+    - an older screenshot's id;
+    - a page that has since navigated, resized or scrolled;
+    - a point outside the image.
+  - **Tabs.** Popups join the session as `t2`, `t3`, and so on, handled by `list_tabs`, `switch_tab`
+    and `close_tab`. A tab that closes itself falls back cleanly, and the last tab can't be closed.
+    Each tab's video is saved; the first keeps its old `session-<id>.webm` name.
+  - Terminal and web UI labels name what was acted on, e.g. `browser.click_at(120, 44 @ shot-3)`.
+  - The phase prompt teaches the inspect → ref → act loop.
+  - `test/browser-computer-use.mjs` covers Requirements 1–6 against real Chromium. Five mutations of
+    the built code (drop the WebRTC script, drop the WebSocket gate, ignore navigation, ignore
+    scroll, drop the tab cap) each make it fail. All 15 original browser tests pass unchanged.
+- **`docs/BROWSER-AGENT.md`.** The source had cited it ("section 2", "section 3") since the first
+  browser stage, but the file never existed in this repo's history. It now covers the tools, the
+  session model, artifacts, the network boundary with evidence per layer, limits, events and known
+  limitations. The section numbers match what the code cites.
+- **`specs/computer-use/SPEC.md`**: a staged plan for computer use. Stage 1 is built (above).
   Stage 1 upgrades the existing localhost-only browser tools (accessibility snapshots with stable,
   staleness-checked element refs; coordinate actions tied to a specific screenshot; tabs). Stages
   3–6 add a single human-chosen desktop window through the same `cua-driver` both reference
@@ -125,6 +155,32 @@ All notable changes to this project are documented here. Format follows
   installed copies (this repo's and Dev-Skill's own `.githooks/`).
 
 ### Security
+- **The browser's local-only boundary leaked through WebSockets and WebRTC.** `context.route()`
+  sees neither channel. Found by probing the channels Playwright documents it doesn't cover, against
+  a listener on `127.0.0.2` (loopback, but not an allowed host):
+  - A local page's `new WebSocket()` completed an upgrade to that host.
+  - `RTCPeerConnection` sent it STUN packets over UDP (20 in one probe) and opened TURN connections
+    over TCP.
+  - Chromium's own `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` did not stop those,
+    even to a non-loopback address.
+
+  Fixes:
+  - `context.routeWebSocket` closes non-local sockets with 1008 before they connect; local ones pass
+    through natively.
+  - An init script removes `RTCPeerConnection` in every realm before page scripts run. Verified in the
+    main page, a fresh iframe read synchronously, `srcdoc`, `data:`, `blob:` and popups.
+  - Service workers are blocked, per Playwright's own advice for request interception.
+  - Popups are capped at 10 per session: a page opening 25 got 26 tabs before.
+
+  The regression test runs a no-defence control first, which must register leaks, so a zero means
+  blocked. With the gate in place it asserts zero packets across popup, child-tab fetch and WebSocket,
+  WebSocket, WebRTC, service worker and beacon, while a local WebSocket still echoes.
+
+  Tried and dropped: a dead-proxy backstop. Chromium sent loopback targets around it, so it couldn't
+  be verified here.
+
+  Known Playwright quirk, recorded in the doc: when a page opens two popups while a blocked socket is
+  pending, the socket still ends `CLOSED` but the page's `close` event is dropped.
 - **`export`/`set`/`declare`/`unset`/`alias`/`unalias`/`readonly` were missing from
   `bash-analysis.ts`'s `NEVER_RULE`.** These mutate shell state that outlives the one command they
   ran in — the exact same risk class the code already blocked for the *inline* `VAR=value cmd`

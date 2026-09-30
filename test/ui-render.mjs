@@ -84,6 +84,10 @@ const seq = [
   { type: "browser-session-started", runId, browserSessionId: "bs-1", ts: ts() },
   { type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/", title: "agent-loop demo (before)", screenshotPath: shotPath, ts: ts() },
   { type: "tool-result", runId, phase: "builder", toolUseId: "b1", toolName: "", isError: false, summary: "Opened http://127.0.0.1:9999. Title: demo", ts: ts() },
+  { type: "tool-call", runId, phase: "builder", toolUseId: "b2", toolName: "mcp__browser__click", toolInput: { ref: "s1e3" }, ts: ts() },
+  { type: "tool-result", runId, phase: "builder", toolUseId: "b2", toolName: "", isError: false, summary: "Clicked s1e3.", ts: ts() },
+  { type: "tool-call", runId, phase: "builder", toolUseId: "b3", toolName: "mcp__browser__click_at", toolInput: { x: 640, y: 212, snapshotId: "shot-1" }, ts: ts() },
+  { type: "tool-result", runId, phase: "builder", toolUseId: "b3", toolName: "", isError: false, summary: "Clicked (640, 212) on shot-1.", ts: ts() },
   { type: "browser-snapshot", runId, browserSessionId: "bs-1", url: "http://127.0.0.1:9999/done", title: "agent-loop demo (after)", screenshotPath: shotPath, ts: ts() },
   // browser-session-ended is emitted later (after the browser-panel checks below), not here, so
   // there's a real window where the session is still live to assert the live indicator against --
@@ -109,6 +113,8 @@ assert.ok((await page.locator(".blk.tool", { hasText: "+9 lines (click to expand
 await page.locator(".more").first().click();
 assert.ok((await page.locator(".blk.tool", { hasText: "line 12 of server.js" }).count()) === 1, "clicking expands the full output");
 assert.ok((await page.locator("text=browser.open").count()) >= 1, "browser tools get a readable label");
+assert.strictEqual(await page.locator(".blk.tool", { hasText: "browser.click(s1e3)" }).count(), 1, "a click by ref shows the ref");
+assert.strictEqual(await page.locator(".blk.tool", { hasText: "browser.click_at(640, 212 @ shot-1)" }).count(), 1, "click_at shows the point and its snapshotId");
 const bodyText = await page.locator("#transcript").innerText();
 assert.ok(!bodyText.includes('"outcome":"pass"'), "the raw ```json verdict block must not be dumped into the transcript");
 console.log("[ok] transcript: one line per tool call, output attached and collapsed, no raw verdict JSON");

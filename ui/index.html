@@ -357,11 +357,21 @@ function blk(cls, html) { const d = document.createElement("div"); d.className =
 $("jump").onclick = () => { scrollBox.scrollTop = scrollBox.scrollHeight; $("jump").classList.remove("show"); };
 scrollBox.addEventListener("scroll", () => { if (nearBottom()) $("jump").classList.remove("show"); });
 
+/** What a browser tool acted on: a URL, a ref, a selector, a tab, or a point on a screenshot.
+ * Mirrors browserArg in src/terminal.ts. */
+function browserArg(tool, i) {
+  const target = i.url ?? i.ref ?? i.selector ?? i.tabId ?? (i.x !== undefined ? i.x + ", " + i.y + " @ " + i.snapshotId : undefined);
+  if (tool === "press") return target !== undefined ? i.key + " on " + target : i.key ?? "";
+  if (tool === "select_option") return target + " = " + (Array.isArray(i.values) ? i.values.join(", ") : "");
+  if (target !== undefined) return String(target);
+  if (i.dx !== undefined || i.dy !== undefined) return "dx " + (i.dx ?? 0) + ", dy " + (i.dy ?? 0);
+  return String(i.text ?? i.key ?? "");
+}
 /** "Bash(npm test)", "Write(src/app.js)", "browser.open(http://…)" -- the one-line label Claude Code uses. */
 function toolLabel(name, input) {
   input = input || {};
   const b = name.match(/^mcp__browser__(\w+)$/);
-  if (b) return ["browser." + b[1], input.url || input.selector || input.text || input.key || ""];
+  if (b) return ["browser." + b[1], browserArg(b[1], input)];
   switch (name) {
     case "Bash": return ["Bash", short(input.command, 110)];
     case "Read": case "Write": case "Edit": case "NotebookEdit": return [name, rel(input.file_path || input.notebook_path)];

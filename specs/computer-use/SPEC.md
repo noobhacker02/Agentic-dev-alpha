@@ -4,6 +4,10 @@
 > actual code as of commit `ce957c8` and in the read-only review of two reference projects
 > (`docs/RESEARCH-COMPUTER-USE-AND-MULTI-AGENT.md`). The bar: someone with none of this
 > conversation's context could implement a stage from this file and know when it's done.
+>
+> **Status (updated after Stage 1 was built):** Stage 1 is done. See "Stage 1 as built" below for
+> where the build differed from this plan and why. Stages 2–6 are unchanged and still wait on the
+> human go/no-go.
 
 ## Request
 
@@ -33,7 +37,7 @@ forking or vendoring Hermes/OpenClaw code (we reuse the driver as a dependency, 
 | Fact | Where | Why it matters here |
 |---|---|---|
 | 7 browser tools (`open`, `inspect`, `click`, `fill`, `press`, `wait`, `screenshot`), CSS-selector targeting, one page per session | `src/browser-tools.ts:260–422` | Stage 1 extends these; refs replace fragile selectors |
-| Localhost enforced twice: `open()` **and** `context.route("**/*")` aborting every non-local request | `browser-tools.ts:63–111` | The model for "enforced continuously, not checked once" that desktop must copy |
+| Localhost enforced twice: `open()` **and** `context.route("**/*")` aborting every non-local request | `browser-tools.ts:63–111` | The model for "enforced continuously, not checked once" that desktop must copy. **Correction found in Stage 1:** this was incomplete — WebSockets and WebRTC bypassed `route()`; see "Stage 1 as built" |
 | 50-screenshot cap per session, video recording, `browser-*` events | `browser-tools.ts:61, 98, 116–240` | Caps and events carry over to desktop |
 | Only `builder`/`verifier` get browser tools, only with `--browser` | `src/phases.ts:10–12, 192` | Desktop follows the same opt-in, same two phases |
 | Every non-Bash tool gets a "don't ask again" rule by **bare tool name** | `src/hooks.ts:237–238` | **Must change for desktop** — one approved click would approve every future click (threat T3) |
@@ -79,6 +83,40 @@ isn't done until real CI passes on its push.
   **verified by test, not assumed**.
 - **1d. More interactions.** `hover`, `select_option`, `scroll`.
 - **1e. Live view.** New actions show in the existing browser panel and gallery.
+
+### Stage 1 as built
+
+All seven Stage 1 requirements pass, in `test/browser-computer-use.mjs` (real Chromium) plus the
+unchanged `test/browser-tools.mjs`. Where the build differs from the plan above:
+
+- **Ref format is `s<snapshot>e<n>`, not `e<n>`.** Putting the snapshot number in the ref makes a
+  stale ref say which snapshot it came from, and refs can never collide across snapshots or tabs.
+- **Refs are backed by live element handles held in agent-loop.** The plan didn't say how refs
+  resolve. A `data-ref` attribute would have let page JavaScript move refs. Each ref's description is
+  also computed per handle, so a page that reorders DOM queries can't misalign names and refs; the
+  test shows this with an exploit page.
+- **Refs also go stale when the element is replaced.** That includes an identical clone, which is
+  what a framework re-render produces. It's never re-resolved to the look-alike.
+- **`scroll_at` stayed a separate tool** instead of merging into `scroll`. Fewer optional-argument
+  combinations for the model.
+- **A snapshotId also goes stale on scroll**, not only on navigation or resize. A scrolled page
+  moves every coordinate.
+- **Requirement 5 turned up a real hole in the existing gate,** worse than the planned check
+  assumed. `route()` never saw WebSockets or WebRTC, so a local page could reach a non-allowed host
+  through either one. Fixes:
+  - `routeWebSocket`;
+  - an init script removing `RTCPeerConnection` in every realm (Chromium's WebRTC policy flag was
+    tested and doesn't work);
+  - service workers blocked;
+  - a 10-tab cap.
+
+  Evidence, per layer, is in `docs/BROWSER-AGENT.md` §4.
+- **`docs/BROWSER-AGENT.md` didn't exist.** The code cited it and this spec said "update it", but it
+  had never been written. It was created in this stage. Lesson for this spec's own fact table: check
+  that every cited file exists, not just the code it describes.
+- **The tests are in their own file.** Stage 1 lives in `test/browser-computer-use.mjs`, not
+  appended to `test/browser-tools.mjs`, so Requirement 7 ("existing tests pass unchanged") is
+  literally true.
 
 ### Stage 2 — Desktop go/no-go (no code)
 
@@ -140,8 +178,8 @@ Stages 3–4 (only after Stage 2 go):
 
 ## Expected output / deliverables
 
-- Stage 1: extended `src/browser-tools.ts`; new cases in `test/browser-tools.mjs` and
-  `test/ui-render.mjs`; `docs/BROWSER-AGENT.md` updated; `CHANGELOG.md` entry.
+- Stage 1 (done): extended `src/browser-tools.ts`; new `test/browser-computer-use.mjs`; new cases in
+  `test/ui-render.mjs` and `test/terminal.mjs`; `docs/BROWSER-AGENT.md` created; `CHANGELOG.md` entry.
 - Stages 3–4: new `src/desktop-tools.ts`; `--desktop-target` in `src/cli.ts`;
   `approvalPlan()` change in `src/hooks.ts`; desktop wiring in `src/phases.ts`/`src/pipeline.ts`;
   `test/fake-cua-driver/` and `test/desktop-tools.mjs`; a real smoke test under `xvfb-run`;
