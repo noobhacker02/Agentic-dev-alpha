@@ -16,7 +16,7 @@ import { chromium } from "playwright-core";
 import { EventBus } from "../dist/bus.js";
 import { DesktopSession, __testDesktopHandlers } from "../dist/desktop-tools.js";
 import { openCuaDriver } from "../dist/desktop-driver-cua.js";
-import { findPythonWithTk, startApp, skipOrFail, until, sleep, copyAppAs, DECOY, waitForWindowManager } from "./desktop-real-helpers.mjs";
+import { findPythonWithTk, startApp, skipOrFail, until, sleep, copyAppAs, DECOY, waitForWindowManager, findChrome } from "./desktop-real-helpers.mjs";
 
 if (!process.env.DISPLAY) skipOrFail("no DISPLAY; run this through test/desktop-real.sh");
 const python = findPythonWithTk();
@@ -215,7 +215,7 @@ try {
     const r = await call("capture");
     assert.ok(!r.isError, r.text);
     const png = Buffer.from(r.res.content.find((c) => c.type === "image").data, "base64");
-    const browser = await chromium.launch({ executablePath: process.env.AGENT_LOOP_CHROME_PATH || (await import("node:fs")).readdirSync("/opt/pw-browsers").map((d) => join("/opt/pw-browsers", d, "chrome-linux", "chrome")).find((p) => /chromium-\d/.test(p)) });
+    const browser = await chromium.launch({ executablePath: findChrome() });
     try {
       const page = await browser.newPage();
       const stats = await page.evaluate(async (b64) => {

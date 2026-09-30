@@ -2,7 +2,7 @@
 // (test/desktop-app/app.py), and read back its state file -- a channel independent of the driver and of
 // the tool results under test.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, existsSync, symlinkSync, appendFileSync, copyFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, symlinkSync, appendFileSync, copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -99,4 +99,15 @@ export async function waitForWindowManager(driver, target, { x = 405, y = 245 } 
     return r.ok;
   }, 20_000, 400);
   if (!ok) throw new Error(`the window manager never became ready to focus windows; last driver answer: ${last}`);
+}
+
+/** A Chromium to decode PNGs in: $AGENT_LOOP_CHROME_PATH, the sandbox's pre-installed one when present, or
+ * undefined to let playwright-core resolve its own install (what CI has, after `playwright-core install`). */
+export function findChrome() {
+  if (process.env.AGENT_LOOP_CHROME_PATH) return process.env.AGENT_LOOP_CHROME_PATH;
+  const root = "/opt/pw-browsers";
+  if (!existsSync(root)) return undefined;
+  const dir = readdirSync(root).find((d) => d.startsWith("chromium-"));
+  const exe = dir && join(root, dir, "chrome-linux", "chrome");
+  return exe && existsSync(exe) ? exe : undefined;
 }
