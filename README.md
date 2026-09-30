@@ -143,6 +143,7 @@ machine's directory layout.
 | `test/desktop-tools.mjs`, `test/desktop-adapter.mjs`, `test/desktop-cli.mjs`, `test/desktop-pipeline.mjs` | No-LLM, no-display tests of the desktop controls against a scripted fake driver and a stand-in SDK with traps on every method the adapter must never touch |
 | `test/desktop-real.mjs` | The real native driver, real X11 input and a real native window under Xvfb + a window manager, verified through the app's own state file (`npm run test:desktop-real`) |
 | `test/desktop-real-adversarial.mjs`, `test/desktop-real-nowm.mjs` | The desktop threat model attacked with real windows (an `xterm`-named process, a same-titled impostor, a moved window, a focus-stealing decoy, an overlapping window, a hostile title, no window manager); a decoy app logs everything it receives and must get nothing |
+| `test/browser-real-sdk.mjs`, `test/desktop-real-sdk.mjs` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window; opt-in, a few cents (`npm run test:real-model-browser`, `npm run test:real-model-desktop`). What is tested and what isn't: [`docs/FLOW-COVERAGE.md`](docs/FLOW-COVERAGE.md) |
 | `test/ui-desktop.mjs` | The real web UI: the desktop panel and every approval prompt (the click marker, typed text with visible control bytes), hostile titles inert |
 
 ## Requirements

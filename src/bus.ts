@@ -32,6 +32,8 @@ export class EventBus extends EventEmitter {
   private history: AgentEvent[] = [];
   /** "Don't ask again" rules a human created this run, e.g. `Bash(npm test:*)` or `Write`. */
   private allowRules = new Set<string>();
+  /** Desktop input requests a human refused in a row; one they allowed resets it (see hooks.ts). */
+  private inputDenialStreak = 0;
 
   constructor(private store?: Store) {
     super();
@@ -64,6 +66,15 @@ export class EventBus extends EventEmitter {
 
   hasAllowRule(rule: string): boolean {
     return this.allowRules.has(rule);
+  }
+
+  /** How many desktop input requests in a row a human has refused. */
+  get desktopInputDenials(): number {
+    return this.inputDenialStreak;
+  }
+
+  noteDesktopInputDecision(decision: "allow" | "deny") {
+    this.inputDenialStreak = decision === "deny" ? this.inputDenialStreak + 1 : 0;
   }
 
   /** Called by a PreToolUse hook. Resolves once a human (or auto-policy) decides. */

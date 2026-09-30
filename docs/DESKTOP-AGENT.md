@@ -105,6 +105,10 @@ third-party driver's own policy.
   approved click never approves a later one. `capture` and `window_info` only look, so they may earn a rule.
 - The approval hook never auto-approves a desktop tool, even one listed as auto-approved, and **denies**
   every desktop tool when approval is off.
+- **A refused action isn't asked again and again.** After three desktop input requests in a row that a
+  human refused (looking in between doesn't reset it), the model is told to stop and no fourth prompt is
+  shown; one allowed action resets the count. Found by running a real model, which asked for one refused
+  click eight more times.
 
 ### What the human sees
 
@@ -163,6 +167,7 @@ test**). When it can't be read, the target is refused.
 | `test/desktop-real-cli.mjs` | The whole command line against a real window: `agent-loop run … --desktop-target "<title>"` with the real driver and the scripted fake model. The startup line names this app's real pid and title, the run finishes, `agent-loop insights` counts the session afterwards, and a name matching no window fails before any run starts |
 | `test/desktop-real-nowm.mjs` | The driver's fail-closed claim, checked: with no window manager every input is refused and nothing arrives; capture still works |
 | `test/desktop-real.mjs` | The real native driver, real X11 input, real window manager and a real native window, under Xvfb + openbox. Every effect is checked through the test app's own state file: a channel independent of the driver and the tool results |
+| `test/desktop-real-sdk.mjs` | **The real SDK and a real model** (opt-in, a few cents; `npm run test:real-model-desktop`) driving the real hooks and a real window: the tool names match the hook prefix, capture and click both ask, a "no" leaves the window untouched, one "yes" lands exactly one click, a window title ordering the model to type produces no input, and a model that keeps asking after "no" stops getting prompts after three |
 
 The fake driver (`test/fake-desktop-driver.mjs`) says what it does **not** simulate, because a fake is only
 as good as the behavior it admits to leaving out; the real-driver suite covers that.

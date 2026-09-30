@@ -6,6 +6,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed
+- **A model that keeps asking after "no" stops getting prompts** (finding 21). Running a real model showed
+  it asking for one refused click eight more times, each a fresh prompt. After three refused desktop input
+  requests in a row the model is told to stop and no fourth prompt is shown; looking in between doesn't
+  reset the count, one allowed action does (`src/hooks.ts`, `src/bus.ts`).
 - **The run UI, rebuilt after watching real runs** (docs/UI.md). A recorded todo-app run needed 53
   approval clicks and put 356 cards on screen, and the page lost everything on reload or when the run
   ended. Now:
@@ -22,6 +26,15 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **The real SDK and a real model, for the first time, dispatching tool calls through the real hooks.**
+  The scripted fake SDK never emits a tool call, so nothing had shown what happens when a model is the
+  caller. `test/desktop-real-sdk.mjs` (real driver, real window) and `test/browser-real-sdk.mjs` (real
+  Chromium, an outside host counted on 127.0.0.2, with a control request proving the counter sees
+  traffic) are opt-in (`npm run test:real-model-desktop`, `npm run test:real-model-browser`; a few cents
+  on Haiku). They assert only what the gates guarantee (a refusal leaves the window untouched, one
+  approval lands one click, an injected order on the page or the window title produces nothing) and print
+  what the model chose. `docs/FLOW-COVERAGE.md` maps every flow to the test that proves it, and lists
+  what isn't tested.
 - **Desktop: the two paths that were only tested against a fake are now tested against the real thing.**
   - `test/desktop-real-tree.mjs`: `click` by ref against a **real accessibility tree** (a GTK window over
     AT-SPI with the real driver's element tokens). A click by ref presses the real button, a filled field

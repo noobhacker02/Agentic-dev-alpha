@@ -234,6 +234,11 @@ export function isDesktopInputTool(toolName: string): boolean {
   return toolName.startsWith(DESKTOP_TOOL_PREFIX) && !DESKTOP_READ_ONLY_TOOLS.has(toolName);
 }
 
+/** After this many desktop input requests a human refused in a row, the model is told to stop asking
+ * instead of getting another prompt. Found by running a real model: told "no" to a click, it asked for the
+ * same click eight more times, and every ask is a fresh prompt a person has to read and refuse. */
+export const MAX_CONSECUTIVE_INPUT_DENIALS = 3;
+
 /**
  * What approving a call would mean, modeled on Claude Code's permission rules:
  *  - `readOnly`: the call only reads inside --dir (every subcommand of a shell command does), so it
@@ -292,6 +297,16 @@ export function createApprovalHook(opts: ApprovalHookOptions): HookCallback {
       };
     }
 
+    if (isDesktopInputTool(pre.tool_name) && opts.bus.desktopInputDenials >= MAX_CONSECUTIVE_INPUT_DENIALS) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: pre.hook_event_name,
+          permissionDecision: "deny",
+          permissionDecisionReason: `the human has refused the last ${MAX_CONSECUTIVE_INPUT_DENIALS} desktop actions in a row, so no more are offered; stop asking, and say in your report what you could not do and that the human declined`,
+        },
+      };
+    }
+
     const plan = approvalPlan(pre.tool_name, pre.tool_input, opts.workDir);
     const readOnlyShell = !!plan?.readOnly && opts.autoAllowReadOnly !== false;
     if (plan && (readOnlyShell || (plan.rules.length > 0 && plan.rules.every((r) => opts.bus.hasAllowRule(r))))) {
@@ -324,6 +339,7 @@ export function createApprovalHook(opts: ApprovalHookOptions): HookCallback {
     });
 
     const decision = await raceWithAbort(wait, signal);
+    if (isDesktopInputTool(pre.tool_name)) opts.bus.noteDesktopInputDecision(decision.decision);
     const remembered = decision.decision === "allow" && decision.remember && plan ? plan.rules : [];
     for (const r of remembered) opts.bus.addAllowRule(r);
     const rememberedRule = remembered.length ? remembered.join(", ") : undefined;

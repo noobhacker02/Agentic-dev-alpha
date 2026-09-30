@@ -35,6 +35,8 @@
     "test:desktop-cli": "node test/desktop-cli.mjs",
     "test:desktop-real": "bash test/desktop-real.sh test/desktop-real.mjs test/desktop-real-adversarial.mjs test/desktop-real-cli.mjs test/desktop-real-tree.mjs && AGENT_LOOP_TEST_NO_WM=1 bash test/desktop-real.sh test/desktop-real-nowm.mjs",
     "test:desktop-pipeline": "node --experimental-sqlite --no-warnings --import ./test/stress/fake-sdk/register.mjs test/desktop-pipeline.mjs",
+    "test:real-model-browser": "AGENT_LOOP_REAL_MODEL_TESTS=1 node --experimental-sqlite --no-warnings test/browser-real-sdk.mjs",
+    "test:real-model-desktop": "AGENT_LOOP_REAL_MODEL_TESTS=1 bash test/desktop-real.sh test/desktop-real-sdk.mjs",
     "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs"
   },
   "dependencies": {

@@ -503,6 +503,41 @@ const refused = (r, re, msg) => {
   bus.resolveApproval(bus.pendingRequests()[0].requestId, { decision: "deny" });
   await typed;
 
+  // A model that keeps asking after "no" is not offered another prompt after three refusals in a row
+  // (found by a real model asking for one refused click eight more times). An allowed action resets it.
+  {
+    const bus2 = new EventBus();
+    const hook2 = createApprovalHook({ bus: bus2, runId: "r", phase: "builder", requireApproval: true, workDir: "/w" });
+    const ask = async (tool, decision, id) => {
+      const p = hook2({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: {} }, id, { signal });
+      await new Promise((r) => setTimeout(r, 20));
+      assert.strictEqual(bus2.pendingRequests().length, 1, `${tool} ${id} is offered to the human`);
+      bus2.resolveApproval(bus2.pendingRequests()[0].requestId, { decision });
+      return (await p).hookSpecificOutput.permissionDecision;
+    };
+    assert.strictEqual(await ask("mcp__desktop__click", "deny", "d1"), "deny");
+    assert.strictEqual(await ask("mcp__desktop__type_text", "deny", "d2"), "deny");
+    assert.strictEqual(await ask("mcp__desktop__capture", "allow", "d2c"), "allow"); // looking in between doesn't reset it
+    assert.strictEqual(await ask("mcp__desktop__key", "deny", "d3"), "deny");
+    const fourth = await hook2({ hook_event_name: "PreToolUse", tool_name: "mcp__desktop__click", tool_input: {} }, "d4", { signal });
+    assert.strictEqual(fourth.hookSpecificOutput.permissionDecision, "deny", "the fourth request is refused without asking");
+    assert.ok(/refused the last 3 desktop actions/.test(fourth.hookSpecificOutput.permissionDecisionReason), fourth.hookSpecificOutput.permissionDecisionReason);
+    assert.strictEqual(bus2.pendingRequests().length, 0, "...and no prompt reached the human");
+    assert.strictEqual(await ask("mcp__desktop__capture", "allow", "d5"), "allow", "looking is still offered");
+    const other = hook2({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: "/w/a" } }, "d6", { signal });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(bus2.pendingRequests().length, 1, "non-desktop tools are unaffected: Write still asks");
+    bus2.resolveApproval(bus2.pendingRequests()[0].requestId, { decision: "deny" });
+    await other;
+    // A human who says yes once starts the count over.
+    const bus3 = new EventBus();
+    bus3.noteDesktopInputDecision("deny");
+    bus3.noteDesktopInputDecision("deny");
+    bus3.noteDesktopInputDecision("allow");
+    assert.strictEqual(bus3.desktopInputDenials, 0, "an allowed action resets the streak");
+    console.log("[ok] approval: after 3 refused desktop actions in a row the model is told to stop and no 4th prompt is shown; looking is unaffected; one yes resets the count");
+  }
+
   // With approval off, desktop tools are denied outright -- not allowed, not auto-approved.
   const noApproval = createApprovalHook({ bus: new EventBus(), runId: "r", phase: "builder", requireApproval: false, autoApproveTools: ["mcp__desktop__capture"], workDir: "/w" });
   for (const t of ["mcp__desktop__capture", "mcp__desktop__click", "mcp__desktop__type_text"]) {
