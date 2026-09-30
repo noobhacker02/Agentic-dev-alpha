@@ -13,14 +13,14 @@ command -v openbox >/dev/null 2>&1 || need "openbox (a window manager) is not in
 ATSPI=""
 for p in /usr/libexec/at-spi-bus-launcher /usr/lib/at-spi2-core/at-spi-bus-launcher; do [ -x "$p" ] && ATSPI="$p" && break; done
 export ATSPI
+if [ "${REQUIRE_DESKTOP_REAL:-}" = "1" ] && ! command -v xprop >/dev/null 2>&1; then
+  echo "FAIL: xprop (x11-utils) is not installed, so window-manager readiness can't be checked (REQUIRE_DESKTOP_REAL=1, so this is not allowed to be skipped)" >&2
+  exit 1
+fi
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 status=0
 for script in "$@"; do
   echo "=== $script"
-  xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash -c '
-    [ "${AGENT_LOOP_TEST_NO_WM:-}" = "1" ] || openbox >/dev/null 2>&1 &
-    [ -n "$ATSPI" ] && "$ATSPI" --launch-immediately >/dev/null 2>&1 &
-    sleep 1.5
-    exec node --experimental-sqlite --no-warnings "$0"
-  ' "$script" 2> >(grep -v "dbus-daemon" >&2) || status=1
+  xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash "$HERE/desktop-real-session.sh" "$script" 2> >(grep -v "dbus-daemon" >&2) || status=1
 done
 exit $status

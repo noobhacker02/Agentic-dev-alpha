@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 export const APP = new URL("./desktop-app/app.py", import.meta.url).pathname;
 export const DECOY = new URL("./desktop-app/decoy.py", import.meta.url).pathname;
+export const GTK_APP = new URL("./desktop-app/gtk_app.py", import.meta.url).pathname;
 
 /** A copy of the test app under another file name, so the interpreter's script (argv[1]) says what you like. */
 export function copyAppAs(name) {
@@ -32,6 +33,16 @@ export function findPythonWithTk() {
   const candidates = [process.env.AGENT_LOOP_TEST_PYTHON, "python3", "/usr/bin/python3", "/usr/bin/python3.12", "python3.12", "python3.13", "python3.11"].filter(Boolean);
   for (const py of candidates) {
     const r = spawnSync(py, ["-c", "import tkinter"], { encoding: "utf8" });
+    if (r.status === 0) return py;
+  }
+  return undefined;
+}
+
+/** A Python that can import GTK 3 (python3-gi + gir1.2-gtk-3.0), for the test that needs a real accessibility tree. */
+export function findPythonWithGtk() {
+  const candidates = [process.env.AGENT_LOOP_TEST_PYTHON, "/usr/bin/python3", "python3", "/usr/bin/python3.12", "python3.12", "/usr/bin/python3.13"].filter(Boolean);
+  for (const py of candidates) {
+    const r = spawnSync(py, ["-c", "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk"], { encoding: "utf8" });
     if (r.status === 0) return py;
   }
   return undefined;
@@ -98,7 +109,10 @@ export async function waitForWindowManager(driver, target, { x = 405, y = 245 } 
     last = r.summary;
     return r.ok;
   }, 20_000, 400);
-  if (!ok) throw new Error(`the window manager never became ready to focus windows; last driver answer: ${last}`);
+  if (!ok) {
+    const wm = spawnSync("pgrep", ["-x", "openbox"], { encoding: "utf8" }).stdout.trim() ? "openbox is running" : "openbox is NOT running";
+    throw new Error(`the window manager never became ready to focus windows (${wm}); last driver answer: ${last}`);
+  }
 }
 
 /** A Chromium to decode PNGs in: $AGENT_LOOP_CHROME_PATH, the sandbox's pre-installed one when present, or

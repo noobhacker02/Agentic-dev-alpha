@@ -36,7 +36,11 @@ mkdirSync(join(artifactRoot, runId), { recursive: true });
 const demoShot = join(process.cwd(), "docs", "screenshots", "browser-agent", "01-open-fill-click-screenshot.png");
 const shotPath = join(artifactRoot, runId, "shot.png");
 copyFileSync(demoShot, shotPath);
-const shotsOut = join(process.cwd(), "docs", "screenshots", "approval-ui");
+// The committed demo screenshots are only rewritten on request (SAVE_UI_SCREENSHOTS=1): a test run that
+// quietly rewrote tracked binary files left the working tree dirty after every `npm test`.
+const shotsOut = process.env.SAVE_UI_SCREENSHOTS === "1"
+  ? join(process.cwd(), "docs", "screenshots", "approval-ui")
+  : mkdtempSync(join(tmpdir(), "agent-loop-ui-shots-"));
 mkdirSync(shotsOut, { recursive: true });
 
 const store = new Store(join(mkdtempSync(join(tmpdir(), "agent-loop-ui-db-")), "t.db"));

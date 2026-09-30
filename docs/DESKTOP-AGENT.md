@@ -159,6 +159,8 @@ test**). When it can't be read, the target is refused.
 | `test/desktop-pipeline.mjs` | A real `runPipeline`: one session per run, only builder/verifier get the tools, driver released on success and failure |
 | `test/ui-desktop.mjs` | The real web UI in a real Chromium: the panel, every prompt (point click with its marker at the right spot, element click, typed text with visible control bytes, key), labels, and hostile window titles and process names staying inert |
 | `test/desktop-real-adversarial.mjs` | Every threat attacked with real windows: a window owned by a process named `xterm`, a same-titled impostor after the target is killed, a window moved and resized after the capture, a decoy that steals keyboard focus between the click and the typing, an overlapping window, a window that retitles itself with an injection, a minimised target. A decoy app logs everything it receives and must end with nothing |
+| `test/desktop-real-tree.mjs` | `click` by ref against a **real accessibility tree**: a GTK window exposes a button, a text entry and a password entry over AT-SPI; the real driver returns real element tokens. A click by ref presses the real button, a filled field shows its value in the tree, what's typed into the password entry never reaches the model, and a stale ref is refused |
+| `test/desktop-real-cli.mjs` | The whole command line against a real window: `agent-loop run … --desktop-target "<title>"` with the real driver and the scripted fake model. The startup line names this app's real pid and title, the run finishes, `agent-loop insights` counts the session afterwards, and a name matching no window fails before any run starts |
 | `test/desktop-real-nowm.mjs` | The driver's fail-closed claim, checked: with no window manager every input is refused and nothing arrives; capture still works |
 | `test/desktop-real.mjs` | The real native driver, real X11 input, real window manager and a real native window, under Xvfb + openbox. Every effect is checked through the test app's own state file: a channel independent of the driver and the tool results |
 
@@ -173,12 +175,16 @@ foreground delivery, the version pin, the generic-tool gate). Every mutation fai
 ## 6. Running the real-driver tests
 
 ```
-sudo apt-get install -y xvfb openbox at-spi2-core dbus dbus-x11 python3-tk
-npm run test:desktop-real        # the real driver, the adversarial scenarios, then the no-window-manager check
+sudo apt-get install -y xvfb openbox at-spi2-core dbus dbus-x11 x11-utils python3-tk python3-gi gir1.2-gtk-3.0
+npm run test:desktop-real        # the real driver, the adversarial scenarios, the CLI, the accessibility tree, then the no-window-manager check
 ```
 
 Without the prerequisites it prints a skip and exits 0 locally; CI sets `REQUIRE_DESKTOP_REAL=1`, which
-turns a missing prerequisite into a failure.
+turns a missing prerequisite into a failure. Each test runs on its own virtual display, and only after
+`test/desktop-real-session.sh` has seen the window manager actually managing it (`_NET_SUPPORTING_WM_CHECK`
+on the root window, via `xprop`), retrying it up to three times and failing with "no window manager came up"
+if it never does. "Started" isn't "ready": a window manager that never came up looks, from inside a test,
+exactly like a driver that can't focus windows.
 
 ## 7. Known limitations
 
@@ -186,9 +192,16 @@ turns a missing prerequisite into a failure.
   to a window that appears later would need its own human approval step.
 - **Linux/X11 only is tested.** macOS needs Accessibility and Screen Recording grants; Windows has no
   prompt. Wayland has no per-window input targeting (the driver says so) and isn't verified.
-- **The accessibility tree needs AT-SPI.** Without an accessibility bus the driver returns only the window
-  element and says `degraded`; the model is told to use coordinates. Coordinates are checked against the
-  capture, but the capture can't tell if the window's *contents* changed after it was taken.
+- **The accessibility tree needs AT-SPI, and the app has to expose it.** Without an accessibility bus the
+  driver returns only the window element and says `degraded`; the model is told to use coordinates. GTK
+  windows expose a real tree (tested); Tk windows don't (they fall back to coordinates). Other toolkits are
+  not tested.
+- **A window the window manager won't focus can't receive input.** Foreground delivery needs the target to
+  become the active window. A GTK window left at user-time 0 (an app that never calls `present()`, which is
+  what a window opened by a script often looks like) was never activated by the driver's request, and every
+  input was refused ("`foreground_unavailable`, no input was sent") rather than sent somewhere else. Found
+  while building the accessibility-tree test; the test app now calls `present()`. The failure is the safe one,
+  but it will look like "desktop tools don't work" for such an app.
 - **A name list can be evaded by renaming a binary.** The human-in-the-loop approval is the control that
   doesn't depend on it.
 - **Foreground input takes focus briefly.** The driver restores the previous window afterwards.

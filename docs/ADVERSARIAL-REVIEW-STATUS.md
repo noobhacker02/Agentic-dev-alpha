@@ -34,7 +34,7 @@ these once.
 | 19 | **Desktop test that didn't test what it claimed.** The "a decoy holding focus gets no keystrokes" scenario passed with typing that named *no* window at all, because the target still had focus when the keys were sent. Found by mutation: the survivor. Fixed by having the decoy steal focus between the click and the typing | `test/desktop-real-adversarial.mjs` | Test quality |
 | 20 | Desktop real-driver tests raced the window manager's startup. The driver correctly fails closed until the WM has set `_NET_ACTIVE_WINDOW`, so the first action of a run was refused about one time in four | `test/desktop-real*.mjs` | Test reliability |
 
-Every row has a permanent regression test, and the full suite (19 test files, no API cost, plus the real-desktop suites) plus
+Every row has a permanent regression test, and the full suite (18 suites, no API cost, plus 4 real-desktop suites that need a virtual display) plus
 `test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
 at every step, not just once at the end.
 
@@ -160,7 +160,7 @@ at every step, not just once at the end.
 - **Two of the four documentation screenshots, and the `.webm`→`.mp4` demo-video conversion, weren't
   actually automated** — asked directly whether the video/screenshot process was "checked and
   automated and tested," and it wasn't, fully. `01-full-dashboard...png` and `02-permission-
-  prompt.png` were already captured by `test/ui-render.mjs` (part of `npm test`/CI, regenerated and
+  prompt.png` were already captured by `test/ui-render.mjs` (part of `npm test`/CI; rewritten with `SAVE_UI_SCREENSHOTS=1`, and
   asserted-on every run), but `06-desktop-theme.png` and `07-multiple-pending-approvals.png` were
   made with throwaway one-off Playwright scripts, written once and deleted — nothing would catch them
   going stale if the UI changed. The `.mp4` conversion was manual, ad-hoc `ffmpeg` commands run once
@@ -223,8 +223,10 @@ Accepted and documented (`docs/DESKTOP-AGENT.md` section 7), not fixed:
 - **A minimised target locks the session** (it drops out of the on-screen list): fail closed, restart the run.
 - **A name list can be evaded by renaming a binary.** The control that doesn't depend on it is the human
   approving each action.
-- Linux/X11 only is tested: macOS, Windows and Wayland are not. The accessibility tree needs AT-SPI, which
-  the test apps don't expose, so `click` by element is tested against the fake only.
+- Linux/X11 only is tested: macOS, Windows and Wayland are not. `click` by element is tested against a real
+  AT-SPI tree from a GTK window (`test/desktop-real-tree.mjs`); other toolkits are not.
+- A window the window manager won't focus (a GTK window at user-time 0) can't receive input: the driver refuses
+  every action and sends nothing. Safe, but it reads as "it doesn't work".
 
 ## Found this round and designed out before shipping (Stage 1 computer use)
 

@@ -33,5 +33,5 @@ jobs:
       - name: Desktop tools against a real window (Xvfb + openbox)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb openbox at-spi2-core dbus dbus-x11 python3-tk
+          sudo apt-get install -y --no-install-recommends xvfb openbox at-spi2-core dbus dbus-x11 x11-utils python3-tk python3-gi gir1.2-gtk-3.0
           REQUIRE_DESKTOP_REAL=1 npm run test:desktop-real

@@ -155,8 +155,9 @@ differs from the plan below, and why:
   its own human approval step; not built.
 - **Key names**: the driver wants `Left`, not `ArrowLeft`; mapped and verified for every allowed key.
 - **The accessibility tree needs AT-SPI**; without it the driver reports a degraded, window-only tree and
-  the model is told to use coordinates. `click` by `ref` exists and is tested against the fake, but not
-  against a real tree: no accessible test app is wired up yet.
+  the model is told to use coordinates. Tk windows expose none; a GTK test app does, and `click` by `ref` is
+  tested against its real tree (`test/desktop-real-tree.mjs`), including a password field that never reaches
+  the model.
 - **Non-Linux identity lookups** (`ps`, PowerShell) are written but no test exercises them.
 
 ### Stage 3 — Read-only desktop view of one window
@@ -208,7 +209,7 @@ built for it, and the result). What it changed:
   manager is its own test (`test/desktop-real-nowm.mjs`).
 - Accepted and documented, not fixed: a covered window's hidden part is black on non-composited X; a
   minimised target locks the session; the name list can be evaded by renaming a binary; only Linux/X11 is
-  tested; `click` by element is tested against the fake only (no accessible test app).
+  tested; `click` by element is tested against a real GTK accessibility tree only.
 
 ### Stage 6 — Adversarial round and lessons
 
@@ -288,8 +289,9 @@ before Stage 4 ships.
 
 ## Open questions / risks
 
-- **Accessible test app under Xvfb.** AT-SPI needs a session bus and an app that exposes an
-  accessibility tree. Candidate: a tiny GTK app or a Chromium window launched as a native app.
+- **Accessible test app under Xvfb.** *Resolved:* a tiny GTK 3 app (`test/desktop-app/gtk_app.py`) with
+  `at-spi2-core` and a dbus session exposes a real tree. One catch found: the window must call `present()`,
+  or the window manager never activates it and the driver (correctly) sends nothing.
   Resolve at the start of Stage 3.
 - **`cua-driver`'s real tool surface and protocol.** Read its MCP schema before writing Stage 3; the
   names above are ours and get mapped onto whatever it actually exposes.

@@ -22,6 +22,26 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Desktop: the two paths that were only tested against a fake are now tested against the real thing.**
+  - `test/desktop-real-tree.mjs`: `click` by ref against a **real accessibility tree** (a GTK window over
+    AT-SPI with the real driver's element tokens). A click by ref presses the real button, a filled field
+    shows `value="alice"`, what's typed into the password entry never reaches the model, a stale ref is
+    refused. A mutation of the ref table fails it.
+  - `test/desktop-real-cli.mjs`: the whole command line on the success path against a real window: the driver
+    loads, the target resolves, the startup line names this app's real pid and title, the run finishes,
+    `agent-loop insights` counts the session, and a name matching nothing fails before any run. A mutation of
+    the CLI glue (forgetting to pass the resolved target to the pipeline) fails it.
+  - **The real-desktop tests now wait for the window manager to actually be managing the display**, not just
+    to have been started (`test/desktop-real-session.sh`: checks `_NET_SUPPORTING_WM_CHECK` with `xprop`,
+    retries the window manager, fails with "no window manager came up" in under two seconds if it never
+    does). One full run had the accessibility-tree test fail with the driver's "the window manager has not set
+    `_NET_ACTIVE_WINDOW`" for twenty seconds, then passed on 14 reruns, including under load and with the
+    window manager deliberately started late; the cause wasn't pinned down, so the harness now makes that state
+    visible instead of leaving it to look like a driver fault. (If it happens again in CI the failure message
+    says whether openbox was running.)
+  - Found on the way: a GTK window at user-time 0 is never activated by the window manager, so every input is
+    refused ("`foreground_unavailable`, no input was sent"). Safe, but it looks like "it doesn't work"; noted in
+    the docs, and the test app calls `present()`.
 - **Computer use, Stage 6: every desktop threat attacked with a real exploit**
   (`docs/ADVERSARIAL-REVIEW-STATUS.md`, findings 17-20). Real windows and processes under Xvfb + a window
   manager, through the real driver, checked by two apps that log everything they receive:
@@ -204,6 +224,9 @@ All notable changes to this project are documented here. Format follows
   anywhere in agent-loop — the visual language stays the existing dark-terminal/light-desktop look.
 
 ### Fixed
+- **`npm test` no longer dirties the working tree.** `test/ui-render.mjs` rewrote four committed demo
+  screenshots on every run, leaving binary diffs after each test run. It now only does so with
+  `SAVE_UI_SCREENSHOTS=1`, like the new desktop UI test.
 - The screenshot tool's base64 image data was dumped into the transcript, the log index and every
   WebSocket message.
 - agent-loop's own git hooks ran an outdated copy of the scanner (3 of 19 secret formats). They're
