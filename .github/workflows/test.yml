@@ -1,7 +1,8 @@
 name: Tests
 
 # Everything here runs without an API key: the stores, hooks, approval server, terminal and web UI,
-# saved reports and browser tools, driven directly or through a real headless Chromium. The
+# saved reports, browser tools (driven through a real headless Chromium) and desktop tools (driven
+# through the real native driver against a real window, under a virtual display). The
 # real-model runs (test/browser-approval.mjs, test/validate-*.mjs, test/e2e/record-run.mjs) cost
 # money and stay manual.
 
@@ -26,3 +27,11 @@ jobs:
       - run: npm test
       - name: Pipeline edge cases (scripted fake SDK)
         run: bash test/stress/pipeline_logic.sh
+      # The real desktop stack: the native driver, real X11 input, a window manager and a native
+      # window under a virtual display. REQUIRE_DESKTOP_REAL makes a missing prerequisite a failure,
+      # never a silent skip.
+      - name: Desktop tools against a real window (Xvfb + openbox)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb openbox at-spi2-core dbus dbus-x11 python3-tk
+          REQUIRE_DESKTOP_REAL=1 npm run test:desktop-real

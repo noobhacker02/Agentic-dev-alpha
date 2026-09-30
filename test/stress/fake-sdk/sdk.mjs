@@ -20,7 +20,7 @@ export function query({ prompt, options }) {
   calls++;
   const sc = process.env.FAKE_SCENARIO;
   const isOverseer = /Overseer of agent-loop/.test(options.systemPrompt);
-  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, prompt }) + "\n");
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, prompt, mcp: Object.keys(options.mcpServers ?? {}) }) + "\n");
   if (calls > 60) { console.error("FAKE: >60 LLM calls, aborting (infinite loop)"); process.exit(99); }
   const phase = (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
   let text;

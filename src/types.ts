@@ -212,6 +212,61 @@ export type AgentEvent =
       kind: "screenshot" | "trace" | "video";
       path: string;
       ts: string;
+    }
+  | {
+      type: "desktop-session-started";
+      runId: string;
+      desktopSessionId: string;
+      /** The one window this run may see and operate, fixed by the human before the run started. */
+      target: { processName: string; appName: string; pid: number; windowId: string; title: string };
+      driverVersion: string;
+      ts: string;
+    }
+  | {
+      type: "desktop-session-ended";
+      runId: string;
+      desktopSessionId: string;
+      status: "completed" | "failed" | "interrupted";
+      ts: string;
+    }
+  | {
+      type: "desktop-action-started";
+      runId: string;
+      desktopSessionId: string;
+      actionId: string;
+      toolName: string;
+      input: unknown;
+      ts: string;
+    }
+  | {
+      type: "desktop-action-completed";
+      runId: string;
+      desktopSessionId: string;
+      actionId: string;
+      toolName: string;
+      result: string;
+      isError: boolean;
+      durationMs: number;
+      ts: string;
+    }
+  | {
+      type: "desktop-snapshot";
+      runId: string;
+      desktopSessionId: string;
+      snapshotId: string;
+      title: string;
+      width: number;
+      height: number;
+      screenshotPath: string;
+      ts: string;
+    }
+  | {
+      type: "desktop-artifact-created";
+      runId: string;
+      desktopSessionId: string;
+      kind: "screenshot";
+      path: string;
+      ts: string;
     };
 
 export interface ApprovalDecision {
@@ -241,4 +296,9 @@ export interface PipelineConfig {
   /** Where browser-tool screenshots are written when `browser` is on. Required when `browser` is
    * true (cli.ts always supplies it alongside the flag). */
   browserArtifactDir?: string;
+  /** A desktop target that already passed every startup check (src/desktop-tools.ts): the one window
+   * builder and verifier may see and operate. cli.ts resolves it from `--desktop-target` before the
+   * run exists, so a refused target fails at startup; the pipeline starts the session once the run
+   * has an id, and closes it when the run ends. */
+  desktop?: import("./desktop-tools.js").ResolvedDesktop;
 }

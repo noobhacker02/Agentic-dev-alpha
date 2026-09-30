@@ -14,3 +14,17 @@
 export function stripTerminalControlBytes(s: string): string {
   return s.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "");
 }
+
+/**
+ * Text an untrusted page or window controls, on its way into the model's context and the transcript:
+ * control bytes and bidi-override/zero-width characters dropped, whitespace folded (so a name can't
+ * start a fake new line in a list of elements), and the length capped. Shared by the browser and
+ * desktop tools, which both print element names straight from content they don't control.
+ */
+export function cleanText(value: unknown, max: number): string {
+  return stripTerminalControlBytes(String(value ?? ""))
+    .replace(/[​-‏‪-‮⁦-⁩﻿]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}

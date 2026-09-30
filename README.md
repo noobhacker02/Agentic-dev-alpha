@@ -139,6 +139,9 @@ machine's directory layout.
 | `src/browser-tools.ts` | The 15 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
 | `test/browser-tools.mjs` | Real-Chromium tests of the original browser tools: containment, the screenshot cap, `close()` never throwing |
 | `test/browser-computer-use.mjs` | Real-Chromium tests of refs, screenshot-bound `click_at`/`scroll_at`, tabs, hover/select/scroll, and every leak channel (WebSocket, WebRTC, service worker, popups) against a counted non-allowed host, with a no-defence control run |
+| `src/desktop-tools.ts`, `src/desktop-policy.ts`, `src/desktop-driver-cua.ts` | Desktop tools for exactly one human-chosen window: the five tools, the session that fences every action, the denylist and key/text rules, and the narrow adapter over the native driver — see [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md) |
+| `test/desktop-tools.mjs`, `test/desktop-adapter.mjs`, `test/desktop-cli.mjs`, `test/desktop-pipeline.mjs` | No-LLM, no-display tests of the desktop controls against a scripted fake driver and a stand-in SDK with traps on every method the adapter must never touch |
+| `test/desktop-real.mjs` | The real native driver, real X11 input and a real native window under Xvfb + a window manager, verified through the app's own state file (`npm run test:desktop-real`) |
 
 ## Requirements
 
@@ -250,6 +253,21 @@ Real screenshots — not mockups — of both the tools themselves and the full d
 ![Dashboard with the browser panel](docs/screenshots/approval-ui/01-full-dashboard-with-browser-panel.png)
 
 More real screenshots (as each stage lands) are indexed in [`docs/screenshots/`](docs/screenshots/INDEX.md).
+
+## Desktop Agent
+
+`--desktop-target "<app>"` lets `builder` and `verifier` see and operate **one already-running native
+window** you name, through five tools (`capture`, `window_info`, `click`, `type_text`, `key`). Every input
+action asks a human first, one at a time, and never offers "don't ask again". It's refused under
+`--no-approval`, and refused for terminals, shells, IDEs, launchers, browsers, remote-desktop and
+password-manager windows, matched by the owning process rather than the window title. There is no tool to
+change the target, touch the clipboard, capture the full screen, or manage other windows or apps.
+
+Each action is tied to the capture it was planned from and uses it up, and the window's identity is
+verified before and after every action; a swapped window locks the session. The native driver
+(`@trycua/cua-driver`, an optional dependency pinned to an exact version) is only loaded when the flag is
+used. Tested against the real driver on Linux/X11; macOS and Windows are not yet verified. Full reference,
+controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 Real session recordings (`.mp4`, click through to view — GitHub still won't autoplay them inline in this
 text, but its own file viewer plays them, and any regular media player will too):
 

@@ -7,6 +7,7 @@ import { Store } from "./store.js";
 import { runPhase } from "./phases.js";
 import { overseerDecide } from "./overseer.js";
 import { BrowserSessionManager } from "./browser-tools.js";
+import type { DesktopSession } from "./desktop-tools.js";
 
 /**
  * A project's DECISIONS.md (any phase may write one, following dev-workflow's convention) is
@@ -42,6 +43,11 @@ function skippedVerdict(reason: string): PhaseVerdict {
 }
 
 export async function runPipeline(config: PipelineConfig, bus: EventBus, store: Store): Promise<RunRecord> {
+  if (config.desktop && !config.browserArtifactDir) {
+    // Window screenshots have nowhere safe to go (never inside --dir, where the agents can write).
+    await config.desktop.abandon();
+    throw new Error("desktop tools need an artifact directory (config.browserArtifactDir)");
+  }
   const run = store.createRun(config.task, config.workDir);
   bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, workDir: config.workDir, ts: new Date().toISOString() });
 
@@ -60,6 +66,13 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
     browserSessions && config.browserArtifactDir
       ? { sessions: browserSessions, artifactDir: join(config.browserArtifactDir, run.id) }
       : undefined;
+
+  // Started here, not by the CLI, because the session's events carry this run's id.
+  const desktopSession: DesktopSession | undefined = config.desktop?.start({
+    runId: run.id,
+    bus,
+    artifactDir: join(config.browserArtifactDir!, run.id),
+  });
 
   try {
     let phaseIdx = 0;
@@ -96,6 +109,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           requireApproval: config.requireApproval,
           strictApproval: config.strictApproval,
           browser: browserOpt,
+          desktop: desktopSession,
         });
       } catch (err) {
         verdict = {
@@ -239,6 +253,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
     // unclosed Chromium process and temp profile leaking past the run is exactly what
     // BrowserSessionManager's own contract rules out (see src/browser-tools.ts).
     if (browserSessions) await browserSessions.close(run.id, bus, finalStatus === "failed" ? "failed" : "completed");
+    if (desktopSession) await desktopSession.close(finalStatus === "failed" ? "failed" : "completed");
     store.finishRun(run.id, finalStatus);
     bus.emitEvent({ type: "run-end", runId: run.id, status: finalStatus, ts: new Date().toISOString() });
   }

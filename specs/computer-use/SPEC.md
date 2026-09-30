@@ -5,9 +5,8 @@
 > (`docs/RESEARCH-COMPUTER-USE-AND-MULTI-AGENT.md`). The bar: someone with none of this
 > conversation's context could implement a stage from this file and know when it's done.
 >
-> **Status (updated after Stage 1 was built):** Stage 1 is done. See "Stage 1 as built" below for
-> where the build differed from this plan and why. Stages 2–6 are unchanged and still wait on the
-> human go/no-go.
+> **Status:** Stage 1 is done ("Stage 1 as built"). The human go for Stages 3–6 is recorded under
+> Stage 2. Stages 3–4 are done ("Stages 3-4 as built"). Stages 5–6 follow.
 
 ## Request
 
@@ -120,8 +119,45 @@ unchanged `test/browser-tools.mjs`. Where the build differs from the plan above:
 
 ### Stage 2 — Desktop go/no-go (no code)
 
-Human reviews this spec's threat model and says go or stop. The decision is recorded in the run's
-decision log. Stages 3–6 do not start without it.
+**Decision recorded 2026-09-30: GO for Stages 3–6.** The human, after reading this spec's threat
+model and the Stage 1 results, answered: "go ahead with all stages and complete everything and keep
+testing and everything as well in it so we know it works as designed." Conditions that come with the
+go, all already in this spec: desktop tools exist only with `--desktop-target`, never under
+`--no-approval`, every input action asks fresh, terminals/shells/IDEs/launchers are never targets,
+and every threat's control is proven with a constructed exploit. The go does **not** cover creating
+GitHub forks of the reference projects; that still needs its own explicit yes.
+
+### Stages 3-4 as built
+
+Built together, since the tools, the session and the fences are one piece of code. Where the build
+differs from the plan below, and why:
+
+- **The driver is an in-process SDK, not an MCP server.** Reading and running `@trycua/cua-driver`
+  0.30.4 showed it's a native library (Rust via UniFFI) with no `cua-driver` executable in the npm
+  package, so the plan's "spawn it and talk MCP over stdio" doesn't apply, nor does an MCP-stdio fake.
+  Replaced by a narrow `DesktopDriver` interface: a scripted fake at that boundary, a stand-in SDK with
+  traps on every method for the adapter, and the real library under Xvfb for the rest.
+- **The driver's surface is ~60 tools**, including clipboard read/write, full-desktop capture, launch
+  and kill app, hotkeys, config and trajectory replay. The adapter reaches six, and the interface has no
+  method for the rest (T1, T6, Req 13), which is stronger than "the tool list doesn't include them".
+- **Stage 3 and 4 shipped together**; there is no input-free intermediate release.
+- **Captures are single-use.** The plan said each action carries the capture it was planned from; in
+  the build, using it also spends it, so the window a human approved against is the window acted on.
+- **A denied-target check also runs on the name the human typed**, before the driver is loaded, and on the
+  interpreter's script (`python3 /usr/bin/terminator`), not only the process name.
+- **Browsers are denied targets too.** Not in the plan: a desktop-controlled browser can navigate
+  anywhere, bypassing the browser tools' localhost-only boundary. Remote-desktop clients, password
+  managers, key agents and lock screens were added for the same kind of reason (T1, T6).
+- **Foreground delivery only.** Background delivery doesn't work against Chromium or most toolkit windows
+  on X11; foreground activates the window, checks it holds focus, sends, and fails closed otherwise
+  (shown with no window manager: every click refused, nothing sent).
+- **The window must exist when the run starts.** Resolved once, fixed for the run. Re-binding would need
+  its own human approval step; not built.
+- **Key names**: the driver wants `Left`, not `ArrowLeft`; mapped and verified for every allowed key.
+- **The accessibility tree needs AT-SPI**; without it the driver reports a degraded, window-only tree and
+  the model is told to use coordinates. `click` by `ref` exists and is tested against the fake, but not
+  against a real tree: no accessible test app is wired up yet.
+- **Non-Linux identity lookups** (`ps`, PowerShell) are written but no test exercises them.
 
 ### Stage 3 — Read-only desktop view of one window
 

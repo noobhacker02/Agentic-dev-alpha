@@ -22,6 +22,36 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Computer use, Stages 3-4: desktop tools for exactly one human-chosen window**
+  (`docs/DESKTOP-AGENT.md`, `specs/computer-use/SPEC.md`). `--desktop-target "<app>"` lets builder and
+  verifier see and operate one already-running native window through five tools (`capture`,
+  `window_info`, `click`, `type_text`, `key`). The go/no-go for Stages 3-6 was recorded in the spec.
+  - **Refused, before anything starts:** under `--no-approval`; for a blank name; for a name in the
+    denylist (terminals, shells, IDEs, launchers, browsers, remote-desktop and password-manager
+    windows). The native driver isn't even loaded; a module-resolution trace in the test proves it,
+    with a positive control proving the trace can see it.
+  - **Refused once the window is resolved:** anything whose owning process is in the denylist (by
+    process name, executable, argv[0] and the interpreter's script, never the window title), an
+    unidentifiable owner, or an ambiguous name.
+  - **Every action is fenced.** Captures are single-use; identity (window, pid, owning program, bounds)
+    is verified before dispatch and again after, and a failure locks the session; keys are an
+    allowlist with no meta/super/cmd and no window-leaving chords; typed text refuses control and
+    bidi characters; 60 actions and 120 captures per session.
+  - **Input always asks.** `approvalPlan()` returns `null` for desktop input, so "don't ask again" never
+    applies; the approval hook never auto-approves a desktop tool and denies all of them when approval
+    is off.
+  - **The driver adapter is deliberately narrow.** `@trycua/cua-driver` is an in-process native SDK with
+    ~60 tools (clipboard, full-desktop capture, launch/kill app, hotkeys, config...). The adapter calls
+    six things, every input names the window explicitly with foreground delivery, and a stand-in SDK
+    with a trap on every other method proves the rest is unreachable. Pinned exactly as an optional
+    dependency, integrity-locked, version-checked at load.
+  - **Tested against the real thing.** `test/desktop-real.mjs` drives the real native driver, real X11
+    input, a real window manager and a native Tk window under Xvfb, checking every effect through the
+    app's own state file. CI runs it with `REQUIRE_DESKTOP_REAL=1` so a missing prerequisite fails.
+  - 17 mutations of the built code (one per defence) each fail a test.
+  - Two corrections to the spec found by running the driver: it is an in-process SDK, not an MCP
+    server to spawn; and Linux `listApps` returns every process. Also the driver rejects `ArrowLeft`
+    (it wants `Left`), which the adapter maps.
 - **Computer use, Stage 1: browser tools that act on refs, screenshot points and tabs**
   (`specs/computer-use/SPEC.md`, reference in the new `docs/BROWSER-AGENT.md`). Eight tools join the
   original seven:

@@ -9,6 +9,8 @@ import { writeRunReport } from "./report.js";
 import { attachTerminal } from "./terminal.js";
 import { PHASES } from "./types.js";
 import { stripTerminalControlBytes } from "./text-safety.js";
+import { resolveDesktopTarget, type ResolvedDesktop } from "./desktop-tools.js";
+import { classifyDeniedTarget, deniedTargetMessage } from "./desktop-policy.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
@@ -101,7 +103,7 @@ async function main() {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
-  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser]
+  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"]
   agent-loop insights [--dir <workDir>] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
@@ -115,6 +117,11 @@ Usage:
                    always outside --dir, since the agents have Write/Edit/Bash access there
   --browser        Give builder and verifier real headless-Chromium browser tools (Stage 1:
                    http://localhost/127.0.0.1 URLs only). Off by default.
+  --desktop-target Let builder and verifier see and operate exactly one already-running desktop
+                   window, named here (matched against its title, app name or process). Every
+                   action needs a human's approval, one at a time. Refused with --no-approval, and
+                   refused for terminals, shells, IDEs, launchers, browsers, remote-desktop and
+                   password-manager windows. Needs the optional @trycua/cua-driver package.
 
   insights         Self-analysis over every run ever recorded against a --dir's audit database:
                    which phases get repaired most, total and per-phase cost, and which "don't ask
@@ -130,6 +137,26 @@ Usage:
   if (!task) {
     console.error("Error: no task description given. Usage: agent-loop run \"<task>\"");
     process.exit(1);
+  }
+
+  // Desktop control is checked before anything else starts -- no approval UI, no store, no driver --
+  // for everything that can be decided from the command line alone.
+  const desktopTargetArg = args["desktop-target"];
+  if (desktopTargetArg !== undefined && (typeof desktopTargetArg !== "string" || !desktopTargetArg.trim())) {
+    console.error('Error: --desktop-target needs the name of one app or window, e.g. --desktop-target "My App".');
+    process.exit(1);
+  }
+  const desktopTarget = typeof desktopTargetArg === "string" ? desktopTargetArg.trim() : undefined;
+  if (desktopTarget !== undefined) {
+    if (args["no-approval"]) {
+      console.error("Error: --desktop-target can't be used with --no-approval. Every desktop action needs a human to approve it.");
+      process.exit(1);
+    }
+    const denied = classifyDeniedTarget([desktopTarget]);
+    if (denied) {
+      console.error(`Error: --desktop-target refused. ${stripTerminalControlBytes(deniedTargetMessage(denied))}`);
+      process.exit(1);
+    }
   }
 
   const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
@@ -150,7 +177,7 @@ Usage:
 
   let url: string, close: () => Promise<void>;
   try {
-    ({ url, close } = await startServer(bus, port, { artifactRoot: browser ? browserArtifactDir : undefined }));
+    ({ url, close } = await startServer(bus, port, { artifactRoot: browser || desktopTarget !== undefined ? browserArtifactDir : undefined }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
@@ -170,6 +197,27 @@ Usage:
     `Approvals: ${!requireApproval ? "OFF" : interactive ? "ON — answer here (1/2/3) or in the web UI" : "ON — answer in the web UI"}`
   );
   console.log(`Browser tools: ${browser ? "ON — builder/verifier get real Chromium (localhost only)" : "OFF"}`);
+
+  // The approval UI is up, so a human can be reached; now load the driver and pin down the one window.
+  let desktop: ResolvedDesktop | undefined;
+  if (desktopTarget !== undefined) {
+    let driver: Awaited<ReturnType<typeof import("./desktop-driver-cua.js").openCuaDriver>> | undefined;
+    try {
+      const { openCuaDriver } = await import("./desktop-driver-cua.js");
+      driver = await openCuaDriver();
+      desktop = await resolveDesktopTarget({ target: desktopTarget, driver, requireApproval });
+    } catch (err) {
+      await driver?.close().catch(() => {});
+      console.error(`Error: desktop target not available. ${stripTerminalControlBytes(err instanceof Error ? err.message : String(err))}`);
+      store.close();
+      await close();
+      process.exit(1);
+    }
+    console.log(`Desktop tools: ON — builder/verifier may see and operate ONLY ${stripTerminalControlBytes(desktop.describeTarget())}`);
+    console.log(`  driver ${stripTerminalControlBytes(desktop.driverVersion)}; every input action asks, one at a time`);
+  } else {
+    console.log("Desktop tools: OFF");
+  }
   console.log(`Task: ${task}`);
   const terminal = attachTerminal(bus, { interactive, workDir, uiUrl: url });
 
@@ -180,7 +228,7 @@ Usage:
   const startedAt = Date.now();
 
   const run = await runPipeline(
-    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir },
+    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir, desktop },
     bus,
     store
   );

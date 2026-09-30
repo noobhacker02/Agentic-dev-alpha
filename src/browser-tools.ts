@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { EventBus } from "./bus.js";
-import { stripTerminalControlBytes } from "./text-safety.js";
+import { cleanText } from "./text-safety.js";
 
 /** The installed playwright-core version doesn't reliably match the pre-installed browser's
  * revision number in every environment, so chromium.launch()'s own resolution can miss it even
@@ -150,16 +150,6 @@ const DISABLE_WEBRTC_SCRIPT = `(() => {
     try { delete globalThis[name]; } catch {}
   }
 })();`;
-
-/** Page-controlled text going into the transcript: drop control and bidi-override characters, fold
- * whitespace (so a name can't start a fake new line), and cap the length. */
-function cleanText(value: unknown, max: number): string {
-  return stripTerminalControlBytes(String(value ?? ""))
-    .replace(/[​-‏‪-‮⁦-⁩]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
-}
 
 function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined {
   const known = session.everTabs.find((t) => t.page === page);

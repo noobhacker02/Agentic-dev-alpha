@@ -224,6 +224,16 @@ export interface ApprovalHookOptions {
  * (see the SDK's 6-step permission evaluation order) — a PreToolUse hook is
  * the one place guaranteed to run for every tool call.
  */
+/** Every tool the desktop MCP server registers starts with this (src/desktop-tools.ts). */
+export const DESKTOP_TOOL_PREFIX = "mcp__desktop__";
+const DESKTOP_READ_ONLY_TOOLS = new Set([`${DESKTOP_TOOL_PREFIX}capture`, `${DESKTOP_TOOL_PREFIX}window_info`]);
+
+/** Anything under the desktop prefix that isn't known to only look is treated as input -- including
+ * any tool added later -- so a new desktop tool fails closed (always asks) instead of inheriting a rule. */
+export function isDesktopInputTool(toolName: string): boolean {
+  return toolName.startsWith(DESKTOP_TOOL_PREFIX) && !DESKTOP_READ_ONLY_TOOLS.has(toolName);
+}
+
 /**
  * What approving a call would mean, modeled on Claude Code's permission rules:
  *  - `readOnly`: the call only reads inside --dir (every subcommand of a shell command does), so it
@@ -235,6 +245,10 @@ export interface ApprovalHookOptions {
  * command substitution, redirects to files…): asked every single time.
  */
 export function approvalPlan(toolName: string, toolInput: unknown, workDir?: string): { readOnly: boolean; rules: string[] } | null {
+  // Desktop input is asked every single time. A bare-tool-name rule would turn one approved click
+  // into approval for every later click -- at a different spot, in a window that may have changed --
+  // and the approval the human gave was for one action on the window they saw.
+  if (isDesktopInputTool(toolName)) return null;
   if (toolName !== "Bash") return { readOnly: false, rules: [toolName] };
   const command = typeof (toolInput as { command?: unknown })?.command === "string" ? (toolInput as { command: string }).command : "";
   const subs = analyzeBash(command, workDir);
@@ -256,7 +270,19 @@ export function createApprovalHook(opts: ApprovalHookOptions): HookCallback {
     if (input.hook_event_name !== "PreToolUse") return {};
     const pre = input as PreToolUseHookInput;
 
-    if (!opts.requireApproval || autoApprove.has(pre.tool_name)) {
+    const isDesktop = pre.tool_name.startsWith(DESKTOP_TOOL_PREFIX);
+    if (isDesktop && !opts.requireApproval) {
+      // The CLI and DesktopSession.open() refuse this combination before a run starts; this is the
+      // last line, so a mis-wired caller still can't drive a desktop window with no human present.
+      return {
+        hookSpecificOutput: {
+          hookEventName: pre.hook_event_name,
+          permissionDecision: "deny",
+          permissionDecisionReason: "desktop tools need a human to approve each action; approval is off for this run",
+        },
+      };
+    }
+    if (!isDesktop && (!opts.requireApproval || autoApprove.has(pre.tool_name))) {
       return {
         hookSpecificOutput: {
           hookEventName: pre.hook_event_name,

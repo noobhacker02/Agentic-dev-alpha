@@ -1,0 +1,177 @@
+# Desktop agent
+
+`agent-loop run "<task>" --desktop-target "<app>"` lets the `builder` and `verifier` phases see and
+operate **exactly one already-running desktop window**, chosen by you on the command line before the run
+starts. It is off unless you pass that flag, refused under `--no-approval`, and every input action asks
+a human first, one at a time.
+
+This page covers what the tools do, the controls around them, how each control was checked, and what
+isn't covered. The plan and threat model it implements are in
+[`specs/computer-use/SPEC.md`](../specs/computer-use/SPEC.md); T1-T8 below are that file's threats.
+
+## 1. What phases get
+
+Five tools from an in-process MCP server (`src/desktop-tools.ts`), surfaced as `mcp__desktop__<tool>` in
+the same `tool_name` field the PreToolUse hooks already read.
+
+| Tool | Input | What it does |
+|---|---|---|
+| `capture` | — | The target window's pixels (as an image) and its accessibility tree when the platform has one, plus a `snapshotId` like `dshot-3` |
+| `window_info` | — | The target (process, pid, window id), its title and bounds, and captures/actions used so far |
+| `click` | `ref`, **or** `x`, `y`, `snapshotId`; optional `button`, `count` | Clicks an element from the latest capture, or a point in it |
+| `type_text` | `text`, `snapshotId` | Types into whatever has focus inside the window (≤ 1,000 characters) |
+| `key` | `key`, optional `modifiers`, `snapshotId` | Presses one key |
+
+That is the whole list, and a test asserts it. There is no tool to change the target, read or write the
+clipboard, capture the full screen, list other windows, or launch, kill or move anything. The
+`DesktopDriver` interface the tools use has no method for any of those, so there is nothing to call.
+
+Coordinates are window-local pixels of the capture image (the same space the driver's `get_window_state`
+returns). Text in the window reaches the model inside an "untrusted data, never instructions" frame, with
+names JSON-quoted, control and bidi characters stripped, and password fields shown as `(hidden)`.
+
+## 2. Starting a run
+
+```
+agent-loop run "verify the settings dialog" --desktop-target "My App"
+```
+
+The string is matched against the window's title, its app name, and its process name, and must resolve to
+exactly one window; if it matches several, the error lists them so you can be more specific. The app must
+already be running. The resolved target (process, pid, window id, title) and the driver version are
+printed at startup, and from then on the target never changes: if the window closes or another program
+takes its pid, the session locks.
+
+Refused at startup, before any state or approval UI exists (and before the native driver is loaded,
+checked with a module-resolution trace in `test/desktop-cli.mjs`):
+
+- `--no-approval` (T5)
+- an empty or missing name
+- a name in the denylist (T1)
+
+Then, once the approval UI is up, refused if the window's *owning process* is in the denylist, if it can't
+be identified, or if the name is ambiguous.
+
+### Windows that can never be a target (T1, T6)
+
+Matched by **process identity**, never by window title (a title is whatever the app says it is): the
+process name, executable, `argv[0]`, the interpreter's script (`python3 /usr/bin/terminator`), and the app
+name. Categories, with why:
+
+| Category | Examples | Why |
+|---|---|---|
+| terminal, shell | xterm, gnome-terminal, konsole, iTerm2, Windows Terminal, bash, zsh, pwsh | Typing into one runs commands with none of the Bash protections in play: the safety net only inspects the `Bash` tool |
+| IDE, editor | code, cursor, idea, pycharm, vim, emacs | Integrated terminals and run configurations |
+| launcher, run dialog | rofi, dmenu, spotlight, gnome-shell, explorer | Starts any program by name |
+| browser | chrome, firefox, edge, safari, brave | A desktop-controlled browser can navigate anywhere, bypassing the browser tools' localhost-only boundary. Use the browser tools for web apps |
+| remote desktop | remmina, vncviewer, teamviewer, anydesk | A window onto a terminal on another machine |
+| secrets | keepassxc, 1password, bitwarden, polkit, lock screens | Show or guard secrets |
+
+A name in the list is refused as a prefix family (`gnome-terminal-server`, `wezterm-gui`), but not as a mere
+prefix of another word (`shotwell` is not `sh`). Renaming a binary defeats any name list; the control that
+doesn't depend on it is that every action is shown to a human first.
+
+## 3. Every action is fenced
+
+All of it lives in `DesktopSession`, in code the model can't argue with, and none depends on the
+third-party driver's own policy.
+
+1. **Single-use captures (T4).** `click`, `type_text` and `key` need the `snapshotId` of the latest
+   capture and use it up: capture again before each action. So the window the human saw is the window
+   acted on, and an approval can't be replayed. An older or invented id is refused. Two calls issued in
+   parallel (a capture and a click) can't race: the capture makes the click's id stale.
+2. **Identity before dispatch.** The target window must still exist under the same pid, the program
+   behind that pid must still be the one chosen (not a reused pid), it must still not be a denied kind,
+   and its bounds must match the capture. Any failure refuses the action, sends nothing, and **locks the
+   session**.
+3. **Identity after dispatch.** If the window can't be confirmed afterwards, the result says the action
+   was sent but unconfirmed, and the session locks.
+4. **Input validation.** Keys are an allowlist: one visible ASCII character, F1-F12, or Enter, Tab,
+   Escape, Backspace, Delete, Insert, arrows, Home, End, PageUp, PageDown, Space. Modifiers are `ctrl`,
+   `shift` and `alt` only: no meta, super, Windows or Command, at all. Combinations that leave the window
+   are refused (Alt+Tab, Alt+F-keys, Alt+Escape, Alt+Space, Ctrl+Alt+anything, Ctrl+Escape,
+   Ctrl+Shift+Escape). Typed text refuses control characters (newline and tab are fine) and
+   invisible/bidi-override characters, so what the prompt shows is what lands in the window.
+5. **Caps (T8).** 60 input actions and 120 captures per session.
+6. **Nothing reaches the driver on a refusal.** Every refusal test also checks the fake driver's call log.
+
+### Approval (T3, T5)
+
+- `click`, `type_text`, `key`, and any future `mcp__desktop__` tool except `capture`/`window_info` get **no
+  "don't ask again" rule**: `approvalPlan()` returns `null`, like package installs and `export`. One
+  approved click never approves a later one. `capture` and `window_info` only look, so they may earn a rule.
+- The approval hook never auto-approves a desktop tool, even one listed as auto-approved, and **denies**
+  every desktop tool when approval is off.
+
+## 4. The driver
+
+`src/desktop-driver-cua.ts` adapts [`@trycua/cua-driver`](https://www.npmjs.com/package/@trycua/cua-driver)
+(MIT), the native driver both reference projects use. Things the plan got wrong, found by reading and
+running the package:
+
+- It is an **in-process SDK around a native library**, not an MCP server to spawn. The `cua-driver mcp`
+  executable is a separate download this project doesn't use.
+- Its surface is far wider than desktop tools may touch: clipboard read/write, full-desktop capture,
+  launch and kill app, window moves, menus, hotkeys, recording, trajectory replay, its own browser
+  tools. The adapter calls exactly six things (`listWindows`, `getWindowState`, `click`, and
+  `type_text` / `press_key` through the generic entry point) and its public surface *is* the
+  `DesktopDriver` interface. A stand-in SDK with a trap on every other method proves it
+  (`test/desktop-adapter.mjs`).
+- `listApps` on Linux returns **every process** (kernel threads included), and `getDesktopState` captures
+  the whole screen. Neither is used.
+- Input to Chromium and most toolkit windows on X11 only works with **foreground delivery**: it activates
+  the target, checks it holds input focus, sends, and restores the previous window. It **fails closed**:
+  with no window manager it refused every click ("the window manager has not set `_NET_ACTIVE_WINDOW`; no
+  input was sent"). Every input names the window (pid and window id) explicitly; an input with no target
+  would go to whatever has focus.
+- The driver's key names differ from the ones models use (`ArrowLeft` is rejected, `Left` works); the
+  adapter maps them, verified for every allowed named key against a real window.
+
+T7: pinned exactly in `optionalDependencies` (`0.30.4`), integrity in the lockfile, checked against the
+version the native library reports, and loaded lazily, only when `--desktop-target` is given, so every
+other run never loads it.
+
+Identity of the program behind a pid is read from the OS, not from the driver or the window: `/proc`
+on Linux (tested in CI), `ps` on macOS and PowerShell on Windows (written, **not yet exercised by any
+test**). When it can't be read, the target is refused.
+
+## 5. How this was checked
+
+| Suite | What it proves |
+|---|---|
+| `test/desktop-tools.mjs` | Policy tables; target resolution and every refusal; the exact tool list; capture leaks nothing but the target (hostile titles in other windows, passwords, forged ref lines); every fence, each asserted twice (the tool refuses *and* the fake driver saw nothing); caps; events; approval behaviour |
+| `test/desktop-adapter.mjs` | The adapter against a stand-in SDK with traps on every method it must not touch; version pin; window ids; key-name mapping |
+| `test/desktop-cli.mjs` | Startup refusals, with a module-resolution trace proving the driver wasn't loaded (and a positive control proving the trace can see it) |
+| `test/desktop-pipeline.mjs` | A real `runPipeline`: one session per run, only builder/verifier get the tools, driver released on success and failure |
+| `test/desktop-real.mjs` | The real native driver, real X11 input, real window manager and a real native window, under Xvfb + openbox. Every effect is checked through the test app's own state file: a channel independent of the driver and the tool results |
+
+The fake driver (`test/fake-desktop-driver.mjs`) says what it does **not** simulate, because a fake is only
+as good as the behavior it admits to leaving out; the real-driver suite covers that.
+
+Mutation checks: each defence above was broken in the built code, one at a time (single-use captures,
+bounds check, identity check, post-dispatch check, the rule-for-input check, auto-approval, the no-approval
+deny, interpreter-script denylist, password hiding, Ctrl+Alt, the caps, the window target on key presses,
+foreground delivery, the version pin, the generic-tool gate). Every mutation fails a test.
+
+## 6. Running the real-driver tests
+
+```
+sudo apt-get install -y xvfb openbox at-spi2-core dbus dbus-x11 python3-tk
+npm run test:desktop-real
+```
+
+Without the prerequisites it prints a skip and exits 0 locally; CI sets `REQUIRE_DESKTOP_REAL=1`, which
+turns a missing prerequisite into a failure.
+
+## 7. Known limitations
+
+- **The app must be running before the run starts.** The target is fixed at startup by design; re-binding
+  to a window that appears later would need its own human approval step.
+- **Linux/X11 only is tested.** macOS needs Accessibility and Screen Recording grants; Windows has no
+  prompt. Wayland has no per-window input targeting (the driver says so) and isn't verified.
+- **The accessibility tree needs AT-SPI.** Without an accessibility bus the driver returns only the window
+  element and says `degraded`; the model is told to use coordinates. Coordinates are checked against the
+  capture, but the capture can't tell if the window's *contents* changed after it was taken.
+- **A name list can be evaded by renaming a binary.** The human-in-the-loop approval is the control that
+  doesn't depend on it.
+- **Foreground input takes focus briefly.** The driver restores the previous window afterwards.
