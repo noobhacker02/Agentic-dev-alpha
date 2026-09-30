@@ -101,6 +101,12 @@ tab doesn't change on its own; `switch_tab` changes it and expires refs and snap
 previous tab. A tab the page closes itself leaves the list; if it was the active tab, the most recently
 opened remaining tab becomes active. If every tab closes, the next `open` starts a new one.
 
+A click, key press or click-by-coordinates that closes its own page (a popup's "Close" button) is reported as a
+note, `Tab t2 closed while this ran (most likely this click closed it)`, not as an error. Playwright may finish
+the action against a page that is already gone and say so; that is the action working, and an error would send
+the model off to retry or re-inspect. A failure that is *not* followed by the page closing is still an error.
+
+
 ## 3. Artifacts
 
 Screenshots and videos go under `<data dir>/browser-artifacts/<runId>/`. That's always outside

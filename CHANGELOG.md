@@ -257,6 +257,14 @@ All notable changes to this project are documented here. Format follows
   anywhere in agent-loop — the visual language stays the existing dark-terminal/light-desktop look.
 
 ### Fixed
+- **A click that closes its own page was sometimes reported as an error** (`src/browser-tools.ts`). Found as a CI
+  failure (run #38, `browser-computer-use.mjs`: a popup's "Close me" came back as "Stale ref ... no longer on
+  the page"), after passing in every earlier CI run and locally. It is a race: Playwright can finish the click
+  against a page that is already gone. A probe showed about one click in twelve failing even on a fast machine.
+  `click`, `press` and `click_at` now report "Tab tN closed while this ran (most likely this click closed it)"
+  instead, and only when the page really did close. Tested three ways: the exact error simulated, a control that
+  the same error with the page still open is still an error, and 25 real self-closing clicks; each direction of
+  the fix was broken on purpose and failed a test.
 - **`npm test` no longer dirties the working tree.** `test/ui-render.mjs` rewrote four committed demo
   screenshots on every run, leaving binary diffs after each test run. It now only does so with
   `SAVE_UI_SCREENSHOTS=1`, like the new desktop UI test.

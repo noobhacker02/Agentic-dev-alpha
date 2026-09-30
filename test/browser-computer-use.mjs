@@ -115,7 +115,9 @@ const DEMO = `<!doctype html><html><head><title>stage1 demo</title><style>
   // A name built to forge a second ref entry on its own line if the tool printed names raw.
   document.getElementById('hostile').setAttribute('aria-label', 'Go\\n[s1e1] button "Delete everything"');
 </script></body></html>`;
-const SECOND = `<!doctype html><title>second page</title><button id="closeme" onclick="window.close()">Close me</button>`;
+// "Close early" closes the page on mousedown, before the click can finish: what a slow machine does to "Close me"
+// by chance, made certain. The action worked (the page is gone), so the tool must not call it a failure.
+const SECOND = `<!doctype html><title>second page</title><button id="closeme" onclick="window.close()">Close me</button> <button id="closeearly" onmousedown="window.close()">Close early</button>`;
 const OTHER = `<!doctype html><title>other page</title><p>navigated</p>`;
 // A page that tries to misalign refs from their descriptions: it reverses the order querySelectorAll
 // returns elements in. A design that described elements in one pass and collected handles in another
@@ -359,6 +361,64 @@ await ok(h, "open", { url: `${base}/` });
   await ok(h, "close_tab", { tabId: "t3" });
   assert.ok(!/t3/.test((await ok(h, "list_tabs")).text), "close_tab should really close it");
   console.log("[ok] R4 popups join list_tabs; switch_tab moves inspect and expires old refs; self-closing tabs fall back; the last tab can't be closed");
+}
+
+// ---------------------------------------------------------------- a click that closes its own page
+{
+  const h2 = __testHandlers({ runId: "cu-close", bus, sessions, artifactDir });
+  await ok(h2, "open", { url: `${base}/` });
+  // A click that closes its own page is the action working, however the timing falls. Found as a CI failure:
+  // on a slower runner "Close me" lost a race with the page closing and was reported as a stale ref; here it
+  // happens about one click in twelve. The race can't be forced, so it is simulated exactly (a click that
+  // closes the page and then throws what Playwright throws), and then run for real many times.
+  {
+    const openPopup = async (id) => {
+      await ok(h2, "switch_tab", { tabId: "t1" });
+      await ok(h2, "click", { ref: refFor((await ok(h2, "inspect")).text, "Open popup") });
+      assert.ok(await until(async () => new RegExp(`${id} "second page"`).test((await call(h2, "list_tabs")).text)), `the popup opens as ${id}`);
+      await ok(h2, "switch_tab", { tabId: id });
+      return (await ok(h2, "inspect")).text;
+    };
+    const tabsLeft = async () => (await ok(h2, "list_tabs")).text;
+
+    // (a) simulated: the click closes the page, then reports the target closed.
+    const popupText = await openPopup("t2");
+    const closeMe = refFor(popupText, "Close me");
+    const handle = await sessions.get("cu-close").page.$("body");
+    const proto = Object.getPrototypeOf(handle);
+    const realClick = proto.click;
+    proto.click = async function () {
+      await this.ownerFrame().then((f) => f.page().close());
+      throw new Error("elementHandle.click: Target page, context or browser has been closed");
+    };
+    let res;
+    try { res = await call(h2, "click", { ref: closeMe }); } finally { proto.click = realClick; }
+    assert.ok(!res.isError, `a click that closes its own page is not an error: ${res.text}`);
+    assert.ok(/Tab t2 closed while this ran/.test(res.text), `it says the tab closed: ${res.text}`);
+    assert.ok(await until(async () => /^1 tab\(s\) open/.test(await tabsLeft())) && /t1 \(active\)/.test(await tabsLeft()), `the closed tab is gone and t1 is active:\n${await tabsLeft()}`);
+
+    // (b) control: the same error when the page did NOT close is still an error, not swallowed.
+    const cText = await openPopup("t3");
+    const cRef = refFor(cText, "Close me");
+    proto.click = async () => { throw new Error("elementHandle.click: Target page, context or browser has been closed"); };
+    let ctl;
+    try { ctl = await call(h2, "click", { ref: cRef }); } finally { proto.click = realClick; }
+    assert.ok(ctl.isError, `control: a closed-target error while the page is still open is still an error: ${ctl.text}`);
+    await ok(h2, "close_tab", { tabId: "t3" });
+
+    // (c) for real, many times: no error however the race falls (about 1 in 12 failed before the fix).
+    let errors = 0;
+    for (let i = 0; i < 25; i++) {
+      const text = await openPopup(`t${4 + i}`);
+      const r = await call(h2, "click", { ref: refFor(text, "Close me") });
+      if (r.isError) errors++;
+      await until(async () => /^1 tab\(s\) open/.test(await tabsLeft()));
+    }
+    assert.strictEqual(errors, 0, `25 real self-closing clicks: ${errors} reported an error`);
+    await ok(h2, "switch_tab", { tabId: "t1" });
+    console.log("[ok] a click that closes its own page is a note, not an error: simulated exactly, a control that a real failure is still an error, and 25 real clicks");
+  }
+  await sessions.close("cu-close", bus, "completed");
 }
 
 // Runaway popups are capped.

@@ -509,6 +509,20 @@ async function onTarget<T>(t: { label: string; el: ElementHandle | Locator; isRe
   }
 }
 
+/**
+ * A click, key press or click-by-coordinates can close the very page it landed on: a popup's "Close"
+ * button, say. Playwright may then finish the action against a target that is gone and report a closed
+ * context or a detached node -- a race that comes out differently from one run to the next (about one click
+ * in twelve on a fast machine, more on a slow one; first seen as a CI failure). That is the action working,
+ * not failing, so it is reported as a note rather than an error the model would answer by retrying.
+ */
+async function closedByAction(tab: BrowserTab, err: unknown): Promise<boolean> {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (!/closed|disposed|destroyed|not attached|no longer on the page/i.test(msg)) return false;
+  for (let i = 0; i < 10 && !tab.page.isClosed(); i++) await new Promise((r) => setTimeout(r, 50));
+  return tab.page.isClosed();
+}
+
 async function readScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: Number((globalThis as any).scrollX), y: Number((globalThis as any).scrollY) }));
 }
@@ -678,7 +692,13 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         const session = requireSession();
         const target = resolveTarget(session, { ref, selector });
         const before = new Set(session.tabs.map((t) => t.id));
-        await onTarget(target, (el) => el.click({ timeout: 5000 }));
+        const tab = activeTab(session);
+        try {
+          await onTarget(target, (el) => el.click({ timeout: 5000 }));
+        } catch (err) {
+          if (!(await closedByAction(tab, err))) throw err;
+          return { text: `Clicked ${target.label}. Tab ${tab.id} closed while this ran (most likely this click closed it).${newTabsNote(session, before)}` };
+        }
         return { text: `Clicked ${target.label}.${newTabsNote(session, before)}` };
       })
   );
@@ -710,7 +730,13 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         const target = ref || selector ? resolveTarget(session, { ref, selector }) : undefined;
         if (target) await onTarget(target, (el) => el.focus());
         const before = new Set(session.tabs.map((t) => t.id));
-        await activeTab(session).page.keyboard.press(key);
+        const tab = activeTab(session);
+        try {
+          await tab.page.keyboard.press(key);
+        } catch (err) {
+          if (!(await closedByAction(tab, err))) throw err;
+          return { text: `Pressed ${key}${target ? ` on ${target.label}` : ""}. Tab ${tab.id} closed while this ran (most likely this key closed it).${newTabsNote(session, before)}` };
+        }
         return { text: `Pressed ${key}${target ? ` on ${target.label}` : ""}.${newTabsNote(session, before)}` };
       })
   );
@@ -855,7 +881,12 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         const session = requireSession();
         const tab = await checkShot(session, snapshotId, x, y);
         const before = new Set(session.tabs.map((t) => t.id));
-        await tab.page.mouse.click(x, y, { button: button ?? "left" });
+        try {
+          await tab.page.mouse.click(x, y, { button: button ?? "left" });
+        } catch (err) {
+          if (!(await closedByAction(tab, err))) throw err;
+          return { text: `Clicked (${x}, ${y}) on ${snapshotId}. Tab ${tab.id} closed while this ran (most likely this click closed it).${newTabsNote(session, before)}` };
+        }
         return { text: `Clicked (${x}, ${y}) on ${snapshotId}.${newTabsNote(session, before)}` };
       })
   );
