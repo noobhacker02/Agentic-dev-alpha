@@ -19,6 +19,9 @@ import {
   __testDesktopHandlers,
   MAX_ACTIONS_PER_SESSION,
   MAX_CAPTURES_PER_SESSION,
+  MAX_CAPTURE_BYTES,
+  MAX_CAPTURE_BYTES_TOTAL,
+  __setDriverTimeoutForTests,
 } from "../dist/desktop-tools.js";
 import { classifyDeniedTarget, checkKeyPress, checkTypedText, MAX_TYPED_CHARS } from "../dist/desktop-policy.js";
 import { FakeDesktopDriver, makeWindow, TARGET, TINY_PNG } from "./fake-desktop-driver.mjs";
@@ -175,6 +178,79 @@ const refused = (r, re, msg) => {
   const cap = await ok("capture");
   assert.ok(/unavailable or partial[\s\S]*click by coordinates/.test(cap.text), `a missing tree is stated, not hidden:\n${cap.text}`);
   console.log("[ok] capture: a degraded/missing accessibility tree is reported, and the model is told to use coordinates");
+}
+
+// ---------------------------------------------------------------- a misbehaving driver's captures are refused
+{
+  const { driver, h, call, ok, events, snap } = await open();
+  const good = await snap(); // a valid capture exists first; none of the bad ones below may disturb it
+  const big = Buffer.concat([TINY_PNG.subarray(0, 8), Buffer.alloc(MAX_CAPTURE_BYTES)]);
+  const cases = [
+    ["an oversize image", (c) => ({ ...c, png: big }), /over the 8 MB limit/],
+    ["not a PNG", (c) => ({ ...c, png: Buffer.from("GIF89a....") }), /isn't a PNG/],
+    ["an empty image", (c) => ({ ...c, png: Buffer.alloc(0) }), /isn't a PNG/],
+    ["zero width", (c) => ({ ...c, width: 0 }), /unusable capture size/],
+    ["NaN height", (c) => ({ ...c, height: NaN }), /unusable capture size/],
+    ["a fractional width", (c) => ({ ...c, width: 10.5 }), /unusable capture size/],
+    ["an absurd height", (c) => ({ ...c, height: 1e9 }), /unusable capture size/],
+    ["negative bounds size", (c) => ({ ...c, bounds: { x: 0, y: 0, width: -5, height: 10 } }), /unusable window bounds/],
+    ["missing bounds", (c) => ({ ...c, bounds: undefined }), /unusable window bounds/],
+  ];
+  const saved = events.filter((e) => e.type === "desktop-snapshot").length;
+  for (const [label, mutate, re] of cases) {
+    driver.mutateCapture = mutate;
+    refused(await call("capture"), re, label);
+  }
+  driver.mutateCapture = undefined;
+  assert.strictEqual(events.filter((e) => e.type === "desktop-snapshot").length, saved, "no refused capture was saved or announced");
+  // The earlier, good capture is untouched, so a valid action against it still works.
+  await ok("click", { x: 10, y: 10, snapshotId: good });
+  console.log(`[ok] a misbehaving driver: ${cases.length} kinds of bad capture (oversize, not a PNG, empty, zero/NaN/fractional/absurd size, bad bounds) are refused before anything is saved, and don't disturb the last good capture`);
+}
+
+// ---------------------------------------------------------------- a hung driver can't act later under a stale approval
+{
+  __setDriverTimeoutForTests(150);
+  try {
+    for (const [name, mk] of [
+      ["click", (s) => ({ x: 10, y: 10, snapshotId: s })],
+      ["type_text", (s) => ({ text: "x", snapshotId: s })],
+      ["key", (s) => ({ key: "a", snapshotId: s })],
+    ]) {
+      const { driver, call, snap } = await open();
+      const s = await snap();
+      driver.hang = true;
+      refused(await call(name, mk(s)), /locked[\s\S]*whether the action was sent is unknown|whether the action was sent is unknown[\s\S]*locked/, `${name} against a hung driver`);
+      driver.hang = false; // the driver "wakes up" -- but the session must now refuse everything
+      refused(await call("capture"), /locked/, `after a timed-out ${name}, captures are refused`);
+      refused(await call("click", { x: 1, y: 1, snapshotId: s }), /locked/, `after a timed-out ${name}, input is refused`);
+      assert.strictEqual(driver.inputs.length, 1, `${name}: exactly the one (hung) call ever reached the driver`);
+    }
+    // A timeout while *reading* is just an error: nothing may have happened, so the session stays usable.
+    const { driver, call, ok } = await open();
+    const realCapture = driver.capture.bind(driver);
+    driver.capture = () => new Promise(() => {});
+    const r = await call("capture");
+    assert.ok(r.isError && /timed out/.test(r.text) && !/locked/.test(r.text), `a hung capture is only an error: ${r.text}`);
+    driver.capture = realCapture;
+    await ok("capture");
+    console.log("[ok] a hung driver: a timed-out click, type_text or key locks the session (it may still act later, under a stale approval); a timed-out capture is just an error");
+  } finally {
+    __setDriverTimeoutForTests(20_000);
+  }
+}
+
+// ---------------------------------------------------------------- captures can't fill the disk
+{
+  const { driver, ok, call, events } = await open();
+  const chunk = Buffer.concat([TINY_PNG.subarray(0, 8), Buffer.alloc(MAX_CAPTURE_BYTES - 1024)]);
+  driver.mutateCapture = (c) => ({ ...c, png: chunk });
+  const perCapture = chunk.length;
+  const fit = Math.floor(MAX_CAPTURE_BYTES_TOTAL / perCapture);
+  for (let i = 0; i < fit; i++) await ok("capture");
+  refused(await call("capture"), /captures already total/, `capture ${fit + 1} at ${(perCapture / 1048576).toFixed(1)} MB each`);
+  assert.strictEqual(events.filter((e) => e.type === "desktop-snapshot").length, fit, "the refused capture wasn't saved");
+  console.log(`[ok] captures: ${fit} near-limit captures fit in the ${MAX_CAPTURE_BYTES_TOTAL / 1048576} MB session budget; the next is refused and not written`);
 }
 
 // ---------------------------------------------------------------- happy paths reach the right window

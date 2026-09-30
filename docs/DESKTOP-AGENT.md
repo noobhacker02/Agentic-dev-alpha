@@ -85,14 +85,17 @@ third-party driver's own policy.
    and its bounds must match the capture. Any failure refuses the action, sends nothing, and **locks the
    session**.
 3. **Identity after dispatch.** If the window can't be confirmed afterwards, the result says the action
-   was sent but unconfirmed, and the session locks.
+   was sent but unconfirmed, and the session locks. The same if an input call times out: it may still act
+   later, so nothing more is sent this run (a timed-out *capture* is just an error).
 4. **Input validation.** Keys are an allowlist: one visible ASCII character, F1-F12, or Enter, Tab,
    Escape, Backspace, Delete, Insert, arrows, Home, End, PageUp, PageDown, Space. Modifiers are `ctrl`,
    `shift` and `alt` only: no meta, super, Windows or Command, at all. Combinations that leave the window
    are refused (Alt+Tab, Alt+F-keys, Alt+Escape, Alt+Space, Ctrl+Alt+anything, Ctrl+Escape,
    Ctrl+Shift+Escape). Typed text refuses control characters (newline and tab are fine) and
    invisible/bidi-override characters, so what the prompt shows is what lands in the window.
-5. **Caps (T8).** 60 input actions and 120 captures per session.
+5. **Caps (T8).** 60 input actions and 120 captures per session; each capture at most 8 MB and 16,384 px on a
+   side, and 192 MB of captures in total (they're written to disk). What the driver returns is checked like
+   any untrusted input: a valid PNG, sane dimensions and bounds, or it's refused before anything is saved.
 6. **Nothing reaches the driver on a refusal.** Every refusal test also checks the fake driver's call log.
 
 ### Approval (T3, T5)
@@ -155,12 +158,14 @@ test**). When it can't be read, the target is refused.
 | `test/desktop-cli.mjs` | Startup refusals, with a module-resolution trace proving the driver wasn't loaded (and a positive control proving the trace can see it) |
 | `test/desktop-pipeline.mjs` | A real `runPipeline`: one session per run, only builder/verifier get the tools, driver released on success and failure |
 | `test/ui-desktop.mjs` | The real web UI in a real Chromium: the panel, every prompt (point click with its marker at the right spot, element click, typed text with visible control bytes, key), labels, and hostile window titles and process names staying inert |
+| `test/desktop-real-adversarial.mjs` | Every threat attacked with real windows: a window owned by a process named `xterm`, a same-titled impostor after the target is killed, a window moved and resized after the capture, a decoy that steals keyboard focus between the click and the typing, an overlapping window, a window that retitles itself with an injection, a minimised target. A decoy app logs everything it receives and must end with nothing |
+| `test/desktop-real-nowm.mjs` | The driver's fail-closed claim, checked: with no window manager every input is refused and nothing arrives; capture still works |
 | `test/desktop-real.mjs` | The real native driver, real X11 input, real window manager and a real native window, under Xvfb + openbox. Every effect is checked through the test app's own state file: a channel independent of the driver and the tool results |
 
 The fake driver (`test/fake-desktop-driver.mjs`) says what it does **not** simulate, because a fake is only
 as good as the behavior it admits to leaving out; the real-driver suite covers that.
 
-Mutation checks: each defence above was broken in the built code, one at a time (single-use captures,
+Mutation checks, including against the real scenarios (one survivor found a test that didn't test what it claimed, and was fixed): each defence above was broken in the built code, one at a time (single-use captures,
 bounds check, identity check, post-dispatch check, the rule-for-input check, auto-approval, the no-approval
 deny, interpreter-script denylist, password hiding, Ctrl+Alt, the caps, the window target on key presses,
 foreground delivery, the version pin, the generic-tool gate). Every mutation fails a test.
@@ -169,7 +174,7 @@ foreground delivery, the version pin, the generic-tool gate). Every mutation fai
 
 ```
 sudo apt-get install -y xvfb openbox at-spi2-core dbus dbus-x11 python3-tk
-npm run test:desktop-real
+npm run test:desktop-real        # the real driver, the adversarial scenarios, then the no-window-manager check
 ```
 
 Without the prerequisites it prints a skip and exits 0 locally; CI sets `REQUIRE_DESKTOP_REAL=1`, which
@@ -187,3 +192,9 @@ turns a missing prerequisite into a failure.
 - **A name list can be evaded by renaming a binary.** The human-in-the-loop approval is the control that
   doesn't depend on it.
 - **Foreground input takes focus briefly.** The driver restores the previous window afterwards.
+- **A covered window's hidden part comes back black** on a non-composited X server. Another window's
+  pixels never appear, but the model sees black where the UI is. Composited desktops weren't tested.
+- **A minimised or hidden target locks the session.** The window drops out of the on-screen list, which is
+  indistinguishable from it being closed; restart the run.
+- **Capture can't tell if the window's contents changed after it was taken.** Coordinates are checked
+  against the window's position and size, not its pixels.

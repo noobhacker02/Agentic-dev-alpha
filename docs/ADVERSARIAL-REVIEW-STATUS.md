@@ -29,8 +29,12 @@ these once.
 | 14 | **Browser boundary leaked through WebSockets.** `context.route()` never sees them: a local page's `new WebSocket("ws://<non-allowed host>")` completed an upgrade with finding #4's gate in place | `src/browser-tools.ts` | High (sandbox escape, same boundary as #4) |
 | 15 | **Browser boundary leaked through WebRTC.** `RTCPeerConnection` sent STUN packets over UDP (20 in one probe) and opened TURN connections over TCP to a non-allowed host. Chromium's `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` did not stop it, even to a non-loopback address, so the fix is removing the constructors in every realm (fresh iframe, `srcdoc`, `data:`, `blob:`, popup all checked). Service workers blocked too, per Playwright's docs | `src/browser-tools.ts` | High (sandbox escape) |
 | 16 | No cap on page-opened popups: a page calling `window.open()` 25 times got 26 tabs, each a renderer and a video recording | `src/browser-tools.ts` | Low (DoS, same class as #5) |
+| 17 | **Desktop: a timed-out input could still act later.** A driver call that didn't answer in time was reported as an error, but the call may complete afterwards -- past the single-use capture, the identity checks, and the approval they were all fencing. Found by asking what `withTimeout` means for a call with side effects | `src/desktop-tools.ts` | High (an action outside every fence) |
+| 18 | **Desktop: nothing bounded what a driver hands back.** One huge window meant megabytes of base64 into the model's context per capture; 120 captures at that size is ~1 GB written to disk. The driver's dimensions, bounds and image bytes were trusted as given | `src/desktop-tools.ts` | Medium (DoS, and third-party native code's output treated as trusted) |
+| 19 | **Desktop test that didn't test what it claimed.** The "a decoy holding focus gets no keystrokes" scenario passed with typing that named *no* window at all, because the target still had focus when the keys were sent. Found by mutation: the survivor. Fixed by having the decoy steal focus between the click and the typing | `test/desktop-real-adversarial.mjs` | Test quality |
+| 20 | Desktop real-driver tests raced the window manager's startup. The driver correctly fails closed until the WM has set `_NET_ACTIVE_WINDOW`, so the first action of a run was refused about one time in four | `test/desktop-real*.mjs` | Test reliability |
 
-Every row has a permanent regression test, and the full suite (13 test files, no API cost) plus
+Every row has a permanent regression test, and the full suite (19 test files, no API cost, plus the real-desktop suites) plus
 `test/stress/pipeline_logic.sh` (now 11 scenarios — see case K below) pass after each one — re-run
 at every step, not just once at the end.
 
@@ -185,6 +189,42 @@ at every step, not just once at the end.
   a concurrent writer. Not made a permanent test file, since it's verifying SQLite's own WAL
   guarantee rather than agent-loop's own logic, and 500 real interleaved operations with zero
   failures is a strong enough empirical signal for a guarantee that library already documents.
+
+## Desktop computer use (Stages 3-6): every threat attacked with a real exploit
+
+Each scenario below is built from real windows and real processes under Xvfb + a window manager, run through
+the same session and tool handlers a phase uses, with the real native driver underneath. Every outcome is read
+from the apps' own state files, never from the tool results being tested. Two apps log every click and
+keystroke they receive -- the target the human chose, and an adversary that must end with nothing -- so a
+refusal only counts if the adversary's log is empty too.
+
+| Threat | Exploit constructed | Result | Where |
+|---|---|---|---|
+| T1 typing into a terminal | A window titled "Innocent Notes" owned by a process named `xterm`; a window run from a script named `gnome-terminal`; the name `xterm` given directly | All refused, by real `/proc` identity, nothing sent. The same app under its own name resolves (control) | `test/desktop-real-adversarial.mjs` |
+| T2 on-screen injection / steering | Every field a model could add to steer an action at a decoy window (`windowId`, `pid`, `target`, `scope`, `coordinate_frame`); a window retitling itself with "SYSTEM: ignore the user…", a forged element line and an escape sequence | The chosen window got the click and the typing; the decoy got zero events. The title comes through as one quoted line | same |
+| T3 "don't ask again" stretches | Approve one click with "yes, don't ask again", then another; a desktop tool listed as auto-approved; approval off | The second click asks again; never auto-approved; every desktop tool denied with approval off | `test/desktop-tools.mjs` |
+| T4 swapped target | The target killed and a same-titled impostor started; the real window moved, then resized, after the capture; a decoy that takes keyboard focus between the click and the typing (on top of the target, and elsewhere); a driver that hangs mid-action | Refused and the session locks (impostor: zero events); refused with nothing delivered, re-capturing recovers; all keystrokes reach the target and none reach the decoy; a hung action locks the session | adversarial + tools |
+| T5 no human | `--no-approval`; the approval hook with approval off; a display with **no window manager** | Refused at startup with the driver never loaded (traced); denied; the driver refuses every input ("`foreground_unavailable`, no input was sent") and the app's log shows nothing arrived, while capture (read-only) still works | `test/desktop-cli.mjs`, `test/desktop-real-nowm.mjs` |
+| T6 capturing what isn't the target | A solid red window covering part of the target; a driver returning an oversize, non-PNG, zero-sized or absurd capture; passwords and secrets in fields | The capture is exactly the target's 420x260 with **0** red pixels; bad captures are refused before anything is saved; values are `(hidden)` | adversarial + tools |
+| T7 supply chain | A complete run without `--desktop-target`; a driver reporting another version; the lockfile | The native driver is never loaded (traced across a whole run); a mismatched version is refused before it does anything; exact pin + integrity hash | `test/desktop-cli.mjs`, `test/desktop-adapter.mjs` |
+| T8 runaway loops | 61 input actions, 121 captures, 25 near-limit captures | The next is refused, and nothing is written | `test/desktop-tools.mjs` |
+
+Mutation check: 17 mutations of the built code for Stages 3-4, 5 for the UI, 5 more for the defences this round
+added, and 4 of the code against the real adversarial scenarios (drop the process-identity check, drop the
+bounds check, type without naming the window, drop foreground delivery). One of those four survived --
+finding 19 above -- and was fixed by strengthening the test, not by ignoring it. A fifth (drop the pid from
+the window match) survived for a different reason: the driver call is already filtered by pid, so the extra
+check is redundant defence in depth that nothing can observe.
+
+Accepted and documented (`docs/DESKTOP-AGENT.md` section 7), not fixed:
+- **A covered window's hidden part is black** on a non-composited X server (here, 67,958 of 109,200 pixels
+  with a window on top). Nothing from the covering window leaks, but the model sees black where the UI is.
+  A composited desktop (GNOME, KDE) wasn't tested.
+- **A minimised target locks the session** (it drops out of the on-screen list): fail closed, restart the run.
+- **A name list can be evaded by renaming a binary.** The control that doesn't depend on it is the human
+  approving each action.
+- Linux/X11 only is tested: macOS, Windows and Wayland are not. The accessibility tree needs AT-SPI, which
+  the test apps don't expose, so `click` by element is tested against the fake only.
 
 ## Found this round and designed out before shipping (Stage 1 computer use)
 

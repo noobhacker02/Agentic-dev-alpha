@@ -22,6 +22,20 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Computer use, Stage 6: every desktop threat attacked with a real exploit**
+  (`docs/ADVERSARIAL-REVIEW-STATUS.md`, findings 17-20). Real windows and processes under Xvfb + a window
+  manager, through the real driver, checked by two apps that log everything they receive:
+  - a window owned by a process named `xterm` and one run from a script named `gnome-terminal` are refused
+    by real `/proc` identity, whatever the title says;
+  - extra `windowId`/`pid`/`target` fields steer nothing (the decoy gets zero events);
+  - a killed target replaced by a same-titled impostor, a window moved or resized after the capture, and a
+    decoy that steals keyboard focus between the click and the typing each end with the adversary's log empty;
+  - an overlapping red window contributes 0 red pixels to a capture;
+  - with no window manager every input is refused by the driver and nothing arrives (capture still works);
+  - a whole run without `--desktop-target` never loads the native driver (traced).
+  Mutation checks against the real scenarios found a test that didn't test what it claimed (typing that named
+  no window still passed because the target kept focus); fixed by stealing focus mid-sequence.
+  `npm run test:desktop-real` runs all three real-driver files; CI does, with `REQUIRE_DESKTOP_REAL=1`.
 - **Computer use, Stage 5: desktop visibility.**
   - **The approval prompt shows what is being approved.** The window, the exact action, and in the web
     UI **the window as it was captured**, with a marker on the exact spot a click would land (checked to
@@ -203,6 +217,12 @@ All notable changes to this project are documented here. Format follows
   installed copies (this repo's and Dev-Skill's own `.githooks/`).
 
 ### Security
+- **Desktop: a timed-out input could still act later.** A driver call that didn't answer in time was reported
+  as an error, but may complete afterwards -- past the single-use capture, the identity checks and the
+  approval. A timed-out click, type_text or key now locks the session (a timed-out capture stays an error).
+- **Desktop: nothing bounded what the driver handed back.** One huge window meant megabytes of base64 into
+  the model's context per capture, and 120 of them ~1 GB on disk. Captures are now validated (a PNG, sane
+  dimensions and bounds) and bounded (8 MB each, 192 MB per session) before anything is saved or shown.
 - **The browser's local-only boundary leaked through WebSockets and WebRTC.** `context.route()`
   sees neither channel. Found by probing the channels Playwright documents it doesn't cover, against
   a listener on `127.0.0.2` (loopback, but not an allowed host):

@@ -42,6 +42,10 @@ export class FakeDesktopDriver {
     /** Hooks a test sets to do something to the world at a precise moment. */
     this.onCapture = undefined;
     this.onInput = undefined;
+    /** When true, input calls never answer: a hung native driver. */
+    this.hang = false;
+    /** Rewrite a capture before it's returned, to simulate a misbehaving native driver. */
+    this.mutateCapture = undefined;
     this.closeError = undefined;
     this.snapshotN = 0;
     this.capWidth = opts.capWidth ?? 420;
@@ -63,7 +67,7 @@ export class FakeDesktopDriver {
     await this.onCapture?.(this);
     const win = this.windows.find((x) => x.pid === w.pid && x.windowId === w.windowId);
     if (!win) throw new Error("no such window");
-    return {
+    const cap = {
       snapshotId: `s${String(++this.snapshotN).padStart(8, "0")}`,
       bounds: { ...win.bounds },
       width: this.capWidth,
@@ -74,10 +78,12 @@ export class FakeDesktopDriver {
       degradedReason: this.degraded ? "atspi_walk_failed: fake" : undefined,
       truncated: false,
     };
+    return this.mutateCapture ? this.mutateCapture(cap) : cap;
   }
 
   async #input(name, ...args) {
     this.calls.push([name, ...args]);
+    if (this.hang) await new Promise(() => {}); // never answers
     await this.onInput?.(this, name);
     return this.inputResult;
   }

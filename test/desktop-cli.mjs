@@ -66,13 +66,30 @@ for (const args of [["--desktop-target"], ["--desktop-target", "   "], ["--deskt
 }
 console.log("[ok] --desktop-target with no value (or a blank one) is refused with a usage hint");
 
-// A run without the flag never touches the driver (and says so).
+// T7: a whole run that doesn't ask for desktop tools never loads the native driver at all -- every other
+// user of agent-loop is unaffected by it being installed. A complete (fake-model) run, traced.
 {
-  const r = run(["--desktop-target", "xterm", "--browser"], "combo");
-  assert.strictEqual(r.status, 1);
+  const traceFile = join(scratch, "plain-run.trace");
+  const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).pathname;
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-sqlite", "--no-warnings", "--import", trace, "--import", fakeSdk, cli, "run", "build a thing", "--dir", join(scratch, "plain-ws"), "--data-dir", join(scratch, "plain-data"), "--port", "0", "--no-approval"],
+    { encoding: "utf8", timeout: 90_000, env: { ...process.env, TRACE_RESOLVE_FILE: traceFile, FAKE_SCENARIO: "trivial-skip" }, stdio: ["ignore", "pipe", "pipe"] }
+  );
+  const out = `${r.stdout}${r.stderr}`;
+  const specifiers = readFileSync(traceFile, "utf8").split("\n");
+  assert.strictEqual(r.status, 0, `the plain run should finish: ${out.slice(-400)}`);
+  assert.ok(/Desktop tools: OFF/.test(out), out);
+  assert.ok(specifiers.length > 20, "the trace saw the run's module loads (so its silence about the driver means something)");
+  assert.ok(!specifiers.some((x) => x.includes("cua-driver") || x.endsWith("desktop-driver-cua.js")), "a run without --desktop-target never loads the native driver");
+  console.log("[ok] T7: a complete run without --desktop-target never loads the native driver (traced), and says Desktop tools: OFF");
+}
+
+{
   const help = spawnSync(process.execPath, [cli], { encoding: "utf8" });
-  assert.ok(/--desktop-target/.test(help.stdout) && /Every\s+action needs a human's approval/.test(help.stdout.replace(/\n\s+/g, " ").replace(/Every action/, "Every  action")) || /--desktop-target/.test(help.stdout), "the flag is documented in --help");
-  console.log("[ok] the flag is documented in the usage text");
+  assert.ok(/--desktop-target/.test(help.stdout), "the flag is documented in the usage text");
+  assert.ok(/refused with --no-approval/i.test(help.stdout.replace(/\s+/g, " ")), "...including that it's refused with --no-approval");
+  console.log("[ok] the flag and its refusals are documented in the usage text");
 }
 
 console.log("\nALL DESKTOP CLI TESTS PASSED");

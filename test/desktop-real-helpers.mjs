@@ -2,11 +2,20 @@
 // (test/desktop-app/app.py), and read back its state file -- a channel independent of the driver and of
 // the tool results under test.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, symlinkSync, appendFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const APP = new URL("./desktop-app/app.py", import.meta.url).pathname;
+export const DECOY = new URL("./desktop-app/decoy.py", import.meta.url).pathname;
+
+/** A copy of the test app under another file name, so the interpreter's script (argv[1]) says what you like. */
+export function copyAppAs(name) {
+  const dir = mkdtempSync(join(tmpdir(), "agent-loop-script-"));
+  const path = join(dir, name);
+  copyFileSync(APP, path);
+  return path;
+}
 
 /** Missing prerequisites are a skip locally and a failure in CI (REQUIRE_DESKTOP_REAL=1): a check that
  * silently didn't run is the failure mode this whole project keeps finding. */
@@ -43,23 +52,26 @@ export async function until(fn, ms = 8000, step = 80) {
  * Starts the test app. `asName` runs it through a symlink of the interpreter with that name, so the
  * process's own name (/proc/<pid>/comm) is, say, "xterm" while its window title says something innocent.
  */
-export function startApp(python, { title, asName, geometry } = {}) {
+export function startApp(python, { title, asName, geometry, script = APP } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "agent-loop-app-"));
   const stateFile = join(dir, "state.jsonl");
+  const cmdFile = join(dir, "commands.txt");
   let exe = python;
   if (asName) {
     const real = spawnSync("sh", ["-c", `command -v ${python}`], { encoding: "utf8" }).stdout.trim() || python;
     exe = join(dir, asName);
     symlinkSync(real, exe);
   }
-  const proc = spawn(exe, [APP, title], {
+  const proc = spawn(exe, [script, title], {
     stdio: "ignore",
-    env: { ...process.env, AGENT_LOOP_TEST_APP_STATE: stateFile, ...(geometry ? { AGENT_LOOP_TEST_APP_GEOMETRY: geometry } : {}) },
+    env: { ...process.env, AGENT_LOOP_TEST_APP_STATE: stateFile, AGENT_LOOP_TEST_APP_CMD: cmdFile, ...(geometry ? { AGENT_LOOP_TEST_APP_GEOMETRY: geometry } : {}) },
   });
   const events = () => (existsSync(stateFile) ? readFileSync(stateFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
   return {
     proc,
     stateFile,
+    /** Tell the running app to move, resize, retitle or iconify itself (see test/desktop-app/app.py). */
+    command: (line) => appendFileSync(cmdFile, line + "\n"),
     events,
     ready: () => until(() => events().some((e) => e.event === "ready"), 10_000),
     last: (kind) => events().filter((e) => e.event === kind).pop(),

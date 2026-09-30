@@ -126,13 +126,48 @@ export const MAX_ACTIONS_PER_SESSION = 60;
 export const MAX_CAPTURES_PER_SESSION = 120;
 const MAX_ELEMENTS_SHOWN = 80;
 const DRIVER_CALL_TIMEOUT_MS = 20_000;
+/** A capture goes into the model's context and the transcript, so its size is bounded: a window the size of
+ * a wall would otherwise be eight megapixels of base64 per call. */
+export const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
+const MAX_CAPTURE_DIMENSION = 16_384;
+/** Every capture is also written to disk (outside --dir), so the whole session's captures are bounded too:
+ * 120 captures at the per-capture limit would be nearly a gigabyte. */
+export const MAX_CAPTURE_BYTES_TOTAL = 192 * 1024 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** What a capture must look like before anything is saved or shown: the driver is third-party native
+ * code, and what it returns is checked like any other untrusted input. */
+function checkCapture(cap: DriverCapture): void {
+  const dimOk = (n: unknown) => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_CAPTURE_DIMENSION;
+  if (!dimOk(cap.width) || !dimOk(cap.height)) throw new Error(`The driver reported an unusable capture size (${String(cap.width)}x${String(cap.height)}).`);
+  const b = cap.bounds;
+  if (!b || ![b.x, b.y, b.width, b.height].every((n) => typeof n === "number" && Number.isFinite(n)) || b.width < 1 || b.height < 1) {
+    throw new Error("The driver reported unusable window bounds for the capture.");
+  }
+  if (!Buffer.isBuffer(cap.png) || cap.png.length < PNG_MAGIC.length || !cap.png.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) {
+    throw new Error("The driver's capture isn't a PNG image.");
+  }
+  if (cap.png.length > MAX_CAPTURE_BYTES) {
+    throw new Error(`The capture is ${(cap.png.length / 1048576).toFixed(1)} MB, over the ${MAX_CAPTURE_BYTES / 1048576} MB limit. Make the window smaller and capture again.`);
+  }
+}
+
+/** Thrown when a driver call didn't answer in time. For input, that's the dangerous kind of failure: the
+ * call may still complete later, so whether the action happened is unknown (see guardedInput). */
+class DriverTimeout extends Error {}
+
+let driverCallTimeoutMs = DRIVER_CALL_TIMEOUT_MS;
+/** Test hook: shrink the driver-call timeout so a hung driver can be simulated quickly. */
+export function __setDriverTimeoutForTests(ms: number): void {
+  driverCallTimeoutMs = ms;
+}
 
 function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
   let timer: NodeJS.Timeout;
   return Promise.race([
     p,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timed out after ${DRIVER_CALL_TIMEOUT_MS / 1000}s`)), DRIVER_CALL_TIMEOUT_MS);
+      timer = setTimeout(() => reject(new DriverTimeout(`${label} timed out after ${driverCallTimeoutMs / 1000}s`)), driverCallTimeoutMs);
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -260,6 +295,7 @@ export async function resolveDesktopTarget(opts: ResolveDesktopTargetOptions): P
 export class DesktopSession {
   readonly desktopSessionId = randomUUID();
   private captureCount = 0;
+  private capturedBytes = 0;
   private actionCount = 0;
   private shotCounter = 0;
   private last?: CaptureRecord;
@@ -381,6 +417,11 @@ export class DesktopSession {
     const cap = await withTimeout(this.driver.capture({ pid: this.target.pid, windowId: this.target.windowId }), "capturing the window");
     const after = await this.verifyTarget();
     if (!sameBounds(before.bounds, after.bounds)) throw new Error("The window moved or resized while it was being captured. Capture again.");
+    checkCapture(cap);
+    if (this.capturedBytes + cap.png.length > MAX_CAPTURE_BYTES_TOTAL) {
+      throw new Error(`Refused: this session's captures already total ${(this.capturedBytes / 1048576).toFixed(0)} MB, at the ${MAX_CAPTURE_BYTES_TOTAL / 1048576} MB limit for one run.`);
+    }
+    this.capturedBytes += cap.png.length;
 
     const n = ++this.shotCounter;
     const rec: CaptureRecord = { id: `dshot-${n}`, n, bounds: cap.bounds, width: cap.width, height: cap.height, consumed: false, tokens: new Map() };
@@ -478,6 +519,20 @@ export class DesktopSession {
     return `${summary} Capture again before the next action.`;
   }
 
+  /**
+   * Sends one input action and, if the driver doesn't answer in time, locks the session. A timeout on a
+   * read is just an error; on an input it isn't: the driver may still act later, after the fences that
+   * were checked have long since stopped meaning anything, so nothing more is sent this run.
+   */
+  private async guardedInput(label: string, send: () => Promise<DriverActionResult>): Promise<DriverActionResult> {
+    try {
+      return await withTimeout(send(), label);
+    } catch (err) {
+      if (err instanceof DriverTimeout) throw this.lock(`${label} timed out, so whether the action was sent is unknown`);
+      throw err;
+    }
+  }
+
   private driverSummary(r: DriverActionResult): string {
     if (!r.ok) throw new Error(`The driver refused the action: ${cleanText(r.summary, 300)}`);
     return cleanText(r.summary, 300);
@@ -493,7 +548,7 @@ export class DesktopSession {
       const rec = await this.gate(snapshotId);
       const token = rec.tokens.get(input.ref);
       if (!token) throw new Error(`Unknown ref ${input.ref}: capture ${rec.id} has no clickable element e${m[2]}.`);
-      const r = await withTimeout(this.driver.clickElement(w, token), "clicking");
+      const r = await this.guardedInput("clicking", () => this.driver.clickElement(w, token));
       return this.afterDispatch(`Clicked ${input.ref}. ${this.driverSummary(r)}`);
     }
     if (input.x === undefined || input.y === undefined || input.snapshotId === undefined) {
@@ -501,7 +556,7 @@ export class DesktopSession {
     }
     const { x, y } = input;
     await this.gate(input.snapshotId, { x, y });
-    const r = await withTimeout(this.driver.click(w, { x, y, button: input.button ?? "left", count: input.count ?? 1 }), "clicking");
+    const r = await this.guardedInput("clicking", () => this.driver.click(w, { x, y, button: input.button ?? "left", count: input.count ?? 1 }));
     return this.afterDispatch(`Clicked (${x}, ${y}) on ${input.snapshotId}. ${this.driverSummary(r)}`);
   }
 
@@ -509,7 +564,7 @@ export class DesktopSession {
     const bad = checkTypedText(input.text);
     if (bad) throw new Error(`Refused: ${bad}.`);
     await this.gate(input.snapshotId);
-    const r = await withTimeout(this.driver.typeText({ pid: this.target.pid, windowId: this.target.windowId }, input.text), "typing");
+    const r = await this.guardedInput("typing", () => this.driver.typeText({ pid: this.target.pid, windowId: this.target.windowId }, input.text));
     return this.afterDispatch(`Typed ${input.text.length} character(s) on ${input.snapshotId}. ${this.driverSummary(r)}`);
   }
 
@@ -518,7 +573,7 @@ export class DesktopSession {
     const bad = checkKeyPress(input.key, mods);
     if (bad) throw new Error(`Refused: ${bad}.`);
     await this.gate(input.snapshotId);
-    const r = await withTimeout(this.driver.pressKey({ pid: this.target.pid, windowId: this.target.windowId }, input.key, mods), "pressing the key");
+    const r = await this.guardedInput("pressing the key", () => this.driver.pressKey({ pid: this.target.pid, windowId: this.target.windowId }, input.key, mods));
     return this.afterDispatch(`Pressed ${mods.length ? mods.join("+") + "+" : ""}${cleanText(input.key, 20)} on ${input.snapshotId}. ${this.driverSummary(r)}`);
   }
 

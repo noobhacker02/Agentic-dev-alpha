@@ -34,6 +34,36 @@ def bump() -> None:
     log(event="click", count=count)
 
 
+# Adversarial tests drive the window from outside by appending commands to a file (AGENT_LOOP_TEST_APP_CMD):
+#   move X Y | resize W H | title TEXT | iconify | deiconify
+cmd_path = os.environ.get("AGENT_LOOP_TEST_APP_CMD")
+cmd_offset = 0
+
+
+def poll_commands() -> None:
+    global cmd_offset
+    if cmd_path and os.path.exists(cmd_path):
+        with open(cmd_path) as f:
+            f.seek(cmd_offset)
+            for line in f.read().splitlines():
+                op, _, rest = line.partition(" ")
+                if op == "move":
+                    x, y = rest.split()
+                    root.geometry(f"+{x}+{y}")
+                elif op == "resize":
+                    w, h = rest.split()
+                    root.geometry(f"{w}x{h}")
+                elif op == "title":
+                    root.title(rest.replace("\\n", "\n").replace("\\x1b", "\x1b"))
+                elif op == "iconify":
+                    root.iconify()
+                elif op == "deiconify":
+                    root.deiconify()
+                log(event="command", command=line)
+            cmd_offset = f.tell()
+    root.after(80, poll_commands)
+
+
 retitle("ready")
 tk.Button(root, text="Increment", command=bump, font=("TkDefaultFont", 16)).place(x=20, y=20, width=200, height=60)
 entry = tk.Entry(root, font=("TkDefaultFont", 16))
@@ -47,5 +77,6 @@ def on_key(event) -> None:
 
 entry.bind("<KeyRelease>", on_key)
 tk.Label(root, text="Type here, press the button", font=("TkDefaultFont", 12)).place(x=20, y=170)
+poll_commands()
 log(event="ready", title=f"{prefix} | ready")
 root.mainloop()

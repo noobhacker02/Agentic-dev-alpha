@@ -6,7 +6,7 @@
 > conversation's context could implement a stage from this file and know when it's done.
 >
 > **Status:** Stage 1 is done ("Stage 1 as built"). The human go for Stages 3–6 is recorded under
-> Stage 2. Stages 3–5 are done ("as built" sections). Stage 6 follows.
+> Stage 2. Stages 3–6 are done ("as built" sections).
 
 ## Request
 
@@ -195,6 +195,20 @@ differs from the plan below, and why:
   on the matching `approval-request`.
 - Control bytes in typed text are shown as `⟨0xNN⟩`, not stripped: a prompt that hid an escape sequence would
   show less than would be typed (the tool refuses such text regardless).
+
+### Stage 6 as built
+
+The red-team pass is recorded in `docs/ADVERSARIAL-REVIEW-STATUS.md` (a table of each threat, the exploit
+built for it, and the result). What it changed:
+
+- Two real defects fixed (a timed-out input could act later under a stale approval; nothing bounded the
+  driver's output), and two test problems fixed (one test that didn't test what it claimed, found by a
+  mutation surviving; a startup race).
+- The "fails closed" claims about the driver are now checked rather than assumed: a display with no window
+  manager is its own test (`test/desktop-real-nowm.mjs`).
+- Accepted and documented, not fixed: a covered window's hidden part is black on non-composited X; a
+  minimised target locks the session; the name list can be evaded by renaming a binary; only Linux/X11 is
+  tested; `click` by element is tested against the fake only (no accessible test app).
 
 ### Stage 6 — Adversarial round and lessons
 

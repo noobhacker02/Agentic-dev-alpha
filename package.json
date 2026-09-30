@@ -33,7 +33,7 @@
     "test:desktop-tools": "node test/desktop-tools.mjs",
     "test:desktop-adapter": "node test/desktop-adapter.mjs",
     "test:desktop-cli": "node test/desktop-cli.mjs",
-    "test:desktop-real": "bash test/desktop-real.sh test/desktop-real.mjs",
+    "test:desktop-real": "bash test/desktop-real.sh test/desktop-real.mjs test/desktop-real-adversarial.mjs && AGENT_LOOP_TEST_NO_WM=1 bash test/desktop-real.sh test/desktop-real-nowm.mjs",
     "test:desktop-pipeline": "node --experimental-sqlite --no-warnings --import ./test/stress/fake-sdk/register.mjs test/desktop-pipeline.mjs",
     "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs"
   },
