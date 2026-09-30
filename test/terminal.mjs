@@ -40,6 +40,36 @@ console.log("[ok] transcript lines: ⏺ Read(server.js) / ⎿  a … +2 lines");
   console.log("[ok] browser labels show refs, screenshot points, tabs, and select values");
 }
 
+// A desktop approval names the window, the exact action, and the capture it was planned from -- and, since
+// desktop input never gets a rule, offers no "don't ask again". Untrusted text in it is made inert.
+{
+  bus.emitEvent({ type: "desktop-session-started", runId, desktopSessionId: "d1", target: { processName: "python3.12", appName: "Tk", pid: 4242, windowId: "8388611", title: "My App" }, driverVersion: "0.30.4", ts: ts() });
+  bus.emitEvent({ type: "desktop-snapshot", runId, desktopSessionId: "d1", snapshotId: "dshot-1", title: "My App", width: 420, height: 260, screenshotPath: "/x/y.png", ts: ts() });
+  assert.ok(text.includes('Desktop target') && text.includes('python3.12 (pid 4242) "My App"'), "the chosen window is announced");
+  const before = text.length;
+  const typedText = "ab\ncd\u001b]52;c;ZXZpbA==\u0007";
+  const typed = bus.requestApproval({ runId, phase: "verifier", toolUseId: "dt1", toolName: "mcp__desktop__type_text", toolInput: { text: typedText, snapshotId: "dshot-1" } });
+  const shown = text.slice(before);
+  assert.ok(shown.includes("Desktop: type_text"), shown);
+  assert.ok(shown.includes('Window: python3.12 (pid 4242) "My App"'), "the prompt names the window");
+  assert.ok(new RegExp(`Type ${typedText.length} character\\(s\\), exactly \\(capture dshot-1, 420x260`).test(shown), `the prompt counts what is typed and names the capture: ${shown}`);
+  assert.ok(shown.includes('"ab↵"') && shown.includes("cd"), "newlines are made visible");
+  assert.ok(!/\u001b|\u0007/.test(shown), "escape bytes in the typed text never reach the terminal raw...");
+  assert.ok(shown.includes("⟨0x1b⟩") && shown.includes("⟨0x07⟩"), "...and are shown as visible markers, not silently dropped, so the prompt shows everything that would be typed");
+  assert.ok(shown.includes("desktop input: asked every time, one action at a time"), "and the prompt says why there's no shortcut");
+  assert.ok(!shown.includes("don't ask again"), "no 'don't ask again' for desktop input");
+  assert.ok(/2\. No, and tell the agent/.test(shown), "the options are just yes and no");
+  input.write("1"); await tick();
+  assert.deepStrictEqual(await typed.wait, { decision: "allow", reason: undefined, remember: undefined });
+
+  const b2 = text.length;
+  const click = bus.requestApproval({ runId, phase: "verifier", toolUseId: "dt2", toolName: "mcp__desktop__click", toolInput: { x: 105, y: 65, snapshotId: "dshot-1", count: 2 } });
+  assert.ok(text.slice(b2).includes("Click at (105, 65)") && text.slice(b2).includes("x2") && text.slice(b2).includes("capture dshot-1, 420x260"), text.slice(b2));
+  input.write("n"); input.write("\r"); await tick();
+  assert.strictEqual((await click.wait).decision, "deny");
+  console.log("[ok] desktop approvals name the window, the exact action and its capture, make typed text inert, and offer no 'don't ask again'");
+}
+
 // 2 = yes, and don't ask again
 bus.emitEvent({ type: "tool-call", runId, phase: "builder", toolUseId: "t2", toolName: "Bash", toolInput: { command: "npm test" }, ts: ts() });
 const r1 = bus.requestApproval({ runId, phase: "builder", toolUseId: "t2", toolName: "Bash", toolInput: { command: "npm test" }, rule: "Bash(npm test:*)" });

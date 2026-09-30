@@ -6,7 +6,7 @@
 > conversation's context could implement a stage from this file and know when it's done.
 >
 > **Status:** Stage 1 is done ("Stage 1 as built"). The human go for Stages 3–6 is recorded under
-> Stage 2. Stages 3–4 are done ("Stages 3-4 as built"). Stages 5–6 follow.
+> Stage 2. Stages 3–5 are done ("as built" sections). Stage 6 follows.
 
 ## Request
 
@@ -184,6 +184,17 @@ differs from the plan below, and why:
 - The approval prompt shows the exact action, the target, and a thumbnail of the window as it was
   captured.
 - `agent-loop insights` counts desktop actions and denials.
+
+### Stage 5 as built
+
+- The desktop panel reuses the browser panel's behaviour (gallery, pin, jump to live, live dot) with its own
+  markup, so the browser panel's tests and selectors are untouched.
+- The approval thumbnail is the capture the action was planned from, and for a click by coordinates it
+  carries a marker at the exact point. For a click by element the prompt names the element from that capture.
+- `insights` needed a join: a human's answer is on `approval-resolved`, but which tool it was about is only
+  on the matching `approval-request`.
+- Control bytes in typed text are shown as `⟨0xNN⟩`, not stripped: a prompt that hid an escape sequence would
+  show less than would be typed (the tool refuses such text regardless).
 
 ### Stage 6 — Adversarial round and lessons
 

@@ -266,7 +266,7 @@ change the target, touch the clipboard, capture the full screen, or manage other
 Each action is tied to the capture it was planned from and uses it up, and the window's identity is
 verified before and after every action; a swapped window locks the session. The native driver
 (`@trycua/cua-driver`, an optional dependency pinned to an exact version) is only loaded when the flag is
-used. Tested against the real driver on Linux/X11; macOS and Windows are not yet verified. Full reference,
+used. The approval prompt shows the window as it was captured with a marker on the exact spot a click would land, and typed text verbatim; there's a side panel with every capture, and `agent-loop insights` counts desktop use. Tested against the real driver on Linux/X11; macOS and Windows are not yet verified. Full reference,
 controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 Real session recordings (`.mp4`, click through to view — GitHub still won't autoplay them inline in this
 text, but its own file viewer plays them, and any regular media player will too):

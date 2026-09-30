@@ -69,6 +69,15 @@ function printInsights(insights: Insights) {
       `(avg ${p.avgAttempts.toFixed(1)} attempt(s))` + (cost ? `, $${cost.toFixed(2)}` : "")
     );
   }
+  const dk = insights.desktop;
+  if (dk.sessions > 0 || dk.captures > 0) {
+    const sent = Object.values(dk.actions).reduce((n, a) => n + a.sent, 0);
+    const refused = Object.values(dk.actions).reduce((n, a) => n + a.refused, 0);
+    const byTool = Object.entries(dk.actions).filter(([, a]) => a.sent > 0).map(([t, a]) => `${t} ${a.sent}`).join(", ");
+    console.log(`\nDesktop tools: ${dk.sessions} session(s), ${dk.captures} capture(s)`);
+    console.log(`  input actions sent: ${sent}${byTool ? ` (${byTool})` : ""}; stopped by the tools' own checks or the driver: ${refused}`);
+    console.log(`  human answers: ${dk.humanApproved} approved, ${dk.humanDenied} denied`);
+  }
   if (insights.topRules.length) {
     console.log(`\nMost-reused "don't ask again" rules:`);
     for (const r of insights.topRules.slice(0, 10)) console.log(`  ${r.count}x  ${stripTerminalControlBytes(r.rule)}`);

@@ -22,6 +22,24 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Computer use, Stage 5: desktop visibility.**
+  - **The approval prompt shows what is being approved.** The window, the exact action, and in the web
+    UI **the window as it was captured**, with a marker on the exact spot a click would land (checked to
+    sit at x/width, y/height of the image). Typed text is shown verbatim with newlines and tabs made
+    visible and control bytes shown as `⟨0x1b⟩` rather than silently dropped. A click by element says what
+    the element is. No "don't ask again", and the prompt says why.
+  - **A Desktop panel**: target, latest capture, a gallery with pin and jump-to-live, capture and action
+    counts. The saved report includes it.
+  - **`agent-loop insights`** counts desktop sessions, captures, input actions sent versus stopped, and
+    human approvals versus denials (joined through the approval request, so a Bash answer isn't mixed in).
+  - **The terminal prompt** names the window, the action and the capture, and makes control bytes visible.
+  - Tool labels for browser and desktop calls are one line with control bytes dropped.
+  - `test/ui-desktop.mjs` drives the real UI in a real Chromium; 5 mutations of the UI (x/y marker swap,
+    unescaped typed text, unescaped title, capture counted as an action, missing element description)
+    each fail it. Real captures of a real native window are committed under `docs/screenshots/desktop/`.
+  - Found while testing: the dock's `.body` is a flex row, so a prompt made of several blocks rendered
+    them side by side; fixed with a single wrapper. The real-driver test raced the window manager's startup
+    (the driver fails closed until it has set `_NET_ACTIVE_WINDOW`); it now waits for it.
 - **Computer use, Stages 3-4: desktop tools for exactly one human-chosen window**
   (`docs/DESKTOP-AGENT.md`, `specs/computer-use/SPEC.md`). `--desktop-target "<app>"` lets builder and
   verifier see and operate one already-running native window through five tools (`capture`,

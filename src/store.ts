@@ -234,7 +234,47 @@ export class Store {
     const neverReusedRules = [...rulesCreated].filter((r) => !ruleUseCounts.has(r));
     const topRules = [...ruleUseCounts.entries()].sort((a, b) => b[1] - a[1]).map(([rule, count]) => ({ rule, count }));
 
-    return { totalRuns, byStatus, byPhase, totalCost, costByPhase: Object.fromEntries(costByPhase), topRules, neverReusedRules };
+    return {
+      totalRuns, byStatus, byPhase, totalCost, costByPhase: Object.fromEntries(costByPhase), topRules, neverReusedRules,
+      desktop: this.desktopInsights(),
+    };
+  }
+
+  /**
+   * Desktop computer use, from events already recorded (src/desktop-tools.ts): how much of it happened,
+   * how often the tools' own checks said no, and how often a human did. "Input" means click, type_text
+   * and key -- the tools that can change something.
+   */
+  private desktopInsights(): DesktopInsights {
+    const count = (type: string) => (this.db.prepare("SELECT COUNT(*) as n FROM events WHERE type = ?").get(type) as { n: number }).n;
+    const input = new Set(["click", "type_text", "key"]);
+    const actions: Record<string, { sent: number; refused: number }> = {};
+    const doneRows = this.db.prepare("SELECT payload_json as p FROM events WHERE type = 'desktop-action-completed'").all() as Array<{ p: string }>;
+    for (const row of doneRows) {
+      const ev = JSON.parse(row.p) as { toolName?: string; isError?: boolean };
+      if (!ev.toolName || !input.has(ev.toolName)) continue;
+      const a = (actions[ev.toolName] ??= { sent: 0, refused: 0 });
+      if (ev.isError) a.refused++;
+      else a.sent++;
+    }
+    // A human's answer is on an approval-resolved event; which tool it was about is on the matching
+    // approval-request (same requestId), so join the two.
+    const desktopRequests = new Set<string>();
+    const reqRows = this.db.prepare("SELECT payload_json as p FROM events WHERE type = 'approval-request'").all() as Array<{ p: string }>;
+    for (const row of reqRows) {
+      const ev = JSON.parse(row.p) as { requestId?: string; toolName?: string };
+      if (ev.requestId && ev.toolName?.startsWith("mcp__desktop__")) desktopRequests.add(ev.requestId);
+    }
+    let humanApproved = 0;
+    let humanDenied = 0;
+    const resRows = this.db.prepare("SELECT payload_json as p FROM events WHERE type = 'approval-resolved'").all() as Array<{ p: string }>;
+    for (const row of resRows) {
+      const ev = JSON.parse(row.p) as { requestId?: string; decision?: string };
+      if (!ev.requestId || !desktopRequests.has(ev.requestId)) continue;
+      if (ev.decision === "deny") humanDenied++;
+      else humanApproved++;
+    }
+    return { sessions: count("desktop-session-started"), captures: count("desktop-snapshot"), actions, humanApproved, humanDenied };
   }
 
   close() {
@@ -250,4 +290,16 @@ export interface Insights {
   costByPhase: Record<string, number>;
   topRules: Array<{ rule: string; count: number }>;
   neverReusedRules: string[];
+  desktop: DesktopInsights;
+}
+
+export interface DesktopInsights {
+  sessions: number;
+  captures: number;
+  /** Input tools only. `sent` reached the driver; `refused` were stopped by the tools' own checks
+   * (a stale capture, a swapped window, a denied key...) or the driver. */
+  actions: Record<string, { sent: number; refused: number }>;
+  /** Human answers to desktop approval requests. */
+  humanApproved: number;
+  humanDenied: number;
 }

@@ -6,13 +6,13 @@
 // Run under a virtual display:  bash test/desktop-real.sh test/desktop-real.mjs
 // (Xvfb + openbox + dbus; CI sets REQUIRE_DESKTOP_REAL=1 so a missing prerequisite fails instead of skipping.)
 import assert from "node:assert";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventBus } from "../dist/bus.js";
 import { DesktopSession, __testDesktopHandlers } from "../dist/desktop-tools.js";
 import { openCuaDriver } from "../dist/desktop-driver-cua.js";
-import { findPythonWithTk, startApp, skipOrFail, until, sleep, pngSize } from "./desktop-real-helpers.mjs";
+import { findPythonWithTk, startApp, skipOrFail, until, sleep, pngSize, waitForWindowManager } from "./desktop-real-helpers.mjs";
 
 if (!process.env.DISPLAY) skipOrFail("no DISPLAY; run this through test/desktop-real.sh");
 const python = findPythonWithTk();
@@ -41,6 +41,7 @@ try {
   }, 10_000, 300);
   assert.ok(opened, "the driver should list the app's window");
   session = opened;
+  await waitForWindowManager(driver, { pid: opened.target.pid, windowId: opened.target.windowId });
   const h = __testDesktopHandlers(session);
   const call = async (name, args = {}) => {
     const res = await h[name].handler(args, {});
@@ -68,6 +69,13 @@ try {
   assert.ok(width > 0 && width <= 421 && height > 0 && height <= 261, `the capture is the 420x260 window, not the 1280x800 screen: ${width}x${height}`);
   assert.ok(/Snapshot dshot-1: \d+x\d+ px/.test(cap.text) && /untrusted data/.test(cap.text));
   console.log(`[ok] capture: a real ${width}x${height} PNG of just the target window (the screen is 1280x800); tree ${/unavailable or partial/.test(cap.text) ? "degraded and reported as such" : "present"}`);
+  // SAVE_DESKTOP_DEMO=1 keeps real captures as demo media (docs/screenshots/desktop/). Nothing else is
+  // in frame: the capture is the one window, and the test app shows only its own widgets and title.
+  const demoDir = new URL("../docs/screenshots/desktop/", import.meta.url).pathname;
+  if (process.env.SAVE_DESKTOP_DEMO === "1") {
+    mkdirSync(demoDir, { recursive: true });
+    writeFileSync(join(demoDir, "01-window-capture.png"), png);
+  }
 
   // ---- click: a real X11 click lands in the real window
   let s = await snap();
@@ -88,6 +96,10 @@ try {
   s = await snap();
   await ok("key", { key: "Backspace", snapshotId: s });
   assert.ok(await until(() => app.last("text")?.text === "hello", 4000), "Backspace removed the last character");
+  if (process.env.SAVE_DESKTOP_DEMO === "1") {
+    const after = await call("capture");
+    writeFileSync(join(demoDir, "02-window-after-typing.png"), Buffer.from(after.res.content.find((c) => c.type === "image").data, "base64"));
+  }
   // Every named key in the tool's allowlist reaches the window as the keysym the app receives -- including
   // the Arrow* spellings the driver itself rejects, which the adapter maps.
   const expectKeysym = { Enter: "Return", Escape: "Escape", Delete: "Delete", Home: "Home", End: "End", PageUp: "Prior", PageDown: "Next", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Space: "space", F5: "F5", Insert: "Insert" };

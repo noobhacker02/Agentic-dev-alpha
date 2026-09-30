@@ -72,3 +72,19 @@ export function pngSize(buf) {
   if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error("not a PNG");
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
+
+/**
+ * Waits until the window manager can activate windows. The driver fails closed -- "foreground_unavailable:
+ * ... no input was sent" -- until the WM has set _NET_ACTIVE_WINDOW, and a WM that has only just started
+ * hasn't yet, so the first real action of a test run would otherwise race it. Probes with a click in an
+ * empty corner of the test app (nothing there to press) through the driver directly.
+ */
+export async function waitForWindowManager(driver, target, { x = 405, y = 245 } = {}) {
+  let last = "";
+  const ok = await until(async () => {
+    const r = await driver.click(target, { x, y, button: "left", count: 1 });
+    last = r.summary;
+    return r.ok;
+  }, 20_000, 400);
+  if (!ok) throw new Error(`the window manager never became ready to focus windows; last driver answer: ${last}`);
+}

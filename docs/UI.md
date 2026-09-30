@@ -197,10 +197,32 @@ With `--browser`, the agent's browser session is recorded as video. That's a wat
 what it actually did to the app, not just its claims about it. Example (real run, 2× speed):
 [`media/agent-browser-session-2x.mp4`](media/agent-browser-session-2x.mp4).
 
+## Desktop window
+
+With `--desktop-target`, the side panel also shows the one window the run may use: its process and pid,
+the latest capture, a gallery of every capture (pin an older one, jump back to live), and how many
+captures and input actions the run has used so far.
+
+The part that matters is the approval prompt. A desktop action is shown as a person needs to read it
+before answering: the window it targets, the exact action, and **the window as it was captured**. A
+click by coordinates draws a marker on the exact spot. Typed text is shown verbatim, with newlines and
+tabs made visible and any control byte shown as `⟨0x1b⟩` rather than hidden, so the prompt never shows
+less than would be typed. A click by element names the element from the capture it came from. An action
+whose capture the page never saw is called out (the tool would refuse it as stale anyway). There is no
+"don't ask again" option, and the prompt says why.
+
+![A desktop approval](screenshots/approval-ui/08-desktop-approval.png)
+![The desktop panel and transcript](screenshots/approval-ui/09-desktop-panel.png)
+
+The terminal view shows the same thing in text (window, exact action, which capture, "see the web UI for
+the image"), and a saved report includes the panel and its captures, loaded by relative path. Window
+titles, process names and typed text are all attacker-controlled as far as the page is concerned, and are
+rendered as inert text everywhere they appear (tested with markup in each).
+
 ## Checking it yourself
 
 ```bash
-npm run build && npm test            # 11 suites, no API key; includes a real-Chromium UI test
+npm run build && npm test            # 18 suites, no API key; includes real-Chromium UI tests
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
                                      # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm

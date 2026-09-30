@@ -103,6 +103,17 @@ third-party driver's own policy.
 - The approval hook never auto-approves a desktop tool, even one listed as auto-approved, and **denies**
   every desktop tool when approval is off.
 
+### What the human sees
+
+- **The approval prompt** (web UI and terminal) names the window, shows the exact action, and in the web UI
+  shows the window as it was captured, with a marker on the spot a click would land. Typed text is shown
+  verbatim, control bytes as `⟨0xNN⟩`. No "don't ask again", and it says so.
+- **A Desktop panel** in the side panel: the target, the latest capture, a gallery, capture and action counts.
+- **`agent-loop insights`** counts desktop sessions and captures, input actions sent versus stopped by the
+  tools' own checks or the driver, and human approvals versus denials. Nothing is printed for a data dir
+  that never used desktop tools.
+- **The saved report** includes the panel and its captures.
+
 ## 4. The driver
 
 `src/desktop-driver-cua.ts` adapts [`@trycua/cua-driver`](https://www.npmjs.com/package/@trycua/cua-driver)
@@ -143,6 +154,7 @@ test**). When it can't be read, the target is refused.
 | `test/desktop-adapter.mjs` | The adapter against a stand-in SDK with traps on every method it must not touch; version pin; window ids; key-name mapping |
 | `test/desktop-cli.mjs` | Startup refusals, with a module-resolution trace proving the driver wasn't loaded (and a positive control proving the trace can see it) |
 | `test/desktop-pipeline.mjs` | A real `runPipeline`: one session per run, only builder/verifier get the tools, driver released on success and failure |
+| `test/ui-desktop.mjs` | The real web UI in a real Chromium: the panel, every prompt (point click with its marker at the right spot, element click, typed text with visible control bytes, key), labels, and hostile window titles and process names staying inert |
 | `test/desktop-real.mjs` | The real native driver, real X11 input, real window manager and a real native window, under Xvfb + openbox. Every effect is checked through the test app's own state file: a channel independent of the driver and the tool results |
 
 The fake driver (`test/fake-desktop-driver.mjs`) says what it does **not** simulate, because a fake is only

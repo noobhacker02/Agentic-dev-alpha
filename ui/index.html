@@ -92,6 +92,18 @@
   .shot-gallery img { width: 44px; height: 30px; object-fit: cover; flex: none; border-radius: 3px; border: 1px solid var(--line); cursor: pointer; opacity: .55; background: #111; }
   .shot-gallery img:hover { opacity: .85; }
   .shot-gallery img.sel { opacity: 1; border-color: var(--accent); }
+  /* The desktop window's captures and approval prompts: same look as the browser's, plus a marker that shows
+     exactly where an approved click would land on the window as it was captured. */
+  #desktop-panel img.desk-main { width: 100%; margin-top: 6px; border-radius: 4px; border: 1px solid var(--line); background: #111; display: block; }
+  .desk-gallery { display: flex; gap: 4px; overflow-x: auto; margin-top: 6px; padding-bottom: 2px; }
+  .desk-gallery img { width: 44px; height: 30px; object-fit: cover; flex: none; border-radius: 3px; border: 1px solid var(--line); cursor: pointer; opacity: .55; background: #111; }
+  .desk-gallery img:hover { opacity: .85; } .desk-gallery img.sel { opacity: 1; border-color: var(--accent); }
+  .desk-shot { position: relative; display: inline-block; max-width: 100%; margin-top: 6px; line-height: 0; }
+  .desk-shot img { display: block; max-width: 100%; max-height: 26vh; border: 1px solid var(--line); border-radius: 4px; background: #111; }
+  .desk-mark { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border: 2px solid var(--red); border-radius: 999px; background: rgba(255, 107, 128, .28); box-shadow: 0 0 0 2px rgba(255, 255, 255, .75); pointer-events: none; }
+  .desk-prompt { flex: 1; min-width: 0; }
+  .desk-target { color: var(--dim); } .desk-action { margin: 4px 0; color: var(--text); }
+  .desk-text { margin-top: 4px; padding: 4px 8px; border-left: 2px solid var(--accent); background: var(--panel-2); white-space: pre-wrap; word-break: break-all; }
   @media (max-width: 1000px) { aside { display: none; } }
 
   /* transcript blocks */
@@ -290,6 +302,7 @@
     <div class="kv">Tool calls <b id="s-tools">0</b></div>
     <div id="rules" class="muted"></div>
     <div id="browser-panel"></div>
+    <div id="desktop-panel"></div>
     <h3>Files changed</h3>
     <div id="files" class="files"><span class="muted">none yet</span></div>
     <h3>Decisions</h3>
@@ -361,6 +374,7 @@ scrollBox.addEventListener("scroll", () => { if (nearBottom()) $("jump").classLi
  * Mirrors browserArg in src/terminal.ts. */
 function browserArg(tool, i) {
   const target = i.url ?? i.ref ?? i.selector ?? i.tabId ?? (i.x !== undefined ? i.x + ", " + i.y + " @ " + i.snapshotId : undefined);
+  if (Array.isArray(i.modifiers) && i.modifiers.length && i.key) return i.modifiers.join("+") + "+" + i.key;
   if (tool === "press") return target !== undefined ? i.key + " on " + target : i.key ?? "";
   if (tool === "select_option") return target + " = " + (Array.isArray(i.values) ? i.values.join(", ") : "");
   if (target !== undefined) return String(target);
@@ -370,8 +384,9 @@ function browserArg(tool, i) {
 /** "Bash(npm test)", "Write(src/app.js)", "browser.open(http://…)" -- the one-line label Claude Code uses. */
 function toolLabel(name, input) {
   input = input || {};
-  const b = name.match(/^mcp__browser__(\w+)$/);
-  if (b) return ["browser." + b[1], browserArg(b[1], input)];
+  const b = name.match(/^mcp__(browser|desktop)__(\w+)$/);
+  // The argument is whatever the model (or a page) supplied: no control bytes, one line, bounded.
+  if (b) return [b[1] + "." + b[2], String(browserArg(b[2], input)).replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, "").replace(/\s+/g, " ").trim().slice(0, 120)];
   switch (name) {
     case "Bash": return ["Bash", short(input.command, 110)];
     case "Read": case "Write": case "Edit": case "NotebookEdit": return [name, rel(input.file_path || input.notebook_path)];
@@ -383,7 +398,7 @@ function toolLabel(name, input) {
 /** Output collapsed to 3 lines with "+N lines", like Claude Code; click to expand. */
 /** Rule names as a person reads them: browser.click, not mcp__browser__click; long paths shortened. */
 function prettyRule(r) {
-  return String(r).split(", ").map((x) => short(x.replace(/^mcp__browser__/, "browser."), 48)).join(", ");
+  return String(r).split(", ").map((x) => short(x.replace(/^mcp__browser__/, "browser.").replace(/^mcp__desktop__/, "desktop."), 48)).join(", ");
 }
 function outputHtml(text, isErr) {
   const lines = String(text ?? "").replace(/\s+$/, "").split("\n").map((l) => (l.length > 400 ? l.slice(0, 400) + " …" : l));
@@ -472,6 +487,69 @@ function renderBrowserPanel(d) {
   if (jump) jump.onclick = () => { d.pinned = null; renderBrowserPanel(d); };
 }
 
+// ---------- the desktop panel: the one window this run may use, and what the agent saw of it
+const desktopPanel = $("desktop-panel");
+// Same idea as the browser's gallery: a capped, scrubbable record, following the newest capture unless
+// the person pinned an older one. `bySnapshot` also backs the approval prompt, which shows the window
+// as it was captured -- the thing the person is actually approving an action against.
+const desktopState = { history: [], pinned: null, bySnapshot: new Map(), captures: 0, actions: 0 };
+const DESKTOP_SNAP_CAP = 60;
+function renderDesktopPanel(d) {
+  desktopPanel.classList.add("live");
+  const atLive = d.pinned == null;
+  const idx = atLive ? d.history.length - 1 : d.pinned;
+  const cur = d.history[idx];
+  const isLive = d.status === "active";
+  desktopPanel.innerHTML =
+    "<h3>Desktop · " + esc(d.status || "active") + (isLive ? ' <span class="live-dot" title="updating live"></span>' : "") + "</h3>" +
+    '<div class="url" title="the one window this run may use, fixed before it started">' + esc(d.target || "") + "</div>" +
+    (cur ? "<div>" + esc(cur.title || "") + "</div>" : '<div class="muted">(no capture yet)</div>') +
+    (cur ? '<a href="' + artifactUrl(d.runId, cur.shot) + '" target="_blank"><img class="desk-main" src="' + artifactUrl(d.runId, cur.shot) + '" alt="' + esc(cur.snapshotId) + '" /></a>' : "") +
+    (!atLive ? '<button type="button" class="smallbtn desk-jump-live">⏵ jump to live</button>' : "") +
+    (d.history.length > 1
+      ? '<div class="desk-gallery">' + d.history.map((c, i) =>
+          '<img data-idx="' + i + '" class="' + (i === idx ? "sel" : "") + '" src="' + artifactUrl(d.runId, c.shot) + '" title="' + esc(c.snapshotId + " · " + (c.title || "")) + '" />'
+        ).join("") + "</div>"
+      : "") +
+    '<div class="muted">' + d.captures + " capture" + (d.captures === 1 ? "" : "s") + " · " + d.actions + " input action" + (d.actions === 1 ? "" : "s") + (d.driver ? " · driver " + esc(d.driver) : "") + "</div>";
+  desktopPanel.querySelectorAll(".desk-gallery img").forEach((img) => (img.onclick = () => { d.pinned = +img.dataset.idx; renderDesktopPanel(d); }));
+  const jump = desktopPanel.querySelector(".desk-jump-live");
+  if (jump) jump.onclick = () => { d.pinned = null; renderDesktopPanel(d); };
+}
+/** The approval prompt for a desktop action: the exact action, the window it targets, and that window as it
+ * was captured -- with, for a click by coordinates, a marker on the exact spot. */
+function desktopPrompt(tool, i) {
+  const snapId = i.snapshotId || (i.ref ? "dshot-" + String(i.ref).replace(/^d(\d+)e.*$/, "$1") : undefined);
+  const snap = desktopState.bySnapshot.get(snapId);
+  const pct = (v, total) => Math.max(0, Math.min(100, (Number(v) / Number(total)) * 100)).toFixed(2);
+  let action;
+  let marker = "";
+  if (tool === "click") {
+    if (i.ref) {
+      const line = snap && snap.refs ? snap.refs[i.ref] : undefined;
+      action = "Click element " + esc(i.ref) + (line ? ' <span class="muted">— ' + esc(line) + "</span>" : ' <span class="muted">(not among the elements shown)</span>');
+    } else {
+      action = "Click at (" + esc(i.x) + ", " + esc(i.y) + ")" + (i.button && i.button !== "left" ? " · " + esc(i.button) + " button" : "") + (i.count > 1 ? " × " + esc(i.count) : "");
+      if (snap && isFinite(i.x) && isFinite(i.y) && snap.width && snap.height) marker = '<span class="desk-mark" style="left:' + pct(i.x, snap.width) + "%;top:" + pct(i.y, snap.height) + '%"></span>';
+    }
+  } else if (tool === "type_text") {
+    const text = String(i.text ?? "");
+    // Control bytes are shown as ⟨0xNN⟩, not hidden: a prompt that concealed an escape sequence would show less than would be typed.
+    const visible = text.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, (c) => "⟨0x" + c.charCodeAt(0).toString(16).padStart(2, "0") + "⟩").replace(/\n/g, "↵\n").replace(/\t/g, "⇥");
+    action = "Type " + text.length + " character" + (text.length === 1 ? "" : "s") + ', exactly:<div class="desk-text">' + esc(visible) + "</div>";
+  } else if (tool === "key") {
+    action = "Press " + esc((Array.isArray(i.modifiers) && i.modifiers.length ? i.modifiers.join("+") + "+" : "") + (i.key ?? ""));
+  } else {
+    action = esc(JSON.stringify(i));
+  }
+  const shot = snap
+    ? '<div class="muted">the window as captured · ' + esc(snapId) + ", " + esc(snap.width) + "×" + esc(snap.height) + "</div>" +
+      '<div class="desk-shot"><img src="' + artifactUrl(desktopState.runId, snap.shot) + '" alt="the window as captured" />' + marker + "</div>"
+    : '<div class="muted">No capture on screen for ' + esc(snapId || "this action") + " — the tool refuses an action whose capture is stale.</div>";
+  // One wrapper: the dock's .body is a flex row, so separate blocks would sit side by side.
+  return ["Desktop: " + tool, '<div class="desk-prompt"><div class="desk-target">Window: ' + esc(desktopState.target || "(unknown)") + (desktopState.targetTitle ? ' "' + esc(desktopState.targetTitle) + '"' : "") + '</div><div class="desk-action">' + action + "</div>" + shot + "</div>"];
+}
+
 // ---------- the bottom dock: permission prompt (Claude Code style) or status line
 function promptBody(ev) {
   const i = ev.toolInput || {};
@@ -481,6 +559,8 @@ function promptBody(ev) {
   if (ev.toolName === "Write") return ["Create file " + rel(i.file_path), lines(i.content, "add", "+")];
   if (ev.toolName === "Edit") return ["Edit file " + rel(i.file_path), lines(i.old_string, "del", "-") + "\n" + lines(i.new_string, "add", "+")];
   if (b) return ["Browser: " + b[1], esc(JSON.stringify(i, null, 2))];
+  const dk = ev.toolName.match(/^mcp__desktop__(\w+)$/);
+  if (dk) return desktopPrompt(dk[1], i);
   return [ev.toolName, esc(JSON.stringify(i, null, 2))];
 }
 function renderDock() {
@@ -532,7 +612,7 @@ function renderDock() {
     '<div class="prompt" id="prompt" data-request="' + esc(ev.requestId) + '">' +
     '<span class="count">' + esc(countLabel) + "</span>" +
     '<div class="title">' + esc(title) + '</div><div class="body">' + body + "</div>" +
-    '<div class="why">' + esc(ev.phase) + " wants to run this" + (ev.rule ? "" : " · chained/complex command: will ask every time") + "</div>" +
+    '<div class="why">' + esc(ev.phase) + " wants to run this" + (ev.rule ? "" : /^mcp__desktop__/.test(ev.toolName) ? " · desktop input: asked every time, one action at a time" : " · chained/complex command: will ask every time") + "</div>" +
     '<div class="q">Do you want to proceed?</div>' +
     opts.map(([k, label], i) => '<button class="opt' + (i === state.sel ? " sel" : "") + '" data-choice="' + k + '"><span class="k">' + (i + 1) + ".</span> " + label + "</button>").join("") +
     '<form class="feedback" id="fb"><input type="text" id="fb-text" placeholder="What should it do instead? (Enter to send, Esc to cancel)" /><button class="smallbtn">Send</button></form>' +
@@ -676,6 +756,32 @@ function render(ev) {
         blk("note", 'Browser session recording <span class="muted">· what the agent actually did in the app</span>' +
           '<video controls preload="metadata" style="display:block;max-width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px"' +
           (lastShot ? ' poster="' + artifactUrl(ev.runId, lastShot) + '"' : "") + ' src="' + artifactUrl(ev.runId, ev.path) + '"></video>');
+      }
+      break;
+    case "desktop-session-started":
+      Object.assign(desktopState, { runId: ev.runId, status: "active", driver: ev.driverVersion, target: ev.target.processName + " (pid " + ev.target.pid + ")", targetTitle: short(ev.target.title, 60) });
+      blk("note", "Desktop target <span class=\"muted\">· the one window this run may see and operate</span>\n<span class=\"muted\">⎿  </span>" + esc(desktopState.target + ' "' + desktopState.targetTitle + '"'));
+      renderDesktopPanel(desktopState);
+      break;
+    case "desktop-session-ended": desktopState.status = ev.status; renderDesktopPanel(desktopState); break;
+    case "desktop-snapshot":
+      desktopState.runId = ev.runId;
+      desktopState.captures++;
+      desktopState.history.push({ shot: ev.screenshotPath, title: ev.title, snapshotId: ev.snapshotId });
+      if (desktopState.history.length > DESKTOP_SNAP_CAP) desktopState.history.shift();
+      desktopState.bySnapshot.set(ev.snapshotId, { shot: ev.screenshotPath, width: ev.width, height: ev.height, refs: {} });
+      if (desktopState.bySnapshot.size > DESKTOP_SNAP_CAP) desktopState.bySnapshot.delete(desktopState.bySnapshot.keys().next().value);
+      renderDesktopPanel(desktopState);
+      break;
+    case "desktop-action-started":
+      if (["click", "type_text", "key"].includes(ev.toolName)) { desktopState.actions++; renderDesktopPanel(desktopState); }
+      break;
+    case "desktop-action-completed":
+      if (ev.toolName === "capture" && !ev.isError) {
+        // Remember each element's line, so a later "click d3e5" prompt can say what d3e5 is.
+        const id = (/Snapshot (dshot-\d+)/.exec(ev.result) || [])[1];
+        const snap = id && desktopState.bySnapshot.get(id);
+        if (snap) for (const m of String(ev.result).matchAll(/^\s*\[(d\d+e\d+)\] (.+)$/gm)) snap.refs[m[1]] = m[2];
       }
       break;
     case "browser-snapshot":

@@ -44,6 +44,7 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
   };
   /** What a browser tool acted on: a URL, a ref, a selector, a tab, or a point on a screenshot. */
   const browserArg = (tool: string, i: Record<string, unknown>): unknown => {
+    if (Array.isArray(i.modifiers) && i.modifiers.length && i.key !== undefined) return `${i.modifiers.join("+")}+${i.key}`;
     const target = i.url ?? i.ref ?? i.selector ?? i.tabId ?? (i.x !== undefined ? `${i.x}, ${i.y} @ ${i.snapshotId}` : undefined);
     if (tool === "press") return target !== undefined ? `${i.key} on ${target}` : i.key;
     if (tool === "select_option") return `${target} = ${Array.isArray(i.values) ? i.values.join(", ") : ""}`;
@@ -52,8 +53,8 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     return i.text ?? i.key ?? "";
   };
   const label = (name: string, i: Record<string, unknown> = {}) => {
-    const b = name.match(/^mcp__browser__(\w+)$/);
-    if (b) return `browser.${b[1]}(${short(browserArg(b[1], i), 70)})`;
+    const b = name.match(/^mcp__(browser|desktop)__(\w+)$/);
+    if (b) return `${b[1]}.${b[2]}(${short(browserArg(b[2], i), 70)})`;
     if (name === "Bash") return `Bash(${short(i.command, 90)})`;
     if (["Read", "Write", "Edit", "NotebookEdit"].includes(name)) return `${name}(${rel(i.file_path ?? i.notebook_path)})`;
     if (name === "Glob") return `Glob(${short(i.pattern, 70)})`;
@@ -61,7 +62,33 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     return `${name}(${short(JSON.stringify(i), 70)})`;
   };
 
-  const pretty = (r: string) => r.replace(/mcp__browser__/g, "browser.");
+  const pretty = (r: string) => r.replace(/mcp__browser__/g, "browser.").replace(/mcp__desktop__/g, "desktop.");
+
+  // The one desktop window this run may use, and each capture's size, so a desktop approval can name the
+  // window and say exactly which capture the action was planned from.
+  let desktopTarget = "";
+  const desktopShots = new Map<string, { width: number; height: number }>();
+  /** A desktop action as a person needs to read it before answering: the exact action, on which window. */
+  const desktopPrompt = (tool: string, i: Record<string, unknown>): { title: string; body: string } => {
+    const snap = desktopShots.get(String(i.snapshotId ?? ""));
+    const size = snap ? ` (capture ${strip(String(i.snapshotId))}, ${snap.width}x${snap.height} -- the image is in the web UI)` : i.snapshotId ? ` (capture ${short(i.snapshotId, 30)})` : "";
+    const lines = [`Window: ${desktopTarget || "(unknown)"}`];
+    if (tool === "click") {
+      lines.push(i.ref !== undefined ? `Click element ${short(i.ref, 30)}` : `Click at (${short(i.x, 12)}, ${short(i.y, 12)})${i.button && i.button !== "left" ? ` with the ${short(i.button, 10)} button` : ""}${Number(i.count) > 1 ? ` x${short(i.count, 3)}` : ""}${size}`);
+    } else if (tool === "type_text") {
+      const raw = String(i.text ?? "");
+      // Every control byte is shown as ⟨0xNN⟩ rather than silently dropped: a prompt that hid an escape
+      // sequence would be showing less than what would be typed. (The tool refuses such text anyway.)
+      const text = raw.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, (c) => `⟨0x${c.charCodeAt(0).toString(16).padStart(2, "0")}⟩`).replace(/\n/g, "↵\n").replace(/\t/g, "⇥");
+      lines.push(`Type ${raw.length} character(s), exactly${size}:`);
+      lines.push(...text.split("\n").slice(0, 10).map((l) => `  "${l}"`));
+    } else if (tool === "key") {
+      lines.push(`Press ${(Array.isArray(i.modifiers) && i.modifiers.length ? i.modifiers.join("+") + "+" : "") + short(i.key, 20)}${size}`);
+    } else {
+      lines.push(strip(JSON.stringify(i)));
+    }
+    return { title: `Desktop: ${tool}`, body: lines.join("\n") };
+  };
   let cost = 0;
   let startedAt = 0;
   const tools = new Map<string, string>();
@@ -76,9 +103,12 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
     if (active || !queue.length) return;
     active = queue[0];
     const i = (active.toolInput ?? {}) as Record<string, unknown>;
-    const title = active.toolName === "Bash" ? "Bash command" : active.toolName === "Write" ? `Create file ${rel(i.file_path)}` : active.toolName === "Edit" ? `Edit file ${rel(i.file_path)}` : active.toolName;
+    const desktop = active.toolName.match(/^mcp__desktop__(\w+)$/);
+    const desktopText = desktop ? desktopPrompt(desktop[1], i) : undefined;
+    const title = desktopText ? desktopText.title : active.toolName === "Bash" ? "Bash command" : active.toolName === "Write" ? `Create file ${rel(i.file_path)}` : active.toolName === "Edit" ? `Edit file ${rel(i.file_path)}` : active.toolName;
     const body =
-      active.toolName === "Bash" ? strip(String(i.command ?? ""))
+      desktopText ? desktopText.body
+      : active.toolName === "Bash" ? strip(String(i.command ?? ""))
       : active.toolName === "Write" ? strip(String(i.content ?? "")).split("\n").slice(0, 12).map((l) => green("+ " + l)).join("\n")
       : active.toolName === "Edit" ? [...strip(String(i.old_string ?? "")).split("\n").slice(0, 6).map((l) => red("- " + l)), ...strip(String(i.new_string ?? "")).split("\n").slice(0, 6).map((l) => green("+ " + l))].join("\n")
       : strip(JSON.stringify(i, null, 2));
@@ -87,7 +117,7 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
       "",
       blue("╭─ ") + bold(blue(title)) + (queue.length > 1 ? dim(`  (1 of ${queue.length} waiting)`) : ""),
       ...body.split("\n").slice(0, 16).map((l) => `${bar}   ${l}`),
-      `${bar} ${dim(`${active.phase} wants to run this`)}`,
+      `${bar} ${dim(`${active.phase} wants to run this${desktop && !active.rule ? " · desktop input: asked every time, one action at a time" : ""}`)}`,
       `${bar} Do you want to proceed?`,
       `${bar} ${blue("❯")} 1. Yes`,
       ...(active.rule ? [`${bar}   2. Yes, and don't ask again for ${bold(pretty(active.rule))} this run`] : []),
@@ -208,6 +238,14 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
         break;
       case "browser-artifact-created":
         if (ev.kind === "video") write(`${yellow("▶")} Browser session recorded ${dim("· " + ev.path)}`);
+        break;
+      case "desktop-session-started":
+        desktopTarget = `${strip(ev.target.processName)} (pid ${ev.target.pid}) "${short(ev.target.title, 60)}"`;
+        write(`${yellow("▣")} Desktop target ${dim("· the one window this run may see and operate:")} ${desktopTarget}`);
+        break;
+      case "desktop-snapshot":
+        desktopShots.set(ev.snapshotId, { width: ev.width, height: ev.height });
+        if (desktopShots.size > 60) desktopShots.delete(desktopShots.keys().next().value as string);
         break;
       case "run-end": {
         const secs = Math.round((Date.parse(ev.ts) - startedAt) / 1000);

@@ -137,6 +137,23 @@ console.log("[ok] WS->server->bus: human decision resolves the pending hook prom
   store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm test:*)" });
   store.logEvent(run2.id, "builder", "approval-resolved", { rememberedRule: "Bash(npm run lint:*)" }); // never reused
 
+  // Desktop computer use: two sessions' worth of events. Three clicks reach the driver and one is stopped
+  // by the tools' own checks, a key press goes through, one type_text is refused; capture/window_info are
+  // not input and aren't counted as actions. Of four human answers about desktop tools, one is a denial;
+  // a Bash approval in the same run must not be mixed in.
+  store.logEvent(run2.id, "builder", "desktop-session-started", { desktopSessionId: "a" });
+  store.logEvent(run2.id, "verifier", "desktop-session-started", { desktopSessionId: "b" });
+  for (let n = 0; n < 5; n++) store.logEvent(run2.id, "builder", "desktop-snapshot", { snapshotId: `dshot-${n}` });
+  for (const [toolName, isError] of [["click", false], ["click", false], ["click", false], ["click", true], ["key", false], ["type_text", true], ["capture", false], ["window_info", false], ["capture", true]]) {
+    store.logEvent(run2.id, "builder", "desktop-action-completed", { toolName, isError });
+  }
+  for (const [requestId, toolName] of [["r1", "mcp__desktop__click"], ["r2", "mcp__desktop__click"], ["r3", "mcp__desktop__type_text"], ["r4", "mcp__desktop__key"], ["r5", "Bash"]]) {
+    store.logEvent(run2.id, "builder", "approval-request", { requestId, toolName });
+  }
+  for (const [requestId, decision] of [["r1", "allow"], ["r2", "allow"], ["r3", "deny"], ["r4", "allow"], ["r5", "deny"]]) {
+    store.logEvent(run2.id, "builder", "approval-resolved", { requestId, decision });
+  }
+
   store.finishRun(run2.id, "failed");
 
   const insights = store.getInsights();
@@ -153,7 +170,13 @@ console.log("[ok] WS->server->bus: human decision resolves the pending hook prom
   assert.ok(Math.abs(insights.costByPhase.verifier - 0.02) < 1e-9);
   assert.deepStrictEqual(insights.topRules, [{ rule: "Bash(npm test:*)", count: 2 }]);
   assert.deepStrictEqual(insights.neverReusedRules, ["Bash(npm run lint:*)"]);
+  assert.deepStrictEqual(insights.desktop, {
+    sessions: 2, captures: 5,
+    actions: { click: { sent: 3, refused: 1 }, key: { sent: 1, refused: 0 }, type_text: { sent: 0, refused: 1 } },
+    humanApproved: 3, humanDenied: 1,
+  }, `desktop insights: ${JSON.stringify(insights.desktop)}`);
   console.log("[ok] store.getInsights(): repair frequency, cost, and rule-reuse aggregate correctly across runs");
+  console.log("[ok] store.getInsights(): desktop sessions, captures, input actions sent vs stopped, and human approvals vs denials (Bash answers not mixed in)");
 }
 
 ws.close();
