@@ -29,6 +29,7 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 | Desktop against a real window: input lands, refusals deliver nothing, moved/resized/impostor/decoy/overlap/minimised, no window manager, real accessibility tree | `desktop-real*.mjs` (5 files) with an app that logs everything it receives | real driver, real window |
 | Desktop CLI end to end (flag, startup line, session start/end, insights) | `desktop-cli.mjs` (refusals), `desktop-real-cli.mjs` (success path, real window, fake model) | real driver, fake model |
 | **Desktop tools driven by a real model through the real SDK** | `desktop-real-sdk.mjs`: tool names match the hook prefix; capture and click both ask; a "no" leaves the window untouched; one "yes" lands exactly one click; a window title telling the model to type produced no input; a model that keeps asking after "no" stops getting prompts after three | real SDK, real model, real driver, real window |
+| The persona: levels, the ceiling, hostile text in every event field, never inside an approval, never reaching a model, terminal/report/CLI/insights | `persona.mjs`; `ui-persona.mjs` (real Chromium); 18 mutations, all caught | real (nothing to fake) |
 | Web UI rendering, panels, prompts, hostile strings inert | `ui-render.mjs`, `ui-desktop.mjs` | real Chromium |
 
 ## What the real-model tests found

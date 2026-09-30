@@ -40,7 +40,7 @@ export class EventBus extends EventEmitter {
   }
 
   emitEvent(event: AgentEvent) {
-    const phase = "phase" in event ? event.phase : null;
+    const phase = "phase" in event ? (event.phase ?? null) : null;
     this.store?.logEvent(event.runId, phase, event.type, event);
     this.history.push(event);
     if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT);

@@ -3,6 +3,7 @@ import type { Readable, Writable } from "node:stream";
 import type { EventBus } from "./bus.js";
 import type { AgentEvent } from "./types.js";
 import { stripTerminalControlBytes } from "./text-safety.js";
+import { PERSONAS } from "./persona.js";
 
 /**
  * A Claude Code-style transcript in the terminal: "⏺ Tool(args)" per call, "⎿" for its result, the
@@ -19,6 +20,8 @@ export interface TerminalOptions {
   /** Shown while waiting, so a non-interactive terminal says where to approve. */
   uiUrl?: string;
   color?: boolean;
+  /** Print the run's "persona-note" commentary (src/persona.ts). Off by default: logs stay plain. */
+  persona?: boolean;
 }
 
 type ApprovalRequest = Extract<AgentEvent, { type: "approval-request" }>;
@@ -28,7 +31,7 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
   const input = opts.input ?? process.stdin;
   const useColor = opts.color ?? (!!out.isTTY && !process.env.NO_COLOR);
   const c = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
-  const orange = c("38;5;173"), dim = c("2"), bold = c("1"), green = c("32"), red = c("31"), blue = c("38;5;147"), yellow = c("33");
+  const orange = c("38;5;173"), dim = c("2"), bold = c("1"), green = c("32"), red = c("31"), blue = c("38;5;147"), yellow = c("33"), italic = c("3");
   const width = () => Math.max(60, Math.min(out.columns ?? 100, 120));
   const write = (s: string) => out.write(s + "\n");
   // See src/text-safety.ts: Bash output, file content, and the model's own turn text all reach this
@@ -187,6 +190,12 @@ export function attachTerminal(bus: EventBus, opts: TerminalOptions) {
         if (!text) break;
         const lines = text.split("\n").filter((l) => l.trim());
         write(`⏺ ${lines.slice(0, 4).join("\n  ")}${lines.length > 4 ? dim(`\n  … +${lines.length - 4} lines`) : ""}`);
+        break;
+      }
+      case "persona-note": {
+        if (!opts.persona) break;
+        const who = Object.prototype.hasOwnProperty.call(PERSONAS, ev.speaker) ? PERSONAS[ev.speaker as keyof typeof PERSONAS].name : "";
+        write(`  ${dim("◦")} ${who ? bold(dim(who)) + " " : ""}${dim(italic(strip(ev.text)))}`);
         break;
       }
       case "tool-call": {

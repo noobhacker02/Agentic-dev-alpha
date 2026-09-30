@@ -165,6 +165,8 @@ export type AgentEvent =
       durationMs: number;
       ts: string;
     }
+  /** Display-only commentary from src/persona.ts: never shown to a model, never part of an approval. */
+  | { type: "persona-note"; runId: string; phase?: PhaseName; moment: string; text: string; dark: boolean; speaker: string; ts: string }
   | { type: "decisions-log-updated"; runId: string; content: string; ts: string }
   | { type: "report-saved"; runId: string; path: string; ts: string }
   | { type: "trusted-decision-recorded"; runId: string; phase: PhaseName; text: string; ts: string }

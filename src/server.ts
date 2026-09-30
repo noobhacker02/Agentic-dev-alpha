@@ -6,6 +6,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { EventBus } from "./bus.js";
 import type { AgentEvent } from "./types.js";
+import { uiData, type HumorLevel } from "./persona.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_DIR = join(__dirname, "..", "ui");
@@ -43,6 +44,8 @@ export interface ServerOptions {
    * real page content the agent visited, so they get the same access control, not the UI's own
    * token-free static files. Omit to disable artifact serving entirely. */
   artifactRoot?: string;
+  /** The most the run's commentary may say (--humor). The UI can turn it down, never up. Default "dark". */
+  humor?: HumorLevel;
 }
 
 /**
@@ -87,6 +90,12 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     const urlPath = normalize(pathname === "/" ? "/index.html" : pathname);
     if (urlPath.includes("..")) {
       res.writeHead(400).end("bad path");
+      return;
+    }
+    if (urlPath === "/persona.js") {
+      // Catalog text only (idle lines, persona names); nothing from any run, so it needs no token.
+      res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
+      res.end(`window.__PERSONA__ = ${JSON.stringify(uiData(opts.humor ?? "dark")).replace(/</g, "\\u003c")};`);
       return;
     }
     if (urlPath.startsWith("/artifacts/")) {

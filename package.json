@@ -25,7 +25,7 @@
     "test:ui": "node --experimental-sqlite --no-warnings test/ui-render.mjs",
     "test:terminal": "node test/terminal.mjs",
     "test:insights": "node --experimental-sqlite --no-warnings test/insights-cli.mjs",
-    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:report && npm run -s test:browser-tools && npm run -s test:browser-cu && npm run -s test:ui && npm run -s test:ui-desktop && npm run -s test:desktop-tools && npm run -s test:desktop-adapter && npm run -s test:desktop-cli && npm run -s test:desktop-pipeline && npm run -s test:insights",
+    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:persona && npm run -s test:report && npm run -s test:browser-tools && npm run -s test:browser-cu && npm run -s test:ui && npm run -s test:ui-persona && npm run -s test:ui-desktop && npm run -s test:desktop-tools && npm run -s test:desktop-adapter && npm run -s test:desktop-cli && npm run -s test:desktop-pipeline && npm run -s test:insights",
     "test:report": "node test/report.mjs",
     "test:rules": "node test/approval-rules.mjs",
     "test:bash": "node test/bash-analysis.mjs",
@@ -37,6 +37,8 @@
     "test:desktop-pipeline": "node --experimental-sqlite --no-warnings --import ./test/stress/fake-sdk/register.mjs test/desktop-pipeline.mjs",
     "test:real-model-browser": "AGENT_LOOP_REAL_MODEL_TESTS=1 node --experimental-sqlite --no-warnings test/browser-real-sdk.mjs",
     "test:real-model-desktop": "AGENT_LOOP_REAL_MODEL_TESTS=1 bash test/desktop-real.sh test/desktop-real-sdk.mjs",
+    "test:persona": "node --experimental-sqlite --no-warnings test/persona.mjs",
+    "test:ui-persona": "node --experimental-sqlite --no-warnings test/ui-persona.mjs",
     "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs"
   },
   "dependencies": {

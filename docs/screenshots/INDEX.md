@@ -55,3 +55,13 @@ test app shows only its own widgets and title, so there is nothing else in frame
 | --- | --- |
 | `01-window-capture.png` | The tiny native test window (`test/desktop-app/app.py`) as the `capture` tool returns it: 420x260, the window only, not the 1280x800 screen it sits on. |
 | `02-window-after-typing.png` | The same window after the real `click` and `type_text` tools pressed its button and typed "hello" into its entry. |
+
+## `persona/`
+
+Captured by `SAVE_UI_SCREENSHOTS=1 node --experimental-sqlite --no-warnings test/ui-persona.mjs`, from real
+events through the real server in a real Chromium (`docs/PERSONA.md`).
+
+| File | What it shows |
+| --- | --- |
+| `01-voice-in-the-transcript.png` | A run part-way through at `jokes: dark`: opening lines in each agent's voice, the Overseer's veto, and an approval prompt at the bottom with none of it in. |
+| `02-dry-level.png` | The same run after turning the page down to `jokes: dry`: the dark lines are hidden, the dry ones stay. |

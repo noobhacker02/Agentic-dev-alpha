@@ -26,6 +26,26 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **A persona, properly** (docs/PERSONA.md). The request was for jokes that give the run life: dark but
+  not too dark, memes and git and politics, jokes about how the tool is used, with some bite that isn't
+  toxic. What had shipped was ten dry idle lines, and a changelog line saying it was deliberately kept
+  "not genuinely dark" — the opposite of the ask, decided without telling anyone. Now:
+  - Six agents with temperaments (Planner: optimist with a spreadsheet; Test Designer: pessimist, usually
+    right; Builder: ships first, explains later; Verifier: trust issues, professionally; Gatekeeper: a bouncer
+    with a checklist; Overseer: holds the veto and uses it, and talks like a legislature: vetoes,
+    amendments, points of order). Politics means the process, never a side.
+  - 146 lines across 35 moments: the run, each phase, each Overseer decision, how the tool is used (a refusal
+    and the third in a row, five approvals in a blink, a long wait, saved rules, every $1/$5/$20), tools
+    starting and fences holding, an `insights` closing line that follows the numbers, and 20 idle lines.
+  - `--humor off|dry|dark` (or `$AGENT_LOOP_HUMOR`), default dark. The run's level is a ceiling; the web page
+    has a `jokes:` button that can turn it down, never up. The terminal shows it on a TTY or when asked for.
+  - Safe by construction, and tested by trying to break it: it never reaches a model (import graph checked), it
+    carries no untrusted text (hostile text in every field of every event type; every note is still exactly
+    a catalog line), it's never inside an approval prompt (a real prompt at `dark` with notes on screen
+    contains none of the lines), a bad line can't get in (a lint with its own control lines), and it can't
+    break a run (closed store mid-run). 10 mutations on the code and 8 on the page were each caught; three
+    survived at first and the tests were strengthened until they failed.
+  - `test/persona.mjs` (14 checks, in `npm test`) and `test/ui-persona.mjs` (real Chromium, in `npm test`).
 - **The real SDK and a real model, for the first time, dispatching tool calls through the real hooks.**
   The scripted fake SDK never emits a tool call, so nothing had shown what happens when a model is the
   caller. `test/desktop-real-sdk.mjs` (real driver, real window) and `test/browser-real-sdk.mjs` (real
@@ -225,7 +245,7 @@ All notable changes to this project are documented here. Format follows
 - **A few rotating one-liners in the idle status line** instead of a single static "Waiting for a run
   to start." — picked by wall-clock time so they change every 8s rather than flicker per-tick.
   Deliberately dry/self-deprecating dev humor (commit messages, force-pushes, stale TODOs), not
-  political and not genuinely dark — this sits on the same screen as destructive-command approval
+  political and not genuinely dark (superseded: that was less than the request; see "A persona, properly" above) — this sits on the same screen as destructive-command approval
   prompts, so the tone stays professional rather than undermining what's actually being reviewed
   there.
 - **`docs/INSPIRATION-POKEHARNESS.md`**: a friend's repo (a local desktop app visualizing coding-agent

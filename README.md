@@ -144,6 +144,8 @@ machine's directory layout.
 | `test/desktop-real.mjs` | The real native driver, real X11 input and a real native window under Xvfb + a window manager, verified through the app's own state file (`npm run test:desktop-real`) |
 | `test/desktop-real-adversarial.mjs`, `test/desktop-real-nowm.mjs` | The desktop threat model attacked with real windows (an `xterm`-named process, a same-titled impostor, a moved window, a focus-stealing decoy, an overlapping window, a hostile title, no window manager); a decoy app logs everything it receives and must get nothing |
 | `test/browser-real-sdk.mjs`, `test/desktop-real-sdk.mjs` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window; opt-in, a few cents (`npm run test:real-model-browser`, `npm run test:real-model-desktop`). What is tested and what isn't: [`docs/FLOW-COVERAGE.md`](docs/FLOW-COVERAGE.md) |
+| `src/persona.ts` | The voice: six agents with temperaments, 146 lines across 35 moments, `--humor off\|dry\|dark`. Display only; it never reaches a model — see [`docs/PERSONA.md`](docs/PERSONA.md) |
+| `test/persona.mjs`, `test/ui-persona.mjs` | The catalog lint (and a control that it can fail), levels, determinism, hostile text in every event field, the import graph, the terminal, `/persona.js`, saved reports, the CLI, and in a real Chromium: the toggle, the ceiling, an approval prompt with no jokes in it, inert hostile notes |
 | `test/ui-desktop.mjs` | The real web UI: the desktop panel and every approval prompt (the click marker, typed text with visible control bytes), hostile titles inert |
 
 ## Requirements

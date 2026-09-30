@@ -197,6 +197,15 @@ With `--browser`, the agent's browser session is recorded as video. That's a wat
 what it actually did to the app, not just its claims about it. Example (real run, 2× speed):
 [`media/agent-browser-session-2x.mp4`](media/agent-browser-session-2x.mp4).
 
+## The voice
+
+The page has a `jokes: dark | dry | off` button in the header (only when the run wasn't started with
+`--humor off`), idle lines that follow it, dim italic notes in the transcript from the agents and the Overseer,
+and a tooltip with each agent's temperament on the phase stepper. Approval prompts never carry any of it.
+Everything about it, including the rules and how they are tested, is in [`PERSONA.md`](PERSONA.md).
+
+![The voice in the transcript](screenshots/persona/01-voice-in-the-transcript.png)
+
 ## Desktop window
 
 With `--desktop-target`, the side panel also shows the one window the run may use: its process and pid,

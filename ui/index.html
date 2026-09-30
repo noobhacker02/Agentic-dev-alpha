@@ -140,6 +140,11 @@
   .blk.overseer .act { color: var(--blue); font-weight: 700; }
   .blk.note::before { content: "※"; color: var(--yellow); }
   .blk.trusted::before { content: "✓"; color: var(--green); }
+  /* The voice: dim, italic, always its own line after the thing it remarks on, never inside a prompt. */
+  .blk.persona { color: var(--dim); font-style: italic; white-space: normal; }
+  .blk.persona::before { content: "◦"; color: var(--dim); }
+  .blk.persona .who { font-style: normal; font-weight: 600; margin-right: 6px; }
+  html[data-humor="off"] .blk.persona, html[data-humor="dry"] .blk.persona.dark { display: none; }
   .blk.run-end { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--panel); white-space: normal; }
   .blk.run-end::before { content: none; }
   .blk.run-end.done { border-color: #4eba6588; } .blk.run-end.failed, .blk.run-end.stopped { border-color: #ff6b8088; }
@@ -179,7 +184,7 @@
   input[type=text] { flex: 1; background: none; border: 0; outline: none; color: var(--text); font: inherit; }
   .inputrow:focus-within { border-color: var(--dim); }
   .smallbtn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
-  #theme-toggle { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
+  #theme-toggle, #humor-toggle { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
 
   /* ---------- "Desktop" theme: a lighter, Claude-Desktop-style chat-card look, opt-in via the
      header toggle (persisted in localStorage). Overriding the color/font custom properties above
@@ -220,6 +225,8 @@
   :root[data-theme="desktop"] .blk.trusted::before { background: #e5f4ea; color: var(--green); }
   :root[data-theme="desktop"] .blk.thinking { background: transparent; border: none; box-shadow: none; padding: 0 0 0 30px; }
   :root[data-theme="desktop"] .blk.thinking::before { position: absolute; background: none; width: auto; height: auto; border-radius: 0; top: 0; left: 0; font-size: 14px; }
+  :root[data-theme="desktop"] .blk.persona { background: transparent; border: none; box-shadow: none; padding: 0 0 0 30px; }
+  :root[data-theme="desktop"] .blk.persona::before { position: absolute; background: none; width: auto; height: auto; border-radius: 0; top: 0; left: 0; font-size: 14px; }
   :root[data-theme="desktop"] .blk.run-end { padding: 14px 18px; }
   :root[data-theme="desktop"] .out { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; margin-top: 6px; }
   :root[data-theme="desktop"] .tag { border-radius: 999px; }
@@ -286,6 +293,7 @@
   <span class="stat">⏱ <b id="elapsed">0s</b></span>
   <span class="stat">$ <b id="cost">0.00</b></span>
   <span id="status">connecting…</span>
+  <button id="humor-toggle" type="button" title="How much the agents joke around (this page only)" hidden></button>
   <button id="theme-toggle" type="button" title="Switch look">💬</button>
 </header>
 <nav id="stepper"></nav>
@@ -311,23 +319,26 @@
 </div>
 <div id="dock"><div class="inner" id="dock-inner"></div></div>
 
+<script src="/persona.js"></script>
 <script>
 const PHASES = ["planner", "test-designer", "builder", "verifier", "gatekeeper"];
+// The voice (src/persona.ts, docs/PERSONA.md). Idle lines and persona names come from the server's
+// /persona.js (or inline in a saved report); a page without them just says the plain thing. `humor` is
+// the level in effect: the run's --humor is the ceiling, this page can only turn it down. Notes from a
+// run arrive as "persona-note" events and are shown or hidden by that level, in CSS.
+const PERSONA = window.__PERSONA__ || { maxLevel: "off", idle: [], personas: {} };
+const HUMOR_LEVELS = ["off", "dry", "dark"];
+const HUMOR_KEY = "agent-loop-humor";
+const allowedLevels = HUMOR_LEVELS.slice(0, Math.max(0, HUMOR_LEVELS.indexOf(PERSONA.maxLevel)) + 1);
+let humor = allowedLevels[allowedLevels.length - 1];
+try { const saved = localStorage.getItem(HUMOR_KEY); if (allowedLevels.includes(saved)) humor = saved; } catch {}
 // Rotates every 8s while idle -- picked by wall-clock time, not per-tick random, so it changes
-// slowly instead of flickering every second. Kept light, not edgy: this sits on the same screen as
-// destructive-command approval prompts, so the tone stays dry rather than dark.
-const IDLE_LINES = [
-  "Waiting for a run to start.",
-  "Idle. Even the Overseer needs a moment.",
-  "No run yet — the calm before the commits.",
-  "Standing by. Coffee's probably cold by now.",
-  "Idle. Unlike your CI queue, this part's free.",
-  "Nothing running. Good time to write that test you've been avoiding.",
-  "Idle. No commits, no incidents — a rare and beautiful combination.",
-  "Nothing running. Somewhere, someone's about to force-push to main.",
-  "Idle. That TODO from 2019 still isn't going to fix itself.",
-  "Nothing running. Your last commit message still doesn't explain what changed.",
-];
+// slowly instead of flickering every second.
+function idleLine() {
+  const pool = PERSONA.idle.filter((x) => humor === "dark" || (humor === "dry" && !x.dark));
+  return humor === "off" || !pool.length ? "Waiting for a run to start." : pool[Math.floor(Date.now() / 8000) % pool.length].text;
+}
+function personaName(key) { const p = PERSONA.personas[key]; return p && Object.prototype.hasOwnProperty.call(PERSONA.personas, key) ? p : null; }
 const $ = (id) => document.getElementById(id);
 const scrollBox = $("scroll"), transcript = $("transcript"), dockInner = $("dock-inner");
 const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
@@ -427,7 +438,8 @@ function renderStepper() {
     // should be visible at a glance, not just at the bottom dock (which only ever shows one at a time).
     const waitingHere = state.pending.filter((x) => x.phase === p).length;
     const flag = waitingHere ? '<span class="wait-badge" title="' + waitingHere + " approval" + (waitingHere > 1 ? "s" : "") + ' waiting">' + (waitingHere > 1 ? waitingHere : "!") + "</span>" : "";
-    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"' + (waitingHere ? ' data-waiting="1"' : "") + '><span class="icon">' + icon + "</span>" + p + reps + cost + flag + "</button>";
+    const who = personaName(p);
+    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"' + (who ? ' title="' + esc(who.name + " — " + who.tagline) + '"' : "") + (waitingHere ? ' data-waiting="1"' : "") + '><span class="icon">' + icon + "</span>" + p + reps + cost + flag + "</button>";
   }).join("");
 }
 $("stepper").addEventListener("click", (e) => {
@@ -574,7 +586,7 @@ function renderDock() {
     const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(Date.now() / 1000) % 10];
     const status = running
       ? '<span class="spin">' + spin + "</span> " + esc(state.phase || "starting") + " is working… <span class=\"muted\">(" + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
-      : state.status === "idle" ? '<span class="muted">' + esc(IDLE_LINES[Math.floor(Date.now() / 8000) % IDLE_LINES.length]) + "</span>"
+      : state.status === "idle" ? '<span class="muted">' + esc(idleLine()) + "</span>"
       : "Run " + esc(state.status) + "." + (state.reportPath ? ' <span class="muted">Saved report: ' + esc(state.reportPath) + "</span>" : "");
     // Only the status text changes each tick; the input is built once so typing never loses focus.
     if (dockInner.dataset.mode === "idle") { dockInner.querySelector(".statusline").innerHTML = status; return; }
@@ -716,6 +728,11 @@ function render(ev) {
       else blk("tool " + (ev.isError ? "err" : "ok"), outputHtml(ev.summary, ev.isError));
       break;
     }
+    case "persona-note": {
+      const who = personaName(ev.speaker);
+      blk("persona" + (ev.dark ? " dark" : ""), (who && who.name ? '<span class="who" title="' + esc(who.tagline) + '">' + esc(who.name) + "</span>" : "") + esc(ev.text));
+      break;
+    }
     case "approval-request":
       if (state.pending.some((p) => p.requestId === ev.requestId)) break;
       state.asked++; state.pending.push(ev); tagTool(ev.toolUseId, "wait", "awaiting approval");
@@ -844,6 +861,21 @@ let savedTheme = "terminal";
 try { savedTheme = localStorage.getItem(THEME_KEY) || "terminal"; } catch {}
 applyTheme(savedTheme);
 $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "desktop" ? "terminal" : "desktop");
+
+// ---------- humor: the run's --humor is the ceiling; this page can only turn it down
+function applyHumor(level) {
+  humor = level;
+  document.documentElement.dataset.humor = level;
+  try { localStorage.setItem(HUMOR_KEY, level); } catch {}
+  const b = $("humor-toggle");
+  b.textContent = "jokes: " + level;
+  if (dockInner.dataset.mode === "idle") renderDock();
+}
+if (allowedLevels.length > 1) {
+  $("humor-toggle").hidden = false;
+  $("humor-toggle").onclick = () => applyHumor(allowedLevels[(allowedLevels.indexOf(humor) + 1) % allowedLevels.length]);
+}
+applyHumor(humor);
 
 renderStepper(); renderHeader();
 if (REPLAY) {

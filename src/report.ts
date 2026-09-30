@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentEvent } from "./types.js";
+import { uiData, type HumorLevel } from "./persona.js";
 
 const UI_FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "ui", "index.html");
 
@@ -11,12 +12,16 @@ const UI_FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "ui", "index
  * (window.__REPLAY__), next to that run's screenshots and video, which it references by relative
  * path -- open it straight from disk, no server, no token.
  */
-export function writeRunReport(dir: string, events: AgentEvent[]): string {
+export function writeRunReport(dir: string, events: AgentEvent[], humor: HumorLevel = "dark"): string {
   mkdirSync(dir, { recursive: true });
   const html = readFileSync(UI_FILE, "utf8");
   // "<" escaped so no event text can close the <script> element early.
   const data = JSON.stringify(events).replace(/</g, "\\u003c");
-  const out = html.replace("<script>", `<script>window.__REPLAY__ = ${data};</script>\n<script>`);
+  const persona = JSON.stringify(uiData(humor)).replace(/</g, "\\u003c");
+  // The live page loads /persona.js; a file opened from disk has no server, so the same data goes inline.
+  const out = html
+    .replace('<script src="/persona.js"></script>', `<script>window.__PERSONA__ = ${persona};</script>`)
+    .replace("<script>", `<script>window.__REPLAY__ = ${data};</script>\n<script>`);
   const path = join(dir, "report.html");
   writeFileSync(path, out);
   return path;
