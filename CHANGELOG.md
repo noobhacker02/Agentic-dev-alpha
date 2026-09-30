@@ -22,6 +22,15 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **`specs/computer-use/SPEC.md`** (planned, not yet built): a staged plan for computer use.
+  Stage 1 upgrades the existing localhost-only browser tools (accessibility snapshots with stable,
+  staleness-checked element refs; coordinate actions tied to a specific screenshot; tabs). Stages
+  3–6 add a single human-chosen desktop window through the same `cua-driver` both reference
+  projects use, behind a human go/no-go. The threat model is grounded in two facts found in the
+  current code while planning: the safety net only inspects the `Bash` tool's command, so desktop
+  typing into a terminal would bypass every Bash protection (hence: terminals can never be a target);
+  and non-Bash tools get "don't ask again" rules by bare tool name, so one approved desktop click
+  would approve every later one (hence: desktop input always asks).
 - **`agent-loop insights`**: a self-analysis CLI report over every run ever recorded against a
   `--dir`'s audit database — which phases get repaired most (and how often), total and per-phase
   cost, and which "don't ask again" rules actually get reused versus created once and never touched
