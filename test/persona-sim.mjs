@@ -45,18 +45,18 @@ export function simulateRun(name, { runId = `sim-${name}`, seed = 7, startMs } =
   const push = (e) => events.push({ runId, ts: at(), ...e });
   const verdict = (outcome, headline) => ({ completed: true, outcome, headline, details: "", concerns: [], blockingFindings: outcome === "pass" ? [] : ["something is wrong"] });
 
-  // Order the phases run in, with repairs inserted where the profile says.
+  // Order the phases run in, with repairs inserted where the profile says. Attempts are numbered per phase and
+  // only ever go up, as in the real pipeline (a second "builder attempt 2" would be a different run).
   const plan = [];
+  const attemptOf = {};
+  const add = (phase) => { attemptOf[phase] = (attemptOf[phase] ?? 0) + 1; const step = { phase, attempt: attemptOf[phase], fail: false }; plan.push(step); return step; };
   for (const ph of PHASES) {
-    plan.push({ phase: ph, attempt: 1, fail: false });
-    const rep = p.repairs.filter((r) => r.after === ph);
-    let attempt = 1;
-    for (const r of rep) {
-      plan[plan.length - 1].fail = true;
-      plan[plan.length - 1].repairTarget = r.target;
-      attempt++;
-      plan.push({ phase: r.target, attempt, fail: false });
-      plan.push({ phase: ph, attempt: attempt, fail: false });
+    let step = add(ph);
+    for (const r of p.repairs.filter((x) => x.after === ph)) {
+      step.fail = true;
+      step.repairTarget = r.target;
+      add(r.target);
+      step = add(ph);
     }
   }
   const totalPhaseSec = plan.reduce((n, step) => n + p.phaseSec[PHASES.indexOf(step.phase)], 0);

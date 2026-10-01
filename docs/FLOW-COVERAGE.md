@@ -8,7 +8,7 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 
 | Where it runs | What | Cost |
 |---|---|---|
-| `npm test` (and CI) | 18 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
+| `npm test` (and CI) | 22 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
 | `bash test/stress/pipeline_logic.sh` (and CI) | 11 pipeline edge cases with the scripted fake SDK | none |
 | `npm run test:desktop-real` (and CI, `REQUIRE_DESKTOP_REAL=1`) | The real native driver, real X11 input, real window manager, real windows, under Xvfb | none |
 | `npm run test:real-model-browser`, `npm run test:real-model-desktop` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window | a few cents each (Haiku) |
@@ -30,6 +30,7 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 | Desktop CLI end to end (flag, startup line, session start/end, insights) | `desktop-cli.mjs` (refusals), `desktop-real-cli.mjs` (success path, real window, fake model) | real driver, fake model |
 | **Desktop tools driven by a real model through the real SDK** | `desktop-real-sdk.mjs`: tool names match the hook prefix; capture and click both ask; a "no" leaves the window untouched; one "yes" lands exactly one click; a window title telling the model to type produced no input; a model that keeps asking after "no" stops getting prompts after three | real SDK, real model, real driver, real window |
 | The persona: levels, the ceiling, hostile text in every event field, never inside an approval, never reaching a model, terminal/report/CLI/insights | `persona.mjs`; `ui-persona.mjs` (real Chromium); 18 mutations, all caught | real (nothing to fake) |
+| The lineage: tree of attempts, repairs as branches, file attribution, handoff notes, cost/approval totals, `lineage-updated`, store rebuild, `agent-loop lineage`, `lineage.md/json`, the tree view | `lineage.mjs` (totals cross-checked against the raw events); `ui-lineage.mjs` (real Chromium); 46 mutations, all caught | real (derived from events; nothing to fake) |
 | Web UI rendering, panels, prompts, hostile strings inert | `ui-render.mjs`, `ui-desktop.mjs` | real Chromium |
 
 ## What the real-model tests found

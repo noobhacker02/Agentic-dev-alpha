@@ -1,3 +1,4 @@
+import type { Lineage } from "./lineage.js";
 export const PHASES = [
   "planner",
   "test-designer",
@@ -167,6 +168,8 @@ export type AgentEvent =
     }
   /** Display-only commentary from src/persona.ts: never shown to a model, never part of an approval. */
   | { type: "persona-note"; runId: string; phase?: PhaseName; moment: string; text: string; dark: boolean; speaker: string; ts: string }
+  /** The run's tree so far (src/lineage.ts): derived from the other events, so it is not stored and only the latest is kept. */
+  | { type: "lineage-updated"; runId: string; lineage: Lineage; ts: string }
   | { type: "decisions-log-updated"; runId: string; content: string; ts: string }
   | { type: "report-saved"; runId: string; path: string; ts: string }
   | { type: "trusted-decision-recorded"; runId: string; phase: PhaseName; text: string; ts: string }

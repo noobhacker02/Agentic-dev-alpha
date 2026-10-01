@@ -197,6 +197,15 @@ With `--browser`, the agent's browser session is recorded as video. That's a wat
 what it actually did to the app, not just its claims about it. Example (real run, 2× speed):
 [`media/agent-browser-session-2x.mp4`](media/agent-browser-session-2x.mp4).
 
+## The tree
+
+The **tree** button in the header swaps the transcript for the run's lineage: every phase attempt in order, a
+repair as a branch on its own lane, what each attempt handed on, the files it wrote, its cost and prompts, and a
+"made by" table. The approval prompt stays pinned at the bottom while it is showing. Details in
+[`LINEAGE.md`](LINEAGE.md).
+
+![The tree](screenshots/lineage/01-tree.png)
+
 ## The voice
 
 The page has a `jokes: dark | dry | off` button in the header (only when the run wasn't started with
@@ -231,7 +240,7 @@ rendered as inert text everywhere they appear (tested with markup in each).
 ## Checking it yourself
 
 ```bash
-npm run build && npm test            # 18 suites, no API key; includes real-Chromium UI tests
+npm run build && npm test            # 22 suites, no API key; includes real-Chromium UI tests
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
                                      # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm

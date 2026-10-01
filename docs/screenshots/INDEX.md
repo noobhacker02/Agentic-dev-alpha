@@ -67,3 +67,14 @@ simulated run (`test/persona-sim.mjs`) played through the real director, server 
 | `01-voice-in-the-transcript.png` | A run part-way through at `jokes: dark`: the Overseer's veto and the agent's reply, and an approval prompt at the bottom with none of it in. |
 | `02-end-of-run-and-awards.png` | The end of the same run: the ending line, then the awards the run's numbers earned. |
 | `03-dry-level.png` | The same page after turning it down to `jokes: dry`: the dark lines are hidden, the dry ones stay. |
+
+## `lineage/`
+
+Captured by `SAVE_UI_SCREENSHOTS=1 node --experimental-sqlite --no-warnings test/ui-lineage.mjs`, from a clean
+simulated run played through the real tracker, server and page in a real Chromium (`docs/LINEAGE.md`).
+
+| File | What it shows |
+| --- | --- |
+| `01-tree.png` | The tree view: attempts in order, the repair as a branch with its fork and merge, what each attempt handed on, the Overseer's calls, files written (a refused write is counted, not listed) and the side panel's matching list. |
+| `02-made-by-and-files.png` | The foot of the same view: the per-agent table and which attempts touched each file. |
+

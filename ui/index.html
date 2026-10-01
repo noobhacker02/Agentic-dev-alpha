@@ -106,6 +106,36 @@
   .desk-text { margin-top: 4px; padding: 4px 8px; border-left: 2px solid var(--accent); background: var(--panel-2); white-space: pre-wrap; word-break: break-all; }
   @media (max-width: 1000px) { aside { display: none; } }
 
+  /* ---------- the tree view: who did what, in what order, and why it was redone (src/lineage.ts, docs/LINEAGE.md) */
+  #tree { flex: 1; min-width: 0; overflow-y: auto; }
+  #tree .wrap { max-width: 960px; margin: 0 auto; padding: 14px 22px 30px; }
+  #tree h3 { margin: 22px 0 8px; font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  #tree .summary { color: var(--dim); margin-bottom: 12px; } #tree .summary b { color: var(--text); font-weight: 600; }
+  .tn { display: grid; grid-template-columns: 62px minmax(0, 1fr); }
+  .tn .rail { position: relative; min-height: 26px; }
+  .tn .rail .l0, .tn .rail .l1 { position: absolute; top: 0; bottom: 0; width: 2px; }
+  .tn .rail .l0 { left: 15px; background: var(--line); }
+  .tn .rail .l1 { left: 45px; background: var(--yellow); opacity: .55; }
+  .tn.first .rail .l0 { top: 12px; } .tn.last .rail .l0 { bottom: calc(100% - 12px); }
+  .tn .rail .dot { position: absolute; top: 6px; width: 12px; height: 12px; border-radius: 999px; background: var(--bg); border: 2px solid var(--dim); }
+  .tn.lane0 .rail .dot { left: 10px; } .tn.lane1 .rail .dot { left: 40px; }
+  .tn[data-outcome="pass"] .dot { border-color: var(--green); background: var(--green); }
+  .tn[data-outcome="fail"] .dot, .tn[data-outcome="blocked"] .dot { border-color: var(--red); background: var(--red); }
+  .tn[data-outcome="skipped"] .dot { border-style: dashed; }
+  .tn[data-outcome="running"] .dot { border-color: var(--accent); animation: live-pulse 1.6s ease-in-out infinite; }
+  .tn .tb { padding: 1px 0 14px; min-width: 0; word-break: break-word; }
+  .tn .hd b { font-weight: 700; } .tn .meta { color: var(--faint); margin-left: 6px; }
+  .tn .says { color: var(--dim); } .tn .says::before { content: "hands on: "; color: var(--faint); }
+  .tn .blocking { color: var(--red); } .tn .dec { margin-top: 3px; } .tn .dec b { color: var(--blue); }
+  .tn .human { color: var(--green); margin-top: 3px; }
+  .tn details { margin-top: 3px; } .tn summary { cursor: pointer; color: var(--dim); }
+  .tn .files { margin: 3px 0 0 14px; }
+  .conn .rail { height: 26px; } .conn svg { position: absolute; left: 0; top: 0; }
+  .conn svg path { fill: none; stroke: var(--yellow); stroke-width: 2; opacity: .55; }
+  #tree table { border-collapse: collapse; width: 100%; } #tree td, #tree th { text-align: left; padding: 3px 14px 3px 0; vertical-align: top; }
+  #tree th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  #view-toggle { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
+
   /* transcript blocks */
   .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; animation: blk-in .2s ease-out; }
   .blk::before { position: absolute; left: 0; top: 0; }
@@ -293,6 +323,7 @@
   <span class="stat">⏱ <b id="elapsed">0s</b></span>
   <span class="stat">$ <b id="cost">0.00</b></span>
   <span id="status">connecting…</span>
+  <button id="view-toggle" type="button" title="Show the run as a tree of who did what, instead of the transcript">tree</button>
   <button id="humor-toggle" type="button" title="How much the agents joke around (this page only)" hidden></button>
   <button id="theme-toggle" type="button" title="Switch look">💬</button>
 </header>
@@ -302,6 +333,7 @@
     <main id="transcript"></main>
     <button id="jump">↓ new activity</button>
   </div>
+  <div id="tree" hidden><div class="wrap" id="tree-body"></div></div>
   <aside>
     <h3>Run</h3>
     <div class="kv">Approvals asked <b id="s-asked">0</b></div>
@@ -346,8 +378,8 @@ const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 const state = {
   runId: null, phase: null, task: "", status: "idle", startedAt: null, endedAt: null, cost: 0,
   phaseState: {}, phaseCost: {}, repairs: {}, tools: new Map(), pending: [], sel: 0,
-  asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], files: new Map(), decisions: [],
-  live: false, ws: null,
+  asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], files: new Map(), pendingFiles: new Map(), decisions: [],
+  live: false, ws: null, lineage: null,
 };
 
 // ---------- helpers
@@ -461,11 +493,12 @@ function renderHeader() {
   $("decisions").innerHTML = state.decisions.length ? state.decisions.map((d) => "<div>" + (d.trusted ? "✓ " : "? ") + esc(short(d.text, 140)) + "</div>").join("") : '<span class="muted">none yet</span>';
   document.title = (state.pending.length ? "(" + state.pending.length + ") approval needed · " : "") + "agent-loop";
 }
-setInterval(() => {
+function tickClock() {
   if (!state.startedAt) return;
   $("elapsed").textContent = fmtTime((state.endedAt || Date.now()) - state.startedAt);
   if (!state.pending.length) renderDock();
-}, 1000);
+}
+setInterval(tickClock, 1000);
 // The dock is rebuilt whenever the pending prompt changes; an explicit mode avoids rebuilding the idle input.
 
 const browserPanel = $("browser-panel");
@@ -677,6 +710,7 @@ function render(ev) {
       break;
     case "run-end":
       state.status = ev.status; state.endedAt = Date.parse(ev.ts);
+      tickClock();
       blk("run-end " + ev.status,
         "<strong>Run " + esc(ev.status) + "</strong> · " + fmtTime(state.endedAt - state.startedAt) + " · $" + state.cost.toFixed(2) +
         " · " + state.asked + " approval prompts (" + state.approved + " yes, " + state.rejected + " no, " + state.auto + " by rule) · " + state.toolCount + " tool calls");
@@ -717,17 +751,25 @@ function render(ev) {
       const [name, args] = toolLabel(ev.toolName, ev.toolInput);
       const el = blk("tool", '<div class="line"><span class="name">' + esc(name) + '</span><span class="args">(' + esc(args) + ")</span></div>");
       state.tools.set(ev.toolUseId, el);
-      if (ev.toolName === "Write" || ev.toolName === "Edit") {
-        const f = ev.toolInput?.file_path; if (f && !state.files.has(f)) state.files.set(f, ev.toolName);
+      if (ev.toolName === "Write" || ev.toolName === "Edit" || ev.toolName === "NotebookEdit") {
+        // A file is "changed" once the write has happened: a refused one (the human said no) isn't, so wait for the result.
+        const f = ev.toolInput?.file_path ?? ev.toolInput?.notebook_path;
+        if (typeof f === "string" && f) state.pendingFiles.set(ev.toolUseId, [f, ev.toolName]);
       }
       break;
     }
     case "tool-result": {
+      const pf = state.pendingFiles.get(ev.toolUseId);
+      if (pf) { state.pendingFiles.delete(ev.toolUseId); if (!ev.isError && !state.files.has(pf[0])) state.files.set(pf[0], pf[1]); }
       const t = toolBlock(ev.toolUseId);
       if (t) { t.insertAdjacentHTML("beforeend", outputHtml(ev.summary, ev.isError)); t.classList.add(ev.isError ? "err" : "ok"); if (nearBottom()) scrollBox.scrollTop = scrollBox.scrollHeight; }
       else blk("tool " + (ev.isError ? "err" : "ok"), outputHtml(ev.summary, ev.isError));
       break;
     }
+    case "lineage-updated":
+      state.lineage = ev.lineage;
+      if (view === "tree") renderTree();
+      break;
     case "persona-note": {
       const who = personaName(ev.speaker);
       blk("persona" + (ev.dark ? " dark" : ""), (who && who.name ? '<span class="who" title="' + esc(who.tagline) + '">' + esc(who.name) + "</span>" : "") + esc(ev.text));
@@ -845,8 +887,9 @@ function connect() {
 }
 /** The server replays the whole run on every (re)connect, so start from a clean slate each time. */
 function resetForReplay() {
-  transcript.innerHTML = ""; state.tools.clear(); state.files.clear();
-  Object.assign(state, { phaseState: {}, phaseCost: {}, repairs: {}, pending: [], cost: 0, asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], decisions: [], live: false });
+  transcript.innerHTML = ""; state.tools.clear(); state.files.clear(); state.pendingFiles.clear();
+  Object.assign(state, { phaseState: {}, phaseCost: {}, repairs: {}, pending: [], cost: 0, asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], decisions: [], live: false, lineage: null });
+  renderTree();
 }
 // ---------- theme: dark terminal-style (default) or a lighter "Desktop" chat-card look
 const THEME_KEY = "agent-loop-theme";
@@ -861,6 +904,68 @@ let savedTheme = "terminal";
 try { savedTheme = localStorage.getItem(THEME_KEY) || "terminal"; } catch {}
 applyTheme(savedTheme);
 $("theme-toggle").onclick = () => applyTheme(document.documentElement.dataset.theme === "desktop" ? "terminal" : "desktop");
+
+// ---------- the tree view
+let view = "transcript";
+const money = (n) => "$" + Number(n || 0).toFixed(2);
+function renderTree() {
+  const root = $("tree-body"), l = state.lineage;
+  if (!l || !l.nodes || !l.nodes.length) { root.innerHTML = '<span class="muted">No phase has started yet. The tree fills in as agents work.</span>'; return; }
+  const t = l.totals;
+  const out = ['<div class="summary"><b>' + esc(l.status) + "</b>" + (l.durationMs !== undefined ? " · " + fmtTime(l.durationMs) : "") + " · <b>" + money(t.costUsd) + "</b> · " +
+    l.nodes.length + " attempt" + (l.nodes.length === 1 ? "" : "s") + " · " + t.repairs + " repair" + (t.repairs === 1 ? "" : "s") + " · " + t.approvals.asked + " prompt" + (t.approvals.asked === 1 ? "" : "s") +
+    " (" + t.approvals.approved + " yes, " + t.approvals.denied + " no, " + t.approvals.auto + " by rule) · " + t.files + " file" + (t.files === 1 ? "" : "s") + " changed</div>"];
+  let prev = 0;
+  const conn = (kind) => '<div class="tn conn"><div class="rail"><i class="l0"></i>' + (kind === "fork"
+    ? '<svg width="62" height="26"><path d="M16 0 C16 15, 46 11, 46 26"/></svg>' : '<svg width="62" height="26"><path d="M46 0 C46 15, 16 11, 16 26"/></svg>') + "</div><div></div></div>";
+  l.nodes.forEach((n, i) => {
+    if (n.lane === 1 && prev === 0) out.push(conn("fork"));
+    if (n.lane === 0 && prev === 1) out.push(conn("merge"));
+    prev = n.lane;
+    const o = n.outcome;
+    const meta = [];
+    if (n.durationMs !== undefined) meta.push(fmtTime(n.durationMs));
+    if (n.costUsd > 0) meta.push(money(n.costUsd));
+    if (n.approvals.asked) meta.push(n.approvals.asked + " prompt" + (n.approvals.asked > 1 ? "s" : "") + " (" + n.approvals.approved + " yes, " + n.approvals.denied + " no)");
+    if (n.toolCalls) meta.push(n.toolCalls + " tool call" + (n.toolCalls > 1 ? "s" : ""));
+    if (n.browserActions) meta.push(n.browserActions + " browser action" + (n.browserActions > 1 ? "s" : ""));
+    if (n.desktopActions.sent || n.desktopActions.refused) meta.push("desktop " + n.desktopActions.sent + " sent, " + n.desktopActions.refused + " stopped");
+    const nf = n.files.length + n.filesMore;
+    const tools = Object.entries(n.tools).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => esc(k) + " ×" + v).join(", ");
+    const body =
+      '<div class="hd"><b>' + esc(n.id) + '</b><span class="tag ' + (o === "pass" ? "ok" : o === "fail" || o === "blocked" ? "no" : o === "running" ? "wait" : "") + '">' + esc(o) + "</span>" +
+      (n.kind === "repair" ? '<span class="tag wait">sent back</span>' : n.kind === "retry" ? '<span class="tag">retry</span>' : "") + '<span class="meta">' + esc(meta.join(" · ")) + "</span></div>" +
+      (n.headline ? '<div class="says">' + esc(n.headline) + "</div>" : "") +
+      n.blocking.map((b) => '<div class="blocking">• ' + esc(b) + "</div>").join("") +
+      (n.details || n.concerns.length ? "<details><summary>what it told the next phase</summary>" + (n.details ? '<div class="says">' + esc(n.details) + "</div>" : "") + n.concerns.map((c) => '<div class="muted">• ' + esc(c) + "</div>").join("") + "</details>" : "") +
+      (nf ? "<details><summary>" + nf + " file" + (nf > 1 ? "s" : "") + " written or edited" + (n.failedWrites ? " · " + n.failedWrites + " refused" : "") + '</summary><div class="files">' +
+        n.files.map((f) => '<div class="' + (f.op === "write" ? "w" : "e") + '">' + (f.op === "write" ? "+ " : "~ ") + esc(rel(f.path)) + (f.count > 1 ? " ×" + f.count : "") + "</div>").join("") +
+        (n.filesMore ? '<div class="muted">… ' + n.filesMore + " more</div>" : "") + "</div></details>" : "") +
+      (tools ? "<details><summary>tools</summary><div class=\"muted\">" + tools + "</div></details>" : "") +
+      n.recorded.map((r) => '<div class="human">✓ you decided: ' + esc(r) + "</div>").join("") +
+      (n.decision ? '<div class="dec">◆ Overseer → <b>' + esc(n.decision.action.toUpperCase()) + "</b>" + (n.decision.repairTarget ? " " + esc(n.decision.repairTarget) : "") +
+        (n.decision.reasoning ? ' <span class="muted">· ' + esc(n.decision.reasoning) + "</span>" : "") + "</div>" : "");
+    out.push('<div class="tn lane' + n.lane + (i === 0 ? " first" : "") + (i === l.nodes.length - 1 && prev === 0 ? " last" : "") + '" data-id="' + esc(n.id) + '" data-outcome="' + esc(o) + '" data-kind="' + esc(n.kind) + '">' +
+      '<div class="rail"><i class="l0"></i>' + (n.lane === 1 ? '<i class="l1"></i>' : "") + '<i class="dot"></i></div><div class="tb">' + body + "</div></div>");
+  });
+  if (prev === 1) out.push(conn("merge"));
+  if (l.truncated) out.push('<div class="muted">More attempts than are shown.</div>');
+  out.push("<h3>Made by</h3><table><tr><th>Agent</th><th>Attempts</th><th>Cost</th><th>Files</th><th>Tool calls</th><th>Prompts</th></tr>" +
+    l.agents.map((a) => "<tr><td>" + esc(a.phase) + "</td><td>" + a.attempts + " <span class=\"muted\">(" + esc(a.outcomes.join(", ")) + ")</span></td><td>" + money(a.costUsd) + "</td><td>" + a.files + "</td><td>" + a.toolCalls + "</td><td>" + a.approvalsAsked + "</td></tr>").join("") + "</table>");
+  if (l.files.length) out.push("<h3>Files, and who touched them</h3><table>" + l.files.map((f) => "<tr><td>" + esc(rel(f.path)) + "</td><td class=\"muted\">" + esc(f.touches.map((x) => x.node + " (" + x.op + ")").join(", ")) + "</td></tr>").join("") + "</table>");
+  if (l.decisions.length) out.push("<h3>Decisions you recorded</h3>" + l.decisions.map((d) => "<div>✓ " + esc(d.phase) + ": " + esc(d.text) + "</div>").join(""));
+  if (t.unattributedCostUsd > 0) out.push('<div class="muted" style="margin-top:10px">' + money(t.unattributedCostUsd) + " of cost could not be tied to an attempt.</div>");
+  root.innerHTML = out.join("");
+}
+function applyView(v) {
+  view = v;
+  $("scroll").hidden = v === "tree";
+  $("tree").hidden = v !== "tree";
+  $("view-toggle").textContent = v === "tree" ? "transcript" : "tree";
+  $("view-toggle").title = v === "tree" ? "Back to the transcript" : "Show the run as a tree of who did what, instead of the transcript";
+  if (v === "tree") renderTree();
+}
+$("view-toggle").onclick = () => applyView(view === "tree" ? "transcript" : "tree");
 
 // ---------- humor: the run's --humor is the ceiling; this page can only turn it down
 function applyHumor(level) {
@@ -882,6 +987,7 @@ if (REPLAY) {
   $("status").textContent = "saved report";
   for (const ev of REPLAY) render(ev);
   state.live = true;
+  tickClock(); // a finished run shows how long it took straight away, not after the first tick
   renderDock();
 } else {
   renderDock();

@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { EventBus } from "./bus.js";
 import { Store, type Insights } from "./store.js";
@@ -11,6 +11,7 @@ import { PHASES } from "./types.js";
 import { stripTerminalControlBytes } from "./text-safety.js";
 import { resolveDesktopTarget, type ResolvedDesktop } from "./desktop-tools.js";
 import { classifyDeniedTarget, deniedTargetMessage } from "./desktop-policy.js";
+import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText } from "./lineage.js";
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
@@ -126,12 +127,43 @@ async function main() {
     return;
   }
 
+  if (cmd === "lineage") {
+    const args = parseArgs(argv.slice(1));
+    const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
+    const dataDirOverride = typeof args["data-dir"] === "string" ? args["data-dir"] : process.env.AGENT_LOOP_DATA_DIR;
+    const dbPath = join(resolveDataDir(workDir, dataDirOverride), "agent-loop.db");
+    if (!existsSync(dbPath)) {
+      console.error(`No audit database found at ${dbPath} -- has "agent-loop run" ever been used against this --dir?`);
+      process.exit(1);
+    }
+    const store = new Store(dbPath);
+    const wanted = typeof args.run === "string" ? args.run : "latest";
+    const runs = store.listRuns(200);
+    const byPrefix = runs.filter((r) => r.id.startsWith(wanted));
+    const run = wanted === "latest" ? runs[0] : runs.find((r) => r.id === wanted) ?? (byPrefix.length === 1 ? byPrefix[0] : undefined);
+    if (!run && byPrefix.length > 1) {
+      console.error(`"${stripTerminalControlBytes(wanted)}" matches ${byPrefix.length} runs; give more of the id.`);
+      store.close();
+      process.exit(1);
+    }
+    if (!run) {
+      console.error(runs.length ? `No run matches "${stripTerminalControlBytes(wanted)}". Recorded runs:\n${runs.slice(0, 10).map((r) => `  ${r.id}  ${r.status}  ${stripTerminalControlBytes(r.task).slice(0, 60)}`).join("\n")}` : "No runs recorded against this data dir yet.");
+      store.close();
+      process.exit(1);
+    }
+    const lineage = buildLineage(store.getRunEvents(run.id), run.id);
+    store.close();
+    console.log(args.json ? JSON.stringify(lineage, null, 2) : args.markdown ? renderLineageMarkdown(lineage) : renderLineageText(lineage));
+    return;
+  }
+
   if (cmd !== "run") {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark]
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark]
+  agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
@@ -154,6 +186,11 @@ Usage:
                    Display only: it never reaches a model and never appears inside an approval prompt.
                    The web page can turn it down; the terminal shows it only on a TTY unless this is
                    given explicitly. See docs/PERSONA.md.
+
+  lineage          The tree of a recorded run: every phase attempt, who handed what to whom, repairs as
+                   branches, which agent wrote which files (only writes that succeeded), cost and prompts per
+                   attempt. Read-only, rebuilt from the run's stored events; --run takes an id, a unique
+                   prefix, or "latest". Every run also writes lineage.md and lineage.json next to its report.
 
   insights         Self-analysis over every run ever recorded against a --dir's audit database:
                    which phases get repaired most, total and per-phase cost, and which "don't ask
@@ -255,6 +292,7 @@ Usage:
   console.log(`Task: ${task}`);
   const terminal = attachTerminal(bus, { interactive, workDir, uiUrl: url, persona: humor.level !== "off" && (humor.explicit || !!process.stdout.isTTY) });
   const persona = new PersonaDirector(bus, { level: humor.level }).attach();
+  const lineageTracker = new LineageTracker(bus).attach();
 
   let costUsd = 0;
   bus.on("event", (e) => {
@@ -278,12 +316,20 @@ Usage:
     // Announced first, so the saved report itself also says where it lives, and a page still open
     // can show it before the live server goes away.
     bus.emitEvent({ type: "report-saved", runId: run.id, path: reportPath, ts: new Date().toISOString() });
+    // The run's tree, kept next to its report: lineage.md to read, lineage.json to process. Rebuilt from the
+    // stored events, so it matches what `agent-loop lineage` prints later.
+    const lineage = buildLineage(store.getRunEvents(run.id), run.id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "lineage.md"), renderLineageMarkdown(lineage));
+    writeFileSync(join(dir, "lineage.json"), JSON.stringify(lineage, null, 2));
+    console.log(`Lineage: file://${join(dir, "lineage.md")}`);
     const report = writeRunReport(dir, bus.allEvents(), humor.level);
     console.log(`Report: file://${report}`);
     await new Promise((r) => setTimeout(r, 300)); // let open pages receive the last events
   } catch (err) {
     console.error(`Could not write the run report: ${err instanceof Error ? err.message : String(err)}`);
   }
+  lineageTracker.detach();
   store.close();
   await close();
   process.exit(run.status === "done" ? 0 : 1);

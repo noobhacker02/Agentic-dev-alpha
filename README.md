@@ -145,6 +145,8 @@ machine's directory layout.
 | `test/desktop-real-adversarial.mjs`, `test/desktop-real-nowm.mjs` | The desktop threat model attacked with real windows (an `xterm`-named process, a same-titled impostor, a moved window, a focus-stealing decoy, an overlapping window, a hostile title, no window manager); a decoy app logs everything it receives and must get nothing |
 | `test/browser-real-sdk.mjs`, `test/desktop-real-sdk.mjs` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window; opt-in, a few cents (`npm run test:real-model-browser`, `npm run test:real-model-desktop`). What is tested and what isn't: [`docs/FLOW-COVERAGE.md`](docs/FLOW-COVERAGE.md) |
 | `src/persona.ts` | The voice: six agents with temperaments who reply to each other, 209 lines across 56 moments, end-of-run awards from the run's own numbers, `--humor off\|dry\|dark`. Display only; it never reaches a model — see [`docs/PERSONA.md`](docs/PERSONA.md) |
+| `src/lineage.ts` | The run's lineage: a git-log-like tree of every phase attempt, repairs as branches, who wrote which files, what each handed on, cost and prompts per attempt; the live tracker; text and markdown renderers — see [`docs/LINEAGE.md`](docs/LINEAGE.md) |
+| `test/lineage.mjs`, `test/ui-lineage.mjs` | The lineage builder, tracker, store rebuild and command (totals cross-checked against the raw events, hostile and malformed input), and the tree view in a real Chromium |
 | `test/persona-sim.mjs` | Deterministic event streams with the shape of real runs (a 6-minute typical run, a 36-minute run with three vetoes, a speed-approver, a failure, a 2:40 a.m. start), for judging the voice on something real |
 | `test/persona.mjs`, `test/ui-persona.mjs` | The catalog lint (and a control that it can fail), levels, determinism, hostile text in every event field, the import graph, the terminal, `/persona.js`, saved reports, the CLI, and in a real Chromium: the toggle, the ceiling, an approval prompt with no jokes in it, inert hostile notes |
 | `test/ui-desktop.mjs` | The real web UI: the desktop panel and every approval prompt (the click marker, typed text with visible control bytes), hostile titles inert |
@@ -223,6 +225,17 @@ phases get repaired most (and how often), total and per-phase cost, and which "d
 rules actually get reused versus created once and never touched again. Built entirely from data
 already recorded for `run` itself (`src/store.ts`'s `getInsights()`) — nothing new to opt into first,
 so it reflects every run's history, not just ones made after some new tracking was added.
+
+### `agent-loop lineage`
+
+```bash
+node dist/cli.js lineage [--run <id|prefix|latest>] [--json | --markdown] [--dir <workDir>] [--data-dir <path>]
+```
+
+The tree of a recorded run: every phase attempt, who handed what to whom, repairs as branches, which agent wrote
+which files (only writes that succeeded), and cost and prompts per attempt. Read-only and rebuilt from the run's
+stored events. The page has the same tree behind the **tree** button, and every run leaves `lineage.md` and
+`lineage.json` next to its report. See [`docs/LINEAGE.md`](docs/LINEAGE.md).
 
 ## Browser Agent
 

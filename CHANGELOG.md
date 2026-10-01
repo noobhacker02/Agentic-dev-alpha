@@ -26,6 +26,24 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Lineage: the run as a tree of who did what** (docs/LINEAGE.md). The "git tree" idea from the start of the
+  project: how the agents' work connects, and which agent made what. Built read-only from events the run already
+  emits, deliberately not as a shared log agents write to (the research on OpenClaw found that is where multi-agent
+  systems get races).
+  - A node per phase attempt, in order, with its parent; repairs are branches on a second lane that rejoin;
+    retries and further-back repairs are told apart.
+  - What each attempt handed on (headline, details, concerns, blocking findings), the Overseer's call and reasoning,
+    your decisions, cost, prompts, tool calls, browser and desktop actions, and the files it wrote. Only writes that
+    succeeded are attributed; a refused write and a Bash redirect never are.
+  - "Made by" per agent, and per file who touched it, in order.
+  - The page's **tree** button; `agent-loop lineage [--run id|prefix|latest] [--json|--markdown]` for any recorded
+    run; `lineage.md` and `lineage.json` written next to every run's report; the saved report opens to the same
+    tree. The tree is published as a `lineage-updated` event (only the latest kept for late tabs and reports, not
+    stored; rebuilding from the database gives the same tree).
+  - Hostile and malformed input is cleaned and capped inside the builder; nothing it produces carries a control
+    byte. `test/lineage.mjs` cross-checks every total against independent counts of the raw events on realistic runs;
+    `test/ui-lineage.mjs` runs it in a real Chromium. 46 mutations, all caught; three survived at first and each
+    showed a missing case.
 - **The persona, evaluated on realistic runs and made much better** (docs/PERSONA.md). The first version was
   tested for safety, not for what a person would actually see. A deterministic simulator
   (`test/persona-sim.mjs`, shaped from numbers in real runs) showed:
@@ -275,6 +293,13 @@ All notable changes to this project are documented here. Format follows
   anywhere in agent-loop — the visual language stays the existing dark-terminal/light-desktop look.
 
 ### Fixed
+- **The "Files changed" panel listed writes that were refused** (`ui/index.html`). It recorded the attempt, so a
+  write the human said no to (even one to a `.env`) showed up as a changed file. Found by putting it next to the
+  lineage, which counts only writes that succeeded. It now waits for the result.
+- **A finished run showed `0s` in the header until the first one-second tick** (`ui/index.html`), including in a
+  saved report opened from disk. It now shows how long the run took, or had been going, straight away.
+- **Test simulator numbered a second attempt twice** (`test/persona-sim.mjs`), which showed "builder, attempt 2"
+  twice in the persona screenshots. Found by the lineage's cross-check of node counts against raw events.
 - **A click that closes its own page was sometimes reported as an error** (`src/browser-tools.ts`). Found as a CI
   failure (run #38, `browser-computer-use.mjs`: a popup's "Close me" came back as "Stale ref ... no longer on
   the page"), after passing in every earlier CI run and locally. It is a race: Playwright can finish the click

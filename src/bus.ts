@@ -41,7 +41,10 @@ export class EventBus extends EventEmitter {
 
   emitEvent(event: AgentEvent) {
     const phase = "phase" in event ? (event.phase ?? null) : null;
-    this.store?.logEvent(event.runId, phase, event.type, event);
+    // A lineage snapshot is derived from the events already stored (agent-loop lineage rebuilds it), so it
+    // isn't stored again; and only the newest per run is kept for a tab that connects later.
+    if (event.type === "lineage-updated") this.history = this.history.filter((e) => !(e.type === "lineage-updated" && e.runId === event.runId));
+    else this.store?.logEvent(event.runId, phase, event.type, event);
     this.history.push(event);
     if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT);
     this.emit("event", event);

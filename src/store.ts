@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import type { PhaseName, PhaseRecord, PhaseVerdict, RunRecord, TrustedDecision } from "./types.js";
+import type { AgentEvent, PhaseName, PhaseRecord, PhaseVerdict, RunRecord, TrustedDecision } from "./types.js";
 
 /**
  * The whole point of this store: the Overseer and a human can both look up
@@ -158,6 +158,26 @@ export class Store {
         "INSERT INTO events (run_id, phase, ts, type, payload_json) VALUES (?, ?, ?, ?, ?)"
       )
       .run(runId, phase, new Date().toISOString(), type, JSON.stringify(payload));
+  }
+
+  /** Every event stored for a run, oldest first, as the objects that were emitted. */
+  getRunEvents(runId: string): AgentEvent[] {
+    const rows = this.db.prepare("SELECT payload_json AS p FROM events WHERE run_id = ? ORDER BY id").all(runId) as Array<{ p: string }>;
+    const out: AgentEvent[] = [];
+    for (const r of rows) {
+      try {
+        const e = JSON.parse(r.p);
+        if (e && typeof e === "object" && typeof e.type === "string") out.push(e as AgentEvent);
+      } catch {
+        /* a row that isn't JSON is skipped, not fatal */
+      }
+    }
+    return out;
+  }
+
+  /** The runs recorded here, newest first. */
+  listRuns(limit = 20): RunRecord[] {
+    return this.db.prepare("SELECT id, task, work_dir AS workDir, created_at AS createdAt, status FROM runs ORDER BY created_at DESC, rowid DESC LIMIT ?").all(limit) as unknown as RunRecord[];
   }
 
   /** Add a chunk of free text to the searchable index (tool summaries, phase notes, etc). */
