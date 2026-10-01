@@ -138,6 +138,8 @@ machine's directory layout.
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
 | `test/insights-cli.mjs` | No-LLM test that `agent-loop insights` strips terminal control bytes from a stored rule before printing it |
+| `src/roast.ts`, `src/habits.ts`, `src/roast-api.ts` | What `insights` says about you: the numbers-only `Habits`, the catalogue and grade, and the optional model call |
+| `test/roast.mjs` | The roast, offline and with a fake model: lint, determinism, canaries, validation, CLI |
 | `src/browser-tools.ts` | The 15 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
 | `test/browser-tools.mjs` | Real-Chromium tests of the original browser tools: containment, the screenshot cap, `close()` never throwing |
 | `test/browser-computer-use.mjs` | Real-Chromium tests of refs, screenshot-bound `click_at`/`scroll_at`, tabs, hover/select/scroll, and every leak channel (WebSocket, WebRTC, service worker, popups) against a counted non-allowed host, with a no-defence control run |
@@ -221,7 +223,7 @@ task, with screenshots, videos, and exactly which rules can and can't become "do
 ### `agent-loop insights`
 
 ```bash
-node dist/cli.js insights [--dir <workDir>] [--data-dir <path>]
+node dist/cli.js insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
 ```
 
 A self-analysis report over every run ever recorded against a `--dir`'s audit database: which
@@ -229,6 +231,13 @@ phases get repaired most (and how often), total and per-phase cost, and which "d
 rules actually get reused versus created once and never touched again. Built entirely from data
 already recorded for `run` itself (`src/store.ts`'s `getInsights()`) — nothing new to opt into first,
 so it reflects every run's history, not just ones made after some new tracking was added.
+
+Below the numbers it says a few things about how you have actually been using it, a tip or two, and a grade
+(for example: *"19 of your 26 approvals took under 1.5 seconds. That is not a code review, that is a reflex."*). It
+works from numbers only — a task, command, rule or path is never read into it — and never aims at you, only at a
+habit. `--roast offline` (default) is built in and free; `--roast api` has a Claude model write fresh lines from those
+numbers (about 3 cents), with every line checked and the built-in set as the fallback; `--humor off` turns it off.
+See [`docs/PERSONA.md`](docs/PERSONA.md#insights-how-it-talks-about-you).
 
 ### `agent-loop lineage`
 

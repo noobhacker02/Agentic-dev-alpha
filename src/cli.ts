@@ -13,6 +13,7 @@ import { resolveDesktopTarget, type ResolvedDesktop } from "./desktop-tools.js";
 import { classifyDeniedTarget, deniedTargetMessage } from "./desktop-policy.js";
 import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText } from "./lineage.js";
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
+import { roast, roastWithModel, type Habits } from "./roast.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
@@ -68,12 +69,10 @@ function readHumor(args: Record<string, string | boolean>): { level: HumorLevel;
   return { level, explicit: raw !== undefined };
 }
 
-function printInsights(insights: Insights, humor?: { level: HumorLevel; explicit: boolean }) {
+function printInsights(insights: Insights) {
   console.log(`Runs recorded: ${insights.totalRuns}`);
   if (insights.totalRuns === 0) {
     console.log("No runs recorded against this data dir yet.");
-    const quip = humor && (humor.explicit || process.stdout.isTTY) ? insightsLine(insights, humor.level) : undefined;
-    if (quip) console.log(`\n  ◦ ${quip}`);
     return;
   }
   console.log("By outcome: " + Object.entries(insights.byStatus).map(([s, n]) => `${s}=${n}`).join(", "));
@@ -81,7 +80,7 @@ function printInsights(insights: Insights, humor?: { level: HumorLevel; explicit
   for (const p of insights.byPhase) {
     const cost = insights.costByPhase[p.name];
     console.log(
-      `  ${p.name.padEnd(14)} ${p.runs} run(s), repaired in ${p.repairedRuns} ` +
+      `  ${stripTerminalControlBytes(String(p.name)).padEnd(14)} ${p.runs} run(s), repaired in ${p.repairedRuns} ` +
       `(avg ${p.avgAttempts.toFixed(1)} attempt(s))` + (cost ? `, $${cost.toFixed(2)}` : "")
     );
   }
@@ -102,8 +101,50 @@ function printInsights(insights: Insights, humor?: { level: HumorLevel; explicit
     console.log(`\nCreated but never reused (consider whether these are worth "don't ask again" at all):`);
     for (const r of insights.neverReusedRules) console.log(`  ${stripTerminalControlBytes(r)}`);
   }
-  const quip = humor && (humor.explicit || process.stdout.isTTY) ? insightsLine(insights, humor.level) : undefined;
-  if (quip) console.log(`\n  ◦ ${quip}`);
+}
+
+type RoastMode = "off" | "offline" | "api";
+
+/** --roast (or $AGENT_LOOP_ROAST): where `insights` gets its lines about your habits. --humor off turns it off whatever this says. */
+function readRoastMode(args: Record<string, string | boolean>, humor: { level: HumorLevel }): RoastMode {
+  const raw = args.roast ?? process.env.AGENT_LOOP_ROAST;
+  if (raw !== undefined && raw !== "off" && raw !== "offline" && raw !== "api") {
+    console.error(`Error: --roast must be off, offline or api, got "${String(raw)}".`);
+    process.exit(1);
+  }
+  if (humor.level === "off" || raw === "off") return "off";
+  return raw === "api" ? "api" : "offline";
+}
+
+/**
+ * What `insights` says about you, after the numbers. Lines come from src/roast.ts (built in, free, the same every
+ * time for the same numbers) or, with --roast api, from a model that is given the numbers and nothing else. Like the
+ * rest of the persona it is shown on a TTY, or when asked for outright, so logs and CI stay plain.
+ */
+async function printVoice(insights: Insights, habits: Habits, humor: { level: HumorLevel; explicit: boolean }, mode: RoastMode, asked: boolean) {
+  if (mode === "off" || !(humor.explicit || asked || process.stdout.isTTY)) return;
+  const base = roast(habits, humor.level);
+  let lines = base.lines;
+  let note: string | undefined;
+  if (mode === "api" && lines.length) {
+    const { claudeGenerate, DEFAULT_ROAST_MODEL } = await import("./roast-api.js");
+    const model = process.env.AGENT_LOOP_ROAST_MODEL || DEFAULT_ROAST_MODEL;
+    const fresh = await roastWithModel(habits, humor.level, claudeGenerate(model));
+    if (fresh.lines.length) {
+      lines = fresh.lines;
+      note = `written fresh by ${model} from the numbers above and nothing else, $${fresh.costUsd.toFixed(4)}`;
+    } else note = fresh.note;
+  }
+  if (!lines.length) {
+    const quip = insightsLine(insights, humor.level);
+    if (quip) console.log(`\n  ◦ ${quip}`);
+  } else {
+    console.log("\n  How it has actually been going");
+    for (const l of lines) console.log(`    ◦ ${l}`);
+    for (const t of base.tips) console.log(`    → ${t}`);
+  }
+  if (habits.runs > 0) console.log(`\n  Report card: ${base.grade}${base.gradeComment ? `   ${base.gradeComment}` : ""}`);
+  if (note) console.log(`  (${note})`);
 }
 
 async function main() {
@@ -121,9 +162,13 @@ async function main() {
       process.exit(1);
     }
     const humor = readHumor(args);
+    const mode = readRoastMode(args, humor);
     const store = new Store(dbPath);
-    printInsights(store.getInsights(), humor);
+    const insights = store.getInsights();
+    const habits = store.getHabits();
     store.close();
+    printInsights(insights);
+    await printVoice(insights, habits, humor, mode, args.roast !== undefined || process.env.AGENT_LOOP_ROAST !== undefined);
     return;
   }
 
@@ -162,7 +207,7 @@ async function main() {
 
 Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark]
-  agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark]
+  agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
   agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
@@ -196,7 +241,12 @@ Usage:
                    which phases get repaired most, total and per-phase cost, and which "don't ask
                    again" rules actually get reused vs. created and never touched again. Built
                    entirely from data already recorded for other reasons -- no separate tracking
-                   to turn on first.
+                   to turn on first. Then a few lines about how you have actually been using it
+                   (fast approvals, denied-then-allowed, money into failed runs...), a tip or two,
+                   and a grade: --roast offline (default) is built in and free; --roast api has a
+                   Claude model write fresh lines from the numbers only (a few cents at most, model
+                   $AGENT_LOOP_ROAST_MODEL); --roast off, or --humor off, turns it off.
+                   Nothing you typed (tasks, commands, rules, paths) is ever used or sent.
 `);
     process.exit(cmd ? 1 : 0);
   }

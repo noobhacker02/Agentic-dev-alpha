@@ -26,6 +26,17 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Fixed
+- **Opening a long run froze the page for tens of seconds** (found by auditing the replay path, then measured: 6,000 events took
+  29.6 s to replay, and the cost grew faster than the event count). The page re-rendered the stepper, header, dock and extras
+  after every replayed event. Replay now draws the transcript once and the chrome once at `replay-complete`: the same 6,000 events
+  take 2.2 s (`test/ui-replay.mjs`: under 10 s and no worse than 14x going from 500 to 3,000 tool calls).
+- **A run longer than the history limit lost its beginning** (`src/bus.ts`). The bus kept the newest N events and dropped the
+  oldest, which in a long run are `run-start` and the first `phase-start`s: a reload then showed a run with no task and a stepper
+  with no phases, and so did the saved report. Trimming now drops the oldest *tool* chatter first and keeps the structural events
+  (run and phase boundaries, Overseer decisions, usage, approvals' outcomes, session boundaries, lineage). `test/bus-history.mjs`.
+- **`agent-loop insights` died on one corrupt event row** (found by the new habits test planting a row that is not JSON). All
+  its reads now skip a row that is not an object. A negative or non-number cost no longer makes the total negative, and a phase
+  name from the database is stripped of control bytes before it is printed.
 - **A saved report corrupted any run whose events contained `$'`, `$&`, ``$` `` or `$$`** (found while reading the code for
   the sprite work, then reproduced: `echo $'x' && echo $&` turned into a broken script and an empty page). `report.ts` embedded
   the run with `String.replace` and a replacement *string*, which expands those patterns; shell commands are full of them.
@@ -37,6 +48,28 @@ All notable changes to this project are documented here. Format follows
   a telescope) — they are now paired by position and checked by colour.
 
 ### Added
+- **`agent-loop insights` now talks to you about how you actually use the tool** (docs/PERSONA.md, `src/roast.ts`).
+  After the numbers: up to three lines in the voice of a friend who has watched you do it, up to two tips, and a report-card
+  grade. It reads what is in the audit database: approvals answered in under 1.5 s ("that is not a code review, that is a
+  reflex"), the same call denied and later allowed, money that went into runs that failed or were stopped, the phase that gets
+  sent back most, runs started after midnight, the same task run again and again, "don't ask again" rules never used, runs
+  stopped halfway, a clean record ("suspiciously clean"). 17 findings, 40 lines, current slang and memes, dry and dark
+  variants, deterministic for the same numbers. Same rules as the persona: the target is a habit, never the person; a tip
+  sits next to the joke.
+  - **Safe by construction.** `Store.getHabits()` returns numbers and fixed labels only (`src/habits.ts`); a task, command,
+    rule, path or reason is never in it, only compared with others to count repeats. `test/roast.mjs` plants a canary in each of those
+    fields and checks none reaches the lines, the tips, the grade or a model's prompt.
+  - **`--roast off|offline|api`** (also `$AGENT_LOOP_ROAST`; `--humor off` beats everything). `offline` is built in and free,
+    the default. `api` has a Claude model (Haiku by default, `$AGENT_LOOP_ROAST_MODEL`) write fresh lines from the numbers alone,
+    because slang ages: one tool-less turn, the allowlisted environment, no tools. Every line it returns is validated (length,
+    markup, links, code, control and bidi characters, the persona's banned terms, and **no number that is not in your data**) and
+    anything that fails, or fewer than two good lines, falls back to the built-in set with a note saying why. A real Haiku call
+    measured $0.033 for three lines; `npm run test:real-model-roast` (opt-in) runs it.
+  - Like the rest of the voice, it prints on a terminal or when asked for outright, so logs and CI stay plain.
+  - Tests: `test/roast.mjs` (catalogue lint, every finding fires and fills with only data numbers, dry never dark, determinism,
+    a crafted database counted exactly, canaries, a fake generator against 12 kinds of bad line, the CLI end to end including
+    the fake SDK for `--roast api`); 18 deliberate breaks of the new code, all caught (two survived at first and led to a
+    stricter grade test and a tip assertion). The persona's import-graph test now also pins who may import the roast.
 - **The run UI, friendlier and closer to Claude Code, with a cat that runs to whatever needs you** (docs/UI.md,
   docs/ASSETS.md). Additive: no existing id or class changed meaning, and the earlier UI suites pass unchanged.
   - **A welcome card**, Claude Code's turning `✻` with a verb for the agent that is working ("Hammering…"), an orange `>`

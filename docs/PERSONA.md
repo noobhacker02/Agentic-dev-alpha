@@ -97,11 +97,48 @@ never real people, parties, religion, groups, self-harm, violence toward people,
 of thumb is that a joke should still be fine read aloud to the person it teases. Teasing about what you did
 in the tool is on the menu; teasing about who you are is not.
 
+## `insights`: how it talks about you
+
+`agent-loop insights` prints its numbers and then says a few things about how you have actually been using the tool. It
+is the one place the persona talks about the *person's* usage rather than a run, so it has its own, stricter plumbing
+(`src/roast.ts`; the data type is `src/habits.ts`).
+
+**What it knows.** `Store.getHabits()` returns numbers and fixed labels: runs by outcome, money spent on runs that failed or
+were stopped, approvals asked/approved/denied, how many yeses came in under 1.5 s, the slowest answer, how many distinct calls
+were denied and later allowed, "don't ask again" rules created and never reused, runs started between midnight and 5 a.m., the
+most times one task was run, the longest run, which phases needed a second attempt, and desktop use. It does **not** know any
+text you typed. A task is compared with other tasks to count repeats and then thrown away; a command is compared with the same
+command to notice a flip and then thrown away. `test/roast.mjs` puts a canary string in a task, a command, a rule, a denial
+reason and a phase name and asserts it appears nowhere in the habits, the lines, the tips, the grade or the model's prompt.
+
+**What it says.** 17 findings, each with a dry and (mostly) a dark variant, ordered by how pointed they are; at most three
+lines and two tips, chosen deterministically from the numbers (the same database gives the same output, a changed number can
+change the wording). Examples: a reflex approver is told the prompt "has a little lock"; someone who denied and then allowed the
+same call is told the model "wore you down"; money in failed runs is "tuition, billed per token". The tip beside it is the useful
+bit: *the prompt shows the exact command; if you could not read it in 1.5 seconds, you did not.* The grade (A to F) is computed
+from the failure rate, quick yeses, flips, stops, unused rules and repairs; more failures never raise it.
+
+**Same rules as the rest of the persona**: a habit, never the person; no politics beyond the process of a legislature
+("filibuster", "committee", "quorum"); dark but not too dark; the catalogue passes the same banned-term list, plus a check that
+every number in a line is either a placeholder or a fixed threshold the line states.
+
+**`--roast api`.** Slang ages fast, so `--roast api` has a model write fresh lines instead. It gets the habits as JSON and the
+fired findings in plain words, one tool-less turn on Haiku (`$AGENT_LOOP_ROAST_MODEL` overrides), with the same allowlisted
+environment as the Overseer. What comes back is untrusted: each line must be a JSON string of 12-170 characters with no markup,
+link, code, control, bidi or zero-width character, none of the banned terms, and **no number that is not in your data**
+(`$6.70` passes only if it is your wasted money). Duplicates of the built-in lines are dropped; fewer than two good lines, an
+error, a timeout (60 s) or a refusal falls back to the built-in set and says so. It prints "written fresh by <model> from the
+numbers above and nothing else" and what it cost (measured: $0.033 for three lines). `test/roast.mjs` covers it with a fake SDK
+(including that the model gets no tools and not your environment); `npm run test:real-model-roast` runs one real call.
+
+**Where it shows.** On a terminal, or whenever `--roast`, `$AGENT_LOOP_ROAST` or `--humor` is given, so piped output and CI stay
+plain. `--humor off` beats `--roast api` and makes no call at all.
+
 ## Hard rules, and what enforces them
 
 | Rule | How it's enforced |
 |---|---|
-| **It never reaches a model.** A joke can't change what an agent does or says | Only `cli`, `server`, `report` and `terminal` import the persona; the phases, Overseer, hooks, pipeline and both tool sets don't mention it. `test/persona.mjs` checks the import graph (and that the check can see an import) |
+| **It never reaches a model.** A joke can't change what an agent does or says | Only `cli`, `server`, `report`, `terminal` and `roast` (the `insights` voice) import the persona; the phases, Overseer, hooks, pipeline, both tool sets and the audit store don't mention it, and only the CLI imports the roast. `test/persona.mjs` checks the import graph (and that the check can see an import) |
 | **It never carries untrusted text.** Nothing a page, window, file or model wrote can land in a note | Lines are a fixed catalog; the only interpolations are an enum phase name and validated numbers (a whole number up to 9999, a cost from 0 up to a million). The director reads only enumerated event fields: types, phase names, decisions, costs, counts and timestamps. A test stuffs hostile text into every free-text field of every event type and asserts every note is still exactly a catalog line |
 | **It is never inside an approval.** Not in the prompt, the action text or a refusal reason | Notes are separate, dimmed lines after the event they follow. `test/ui-persona.mjs` opens a real approval prompt at level `dark` with notes on screen and checks it contains none of the catalog's lines and no persona element |
 | **A bad line can't get in.** | `lintCatalog()` checks length, duplicates, control/bidi/zero-width characters, unknown placeholders and a list of banned terms (people, parties, groups, tragedies, slurs-by-category), and requires every moment to have a dry line. The test proves the lint catches each kind (control lines) |

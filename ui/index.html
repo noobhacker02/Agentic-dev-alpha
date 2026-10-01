@@ -588,7 +588,19 @@ function artifactUrl(runId, filePath) {
   if (REPLAY) return encodeURIComponent(base);
   return "/artifacts/" + encodeURIComponent(runId) + "/" + encodeURIComponent(base) + "?token=" + encodeURIComponent(token);
 }
-function nearBottom() { return scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight < 140; }
+// While a run is being replayed (a page load, or a reconnect) events arrive in one burst. Reading scrollHeight after every
+// append forces a layout each time, and rebuilding the stepper, header and dock for each one is wasted work: together they
+// made a 6,000-event replay take half a minute. So a replay only appends; the chrome is repainted once at the end
+// (the "repaint only when something changed" idea from Pokéharness, docs/INSPIRATION-POKEHARNESS.md).
+let replaying = false;
+function nearBottom() { return !replaying && scrollBox.scrollHeight - scrollBox.scrollTop - scrollBox.clientHeight < 140; }
+/** Repaint everything that was left unpainted during a replay. */
+function flushChrome() {
+  renderStepper(); renderHeader();
+  if (!state.pending.length) renderDock();
+  syncExtras();
+  if (view === "tree") renderTree();
+}
 function add(el) {
   const stick = nearBottom();
   transcript.appendChild(el);
@@ -1046,6 +1058,7 @@ function render(ev) {
     // browser-action-started/-completed duplicate the mcp__browser__* tool-call/result lines already
     // in the transcript; screenshot artifacts are shown through the panel's latest snapshot.
   }
+  if (replaying) return; // painted once, by flushChrome(), when the replay is complete
   renderStepper(); renderHeader();
   if (!state.pending.length) renderDock();
   safe(() => fx(ev));
@@ -1079,6 +1092,7 @@ function connect() {
     // The server replays the whole run to every new connection -- clear only once one is actually
     // open, so a server that's gone never leaves you staring at an empty page.
     resetForReplay();
+    replaying = true;
     $("status").textContent = "live"; $("status").className = "live"; state.ws = ws;
     attempts = 0; offlineNow = false;
     safe(() => AL.offline && AL.offline.found());
@@ -1092,6 +1106,7 @@ function connect() {
       safe(() => AL.offline && AL.offline.found());
       return; // nothing left to reconnect to; the transcript stays as it is
     }
+    replaying = false; flushChrome();
     attempts++; offlineNow = true;
     $("status").textContent = "disconnected — retrying…"; $("status").className = "down";
     safe(() => AL.offline && AL.offline.lost(attempts));
@@ -1100,7 +1115,7 @@ function connect() {
   };
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
-    if (ev.type === "replay-complete") { state.live = true; scrollBox.scrollTop = scrollBox.scrollHeight; renderDock(); syncExtras(); return; }
+    if (ev.type === "replay-complete") { replaying = false; state.live = true; flushChrome(); scrollBox.scrollTop = scrollBox.scrollHeight; return; }
     render(ev);
   };
 }
@@ -1314,7 +1329,11 @@ document.addEventListener("keydown", (e) => {
 renderStepper(); renderHeader();
 if (REPLAY) {
   $("status").textContent = "saved report";
+  replaying = true;
   for (const ev of REPLAY) render(ev);
+  replaying = false;
+  flushChrome();
+  scrollBox.scrollTop = scrollBox.scrollHeight; // a saved report opens at the end of the run, as it always did
   state.live = true;
   tickClock(); // a finished run shows how long it took straight away, not after the first tick
   renderDock();

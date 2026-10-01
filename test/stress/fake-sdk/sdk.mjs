@@ -24,6 +24,16 @@ export function query({ prompt, options }) {
   if (calls > 60) { console.error("FAKE: >60 LLM calls, aborting (infinite loop)"); process.exit(99); }
   const phase = (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
   let text;
+  // `agent-loop insights --roast api` (src/roast-api.ts): the text comes from FAKE_ROAST_TEXT, one tool-less turn.
+  if (/funny lines about how someone has been using/.test(options.systemPrompt)) {
+    if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, roast: true, prompt, system: options.systemPrompt, tools: options.tools, model: options.model, maxTurns: options.maxTurns, envKeys: Object.keys(options.env ?? {}) }) + "\n");
+    if (process.env.FAKE_ROAST_THROWS) throw new Error("API 529 overloaded");
+    const roastText = process.env.FAKE_ROAST_TEXT ?? "[]";
+    return (async function* () {
+      yield { type: "assistant", message: { content: [{ type: "text", text: roastText }] } };
+      yield { type: "result", total_cost_usd: 0.0012, num_turns: 1, duration_ms: 10 };
+    })();
+  }
   if (isOverseer) {
     // The phase the Overseer is being asked to judge -- parsed from its own prompt (overseer.ts
     // always includes "The phase that just finished: <name>"), not from systemPrompt, which is the

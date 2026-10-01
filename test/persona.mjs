@@ -520,10 +520,18 @@ function fillable(template, text) {
     .filter((f) => f.endsWith(".ts") && f !== "persona.ts")
     .filter((f) => /from\s+["']\.\/persona\.js["']/.test(readFileSync(join(src, f), "utf8")))
     .sort();
-  assert.deepStrictEqual(importers, ["cli.ts", "report.ts", "server.ts", "terminal.ts"], `only display code may import the persona: ${importers}`);
-  for (const f of ["phases.ts", "overseer.ts", "hooks.ts", "pipeline.ts", "desktop-tools.ts", "desktop-policy.ts", "browser-tools.ts", "bash-analysis.ts"]) {
+  // roast.ts is `insights`' own display voice (it reuses the persona's banned-term list and humor levels).
+  assert.deepStrictEqual(importers, ["cli.ts", "report.ts", "roast.ts", "server.ts", "terminal.ts"], `only display code may import the persona: ${importers}`);
+  const stripComments = (t) => t.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  for (const f of ["phases.ts", "overseer.ts", "hooks.ts", "pipeline.ts", "desktop-tools.ts", "desktop-policy.ts", "browser-tools.ts", "bash-analysis.ts", "store.ts", "habits.ts"]) {
     const text = readFileSync(join(src, f), "utf8");
-    assert.ok(!/persona/i.test(text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")), `${f} (which builds text for a model or decides a tool call) never mentions the persona`);
+    assert.ok(!/persona/i.test(stripComments(text)), `${f} (which builds text for a model, decides a tool call or is the audit store) never mentions the persona`);
+  }
+  // The same for `insights`' voice: the only importer of roast.ts is the CLI (roast-api.ts uses its types), and nothing that feeds a worker or the Overseer mentions it.
+  const roastImporters = readdirSync(src).filter((f) => f.endsWith(".ts") && f !== "roast.ts" && /from\s+["']\.\/roast(-api)?\.js["']/.test(readFileSync(join(src, f), "utf8"))).sort();
+  assert.deepStrictEqual(roastImporters, ["cli.ts", "roast-api.ts"], `only the CLI (and its model call) may import the roast: ${roastImporters}`);
+  for (const f of ["phases.ts", "overseer.ts", "hooks.ts", "pipeline.ts", "desktop-tools.ts", "desktop-policy.ts", "browser-tools.ts", "bash-analysis.ts", "store.ts", "bus.ts", "server.ts"]) {
+    assert.ok(!/roast/i.test(stripComments(readFileSync(join(src, f), "utf8"))), `${f} never mentions the roast`);
   }
   // Control: the check above does see an import when there is one (terminal.ts imports it).
   assert.ok(/persona\.js/.test(readFileSync(join(src, "terminal.ts"), "utf8")), "control: the import check can see a real import");

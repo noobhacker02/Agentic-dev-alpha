@@ -26,6 +26,18 @@ interface PendingApproval {
 /** Enough for a long run's transcript; older events are still in the Store, just not replayed. */
 const HISTORY_LIMIT = 5000;
 
+/**
+ * Events that give a replayed page its shape. When the history is too long, trimming drops bulk (tool calls, their
+ * output, text, snapshots) oldest-first and keeps these, so a reload of a very long run, and its saved report, still
+ * know the task, every phase, what it cost, what the Overseer decided and what the human answered. Trimming from the
+ * front blindly lost `run-start` and `phase-start` after about 2,500 tool calls.
+ */
+export const STRUCTURAL_EVENTS: ReadonlySet<string> = new Set([
+  "run-start", "run-end", "phase-start", "phase-end", "overseer-decision", "usage",
+  "approval-resolved", "trusted-decision-recorded", "decisions-log-updated", "report-saved",
+  "browser-session-started", "browser-session-ended", "desktop-session-started", "desktop-session-ended", "lineage-updated",
+]);
+
 export class EventBus extends EventEmitter {
   private pending = new Map<string, PendingApproval>();
   /** Everything emitted this process, so a tab opened mid-run (or reloaded) sees the whole transcript. */
@@ -35,8 +47,12 @@ export class EventBus extends EventEmitter {
   /** Desktop input requests a human refused in a row; one they allowed resets it (see hooks.ts). */
   private inputDenialStreak = 0;
 
-  constructor(private store?: Store) {
+  /** How many events are kept for replay; a test can lower it. */
+  private historyLimit: number;
+
+  constructor(private store?: Store, opts: { historyLimit?: number } = {}) {
     super();
+    this.historyLimit = opts.historyLimit ?? HISTORY_LIMIT;
   }
 
   emitEvent(event: AgentEvent) {
@@ -46,8 +62,25 @@ export class EventBus extends EventEmitter {
     if (event.type === "lineage-updated") this.history = this.history.filter((e) => !(e.type === "lineage-updated" && e.runId === event.runId));
     else this.store?.logEvent(event.runId, phase, event.type, event);
     this.history.push(event);
-    if (this.history.length > HISTORY_LIMIT) this.history.splice(0, this.history.length - HISTORY_LIMIT);
+    this.trimHistory();
     this.emit("event", event);
+  }
+
+  /**
+   * Keeps the history near its limit without losing its structure. It trims in chunks (a quarter of the limit past it),
+   * so a long run is not re-scanned on every event, and drops the oldest non-structural events first.
+   */
+  private trimHistory() {
+    const slack = Math.max(1, Math.floor(this.historyLimit / 4));
+    if (this.history.length <= this.historyLimit + slack) return;
+    let drop = this.history.length - this.historyLimit;
+    const kept: AgentEvent[] = [];
+    for (const e of this.history) {
+      if (drop > 0 && !STRUCTURAL_EVENTS.has(e.type)) drop--;
+      else kept.push(e);
+    }
+    // Only structural events left over the limit (absurd, but bounded): drop the oldest of those rather than grow forever.
+    this.history = drop > 0 ? kept.slice(drop) : kept;
   }
 
   /**
