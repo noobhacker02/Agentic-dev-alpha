@@ -252,6 +252,15 @@ node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny t
 output and keyboard approval (`2` = don't ask again, `n` + typed reason = reject). It also checks that
 a reload replays everything and that the transcript survives the server shutting down.
 
+## The walkthrough videos
+
+The recordings in [`media/`](media/) and their GIF previews are made by scripts, with no model and no cost, so they
+can be remade when the UI changes: `npm run record:videos` (lineage, persona and the desktop approval flow, in a real
+Chromium on a controlled page clock, with captions and a visible cursor), `npm run record:desktop-video` (a real
+window under the virtual display used by the real-driver tests, filmed with ffmpeg; it fails, and keeps no video,
+if the chosen window did not get exactly what was sent or the terminal-named window received anything), and
+`npm run record:previews` (the GIFs). They need a full ffmpeg.
+
 ## Still not done
 
 - A rejected call can't be edited and re-run in place, the way Claude Code lets you amend a

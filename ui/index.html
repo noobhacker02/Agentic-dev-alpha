@@ -125,7 +125,7 @@
   .tn[data-outcome="running"] .dot { border-color: var(--accent); animation: live-pulse 1.6s ease-in-out infinite; }
   .tn .tb { padding: 1px 0 14px; min-width: 0; word-break: break-word; }
   .tn .hd b { font-weight: 700; } .tn .meta { color: var(--faint); margin-left: 6px; }
-  .tn .says { color: var(--dim); } .tn .says::before { content: "hands on: "; color: var(--faint); }
+  .tn .says, .tn .said { color: var(--dim); } .tn .says::before { content: "hands on: "; color: var(--faint); }
   .tn .blocking { color: var(--red); } .tn .dec { margin-top: 3px; } .tn .dec b { color: var(--blue); }
   .tn .human { color: var(--green); margin-top: 3px; }
   .tn details { margin-top: 3px; } .tn summary { cursor: pointer; color: var(--dim); }
@@ -937,7 +937,7 @@ function renderTree() {
       (n.kind === "repair" ? '<span class="tag wait">sent back</span>' : n.kind === "retry" ? '<span class="tag">retry</span>' : "") + '<span class="meta">' + esc(meta.join(" · ")) + "</span></div>" +
       (n.headline ? '<div class="says">' + esc(n.headline) + "</div>" : "") +
       n.blocking.map((b) => '<div class="blocking">• ' + esc(b) + "</div>").join("") +
-      (n.details || n.concerns.length ? "<details><summary>what it told the next phase</summary>" + (n.details ? '<div class="says">' + esc(n.details) + "</div>" : "") + n.concerns.map((c) => '<div class="muted">• ' + esc(c) + "</div>").join("") + "</details>" : "") +
+      (n.details || n.concerns.length ? "<details><summary>what it told the next phase</summary>" + (n.details ? '<div class="said">' + esc(n.details) + "</div>" : "") + n.concerns.map((c) => '<div class="muted">• ' + esc(c) + "</div>").join("") + "</details>" : "") +
       (nf ? "<details><summary>" + nf + " file" + (nf > 1 ? "s" : "") + " written or edited" + (n.failedWrites ? " · " + n.failedWrites + " refused" : "") + '</summary><div class="files">' +
         n.files.map((f) => '<div class="' + (f.op === "write" ? "w" : "e") + '">' + (f.op === "write" ? "+ " : "~ ") + esc(rel(f.path)) + (f.count > 1 ? " ×" + f.count : "") + "</div>").join("") +
         (n.filesMore ? '<div class="muted">… ' + n.filesMore + " more</div>" : "") + "</div></details>" : "") +

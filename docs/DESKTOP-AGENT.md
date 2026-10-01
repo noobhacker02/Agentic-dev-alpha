@@ -9,6 +9,17 @@ This page covers what the tools do, the controls around them, how each control w
 isn't covered. The plan and threat model it implements are in
 [`specs/computer-use/SPEC.md`](../specs/computer-use/SPEC.md); T1-T8 below are that file's threats.
 
+**Videos** (captioned): [`docs/media/desktop-agent-ui.mp4`](media/desktop-agent-ui.mp4) (51 s) is the approval flow in the
+web UI: the chosen window, a capture, a click shown on the window exactly as captured, typing shown verbatim with
+invisible characters made visible, a refusal. [`docs/media/desktop-real-window.mp4`](media/desktop-real-window.mp4) (54 s) is a **real
+window on a virtual display**: a terminal-named window beside it that can't be targeted, "what the agent sees",
+clicks and typing landing, a reused capture refused, a window moved after the capture refused. It ends by checking
+the window logs: the chosen window got exactly what was sent, the terminal-named one received nothing.
+
+![Desktop approvals, as a preview](media/previews/desktop-agent-ui.gif)
+
+![A real window, as a preview](media/previews/desktop-real-window.gif)
+
 ## 1. What phases get
 
 Five tools from an in-process MCP server (`src/desktop-tools.ts`), surfaced as `mcp__desktop__<tool>` in

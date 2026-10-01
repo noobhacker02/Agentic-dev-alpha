@@ -37,6 +37,13 @@ Task: Add a dark-mode toggle to the settings page
 Every run also writes `lineage.md` (to read) and `lineage.json` (to process) next to its `report.html`, and the
 saved report opens straight to the same tree.
 
+**Video** (59 s, captioned): [`docs/media/lineage-tree.mp4`](media/lineage-tree.mp4). A run plays, the Verifier
+fails, the Overseer sends it back, then the same run is opened as a tree: the fork and the merge, what each agent
+handed on, the files (the refused write is counted, never listed), the per-agent and per-file tables, and the same
+tree from the terminal.
+
+![Lineage tree, as a preview](media/previews/lineage-tree.gif)
+
 ## What is in it
 
 - **One node per phase attempt**, in order, with who it was handed on from (its parent) and whether it was a

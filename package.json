@@ -39,6 +39,9 @@
     "test:real-model-desktop": "AGENT_LOOP_REAL_MODEL_TESTS=1 bash test/desktop-real.sh test/desktop-real-sdk.mjs",
     "test:lineage": "node --experimental-sqlite --no-warnings test/lineage.mjs",
     "test:ui-lineage": "node --experimental-sqlite --no-warnings test/ui-lineage.mjs",
+    "record:videos": "node --experimental-sqlite --no-warnings test/e2e/record-features.mjs all docs/media",
+    "record:desktop-video": "AGENT_LOOP_VIDEO_OUT=docs/media bash test/desktop-real.sh test/e2e/record-desktop-real.mjs",
+    "record:previews": "bash test/e2e/make-previews.sh",
     "test:persona": "node --experimental-sqlite --no-warnings test/persona.mjs",
     "test:ui-persona": "node --experimental-sqlite --no-warnings test/ui-persona.mjs",
     "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs"

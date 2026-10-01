@@ -19,6 +19,12 @@ And at `jokes: dry`, where the dark lines are hidden:
 
 ![Dry level](screenshots/persona/03-dry-level.png)
 
+**Video** (79 s, captioned): [`docs/media/persona-voice.mp4`](media/persona-voice.mp4). The idle screen's voice and the
+three levels; a 36-minute run in which each agent introduces itself, the Overseer vetoes and the agent sent back
+replies, an approval prompt with no joke in it, the awards at the end, then dry and off.
+
+![Persona, as a preview](media/previews/persona-voice.gif)
+
 ## Levels
 
 | Level | What you get |

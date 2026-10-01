@@ -26,6 +26,16 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **Captioned walkthrough videos of each feature, on GitHub** (README "Feature walkthroughs", `docs/media/`).
+  Four recordings, each with a short looping GIF preview that GitHub shows inline and the full `.mp4` one click away:
+  the lineage tree (59 s), the persona (79 s), desktop control in the web UI (51 s), and desktop control on a
+  **real window under a virtual display** (54 s, filmed with ffmpeg off the screen: the chosen window, a
+  terminal-named window beside it, what the agent sees, clicks and typing landing, a reused capture refused, a moved
+  window refused). They cost nothing to remake: nothing calls a model. `test/e2e/record-features.mjs` drives the real
+  page in a real Chromium on a controlled page clock (so a 36-minute run's header timer and timestamps agree), with a
+  visible cursor and captions; `test/e2e/record-desktop-real.mjs` ends by checking from the windows' own logs that the
+  chosen window got exactly what was sent and the terminal-named one received nothing, and fails (no video kept)
+  otherwise. `npm run record:videos`, `npm run record:desktop-video`, `npm run record:previews`.
 - **Lineage: the run as a tree of who did what** (docs/LINEAGE.md). The "git tree" idea from the start of the
   project: how the agents' work connects, and which agent made what. Built read-only from events the run already
   emits, deliberately not as a shared log agents write to (the research on OpenClaw found that is where multi-agent

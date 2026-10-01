@@ -287,6 +287,30 @@ verified before and after every action; a swapped window locks the session. The 
 (`@trycua/cua-driver`, an optional dependency pinned to an exact version) is only loaded when the flag is
 used. The approval prompt shows the window as it was captured with a marker on the exact spot a click would land, and typed text verbatim; there's a side panel with every capture, and `agent-loop insights` counts desktop use. Tested against the real driver on Linux/X11; macOS and Windows are not yet verified. Full reference,
 controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
+## Feature walkthroughs
+
+Captioned screen recordings of each feature, from real runs of the real UI and the real native driver (nothing
+calls a model, so they cost nothing to remake: `npm run record:videos`, `npm run record:desktop-video`). The
+GIFs are short previews; click the title for the full video (GitHub plays `.mp4` files in its own file viewer).
+
+**The run as a tree: who did what, and why it was redone** (59 s): [`lineage-tree.mp4`](docs/media/lineage-tree.mp4) · [docs](docs/LINEAGE.md)
+
+![Lineage tree](docs/media/previews/lineage-tree.gif)
+
+**Agents with a personality, and a leash** (79 s): [`persona-voice.mp4`](docs/media/persona-voice.mp4) · [docs](docs/PERSONA.md)
+
+![Persona](docs/media/previews/persona-voice.gif)
+
+**Desktop control, in the UI: every action asks first** (51 s): [`desktop-agent-ui.mp4`](docs/media/desktop-agent-ui.mp4) · [docs](docs/DESKTOP-AGENT.md)
+
+![Desktop approvals](docs/media/previews/desktop-agent-ui.gif)
+
+**Desktop control, on a real window under a virtual display** (54 s): [`desktop-real-window.mp4`](docs/media/desktop-real-window.mp4) · [docs](docs/DESKTOP-AGENT.md)
+
+![Real window](docs/media/previews/desktop-real-window.gif)
+
+The two older recordings are below.
+
 Real session recordings (`.mp4`, click through to view — GitHub still won't autoplay them inline in this
 text, but its own file viewer plays them, and any regular media player will too):
 
