@@ -61,14 +61,16 @@ const ink = (page) => page.evaluate(() => {
   // play: jump, duck, score, die, high score, restart
   await page.keyboard.press("Space");
   await page.keyboard.press("Space");
-  await sleep(120);
+  // Conditions, not fixed sleeps: the game caps each frame's time step, so on a loaded machine game time runs slower than the clock.
+  await page.waitForFunction(() => AL.offline.state().y > 5, undefined, { timeout: 4000 }).catch(() => {});
   assert.ok((await game(page)).y > 5, "Space makes the dino leave the ground");
-  await sleep(1100);
+  await page.waitForFunction(() => AL.offline.state().y === 0 || AL.offline.state().over, undefined, { timeout: 10000 });
   assert.strictEqual((await game(page)).y, 0, "and come back down");
   await page.keyboard.down("ArrowDown");
   assert.strictEqual((await game(page)).duck, true, "↓ ducks");
   await page.keyboard.up("ArrowDown");
   assert.strictEqual((await game(page)).duck, false, "releasing ↓ stands up");
+  await page.waitForFunction(() => AL.offline.state().score > 0 || AL.offline.state().over, undefined, { timeout: 6000 });
   assert.ok((await game(page)).score > 0, "the score runs");
   const a = (await ink(page)).grey; await sleep(250); const b = (await ink(page)).grey;
   assert.ok(a !== b || (await game(page)).over, "the picture changes as it runs");
