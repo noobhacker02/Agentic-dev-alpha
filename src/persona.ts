@@ -47,10 +47,15 @@ export interface Line {
   dark?: boolean;
   /** Who says it; the narrator when omitted. */
   by?: Speaker;
+  /** Only while the run has had no repairs ("clean") or has had some ("repaired"); any time when omitted. A line that
+   * says "everyone before me said yes" must not be spoken after three vetoes. */
+  when?: "clean" | "repaired";
 }
 
 const d = (text: string, by?: Speaker): Line => ({ text, dark: true, by });
 const l = (text: string, by?: Speaker): Line => ({ text, by });
+const clean = (x: Line): Line => ({ ...x, when: "clean" });
+const repaired = (x: Line): Line => ({ ...x, when: "repaired" });
 
 /** Placeholders a line may contain. Anything else is a bug (test/persona.mjs lints every line). */
 export const PLACEHOLDERS = ["{phase}", "{n}", "{cost}"] as const;
@@ -59,8 +64,25 @@ export type Moment =
   | "idle"
   | "run-start"
   | `phase-start:${PhaseName}`
+  | `phase-retry:${PhaseName}`
+  | "run-start-night"
+  | "run-start-early"
+  | "run-start-friday"
+  | "run-start-weekend"
+  | "run-long-30"
+  | "run-long-60"
+  | "tools-100"
+  | "tools-250"
+  | "prompts-25"
+  | "prompts-50"
+  | "overseer-repair-many"
+  | "award-answer-fast"
+  | "award-answer-slow"
+  | "award-sent-back"
+  | "award-priciest"
+  | "award-tool-hog"
+  | "award-quiet"
   | "phase-pass"
-  | "phase-fail"
   | "overseer-continue"
   | "overseer-repair"
   | "overseer-stop"
@@ -126,49 +148,154 @@ export const CATALOG: Record<Moment, Line[]> = {
     l("Scoping it. The smaller the scope, the bigger the confidence.", "planner"),
     d("Planning. Optimism is free until the invoice arrives.", "planner"),
     d("Drafting the plan. Somewhere a deadline just felt a chill.", "planner"),
+    l("Reading the task twice. The second time is for the parts nobody wrote down.", "planner"),
+    d("Planning. Every unwritten requirement is a future incident.", "planner"),
   ],
   "phase-start:test-designer": [
     l("Writing the tests before anyone can argue with them.", "test-designer"),
     l("Listing the ways this could break. It's a short list; the list is long.", "test-designer"),
     d("I've seen how this ends. Writing it down as a test.", "test-designer"),
     d("Brainstorming failure modes. Enthusiastically.", "test-designer"),
+    l("Plan received. I have concerns, and a spreadsheet of my own.", "test-designer"),
+    d("The plan says 'should work'. I've drafted the eulogy.", "test-designer"),
   ],
   "phase-start:builder": [
     l("Building. The diff will be small and the explanation longer.", "builder"),
     l("Typing with confidence, which is not evidence.", "builder"),
     d("Shipping first; apologizing is a separate ticket.", "builder"),
     d("Building. If it compiles, it's basically legal.", "builder"),
+    l("Tests received. Very demanding. I'll make them pass, eventually.", "builder"),
+    d("Here come the tests. I'll treat them as suggestions; the Verifier won't.", "builder"),
   ],
   "phase-start:verifier": [
     l("Verifying. I believe you, in the legal sense of 'show me'.", "verifier"),
     l("Running it myself. Your word counts as a suggestion.", "verifier"),
     d("Trust is a vulnerability. Patching it.", "verifier"),
     d("Checking the claims. Claims have a mortality rate.", "verifier"),
+    l("Builder says it works. Builder says a lot of things.", "verifier"),
+    d("The Builder's report is in. Time to find out which parts are fiction.", "verifier"),
   ],
   "phase-start:gatekeeper": [
     l("Gate's closed until the checklist says otherwise.", "gatekeeper"),
     l("Final review. Nothing ships on vibes.", "gatekeeper"),
     d("On duty. Nobody is getting in on charm.", "gatekeeper"),
     d("Last stop. Rejected changes rest in the reflog.", "gatekeeper"),
+    l("Verifier signed off. I'm going to look anyway.", "gatekeeper"),
+    clean(d("Everyone before me said yes. That's usually when I find it.", "gatekeeper")),
+    repaired(d("After all that iterating, I intend to be difficult.", "gatekeeper")),
+    repaired(l("A lot of back and forth to get here. Let me see what survived.", "gatekeeper")),
   ],
   "phase-pass": [
-    l("{phase} passed. Suspiciously smooth."),
+    repaired(l("{phase} passed, at last. Nobody is cheering; everybody is tired.")),
+    repaired(l("{phase}: green, finally. Let's not do that again.")),
+    repaired(d("{phase} passed. The scars are included at no extra charge.")),
+    clean(l("{phase} passed. Suspiciously smooth.")),
     l("{phase} done. The diff survived first contact."),
-    l("{phase}: green. Enjoy it; it's a loan."),
+    clean(l("{phase}: green. Enjoy it; it's a loan.")),
     d("{phase} passed. The bugs simply haven't been introduced yet."),
     d("{phase} signed off. Another small victory for the dangerously optimistic."),
     d("{phase} passed. Somewhere, a flaky test smiles."),
   ],
-  "phase-fail": [
-    l("{phase} failed. The Overseer will be told, loudly."),
-    l("{phase} didn't make it. Not every phase gets a trophy."),
-    l("{phase}: red. The reflog is taking notes."),
-    d("{phase} has fallen. Its files will be remembered, mostly by git."),
-    d("{phase} failed. Cause of death: optimism."),
-    d("{phase} is down. The others are pretending not to notice."),
+  "phase-retry:planner": [
+    l("Replanning, attempt {n}. The first plan met reality and lost.", "planner"),
+    d("Attempt {n} at the plan. Optimism has been rebooted.", "planner"),
+  ],
+  "phase-retry:test-designer": [
+    l("Attempt {n}. I'll adjust the tests until someone stops complaining.", "test-designer"),
+    d("Attempt {n}. I said it would break. I'd like that noted.", "test-designer"),
+  ],
+  "phase-retry:builder": [
+    l("Attempt {n}. I prefer the term 'iterating'.", "builder"),
+    l("Back again, attempt {n}, with feedback and mild resentment.", "builder"),
+    d("Attempt {n}. The first draft is dead; long live the second.", "builder"),
+    d("Attempt {n}. Scar tissue is just commit history with feelings.", "builder"),
+  ],
+  "phase-retry:verifier": [
+    l("Round {n}. Same suspicion, new evidence.", "verifier"),
+    d("Round {n}. Trust is still a vulnerability.", "verifier"),
+  ],
+  "phase-retry:gatekeeper": [
+    l("Review again, attempt {n}. The checklist hasn't changed; the diff has.", "gatekeeper"),
+    d("Attempt {n}. The bouncer remembers your face.", "gatekeeper"),
+  ],
+  "run-start-night": [
+    l("It's the middle of the night. The agents don't sleep; you might want to."),
+    l("A late-night run. The best bugs get written after midnight."),
+    d("Running at this hour. The commit history will not be flattering."),
+    d("Night shift. A better-rested version of you is judging this schedule."),
+  ],
+  "run-start-early": [
+    l("An early run. The agents are awake; the coffee is optional."),
+    d("An early start. The bugs are still asleep. Move quietly."),
+  ],
+  "run-start-friday": [
+    l("A Friday afternoon run. Bold."),
+    d("Friday afternoon. This is how weekends get cancelled."),
+  ],
+  "run-start-weekend": [
+    l("A weekend run. The agents don't get weekends; they share that with on-call."),
+    d("Weekend work. The backlog respects no calendar."),
+  ],
+  "run-long-30": [
+    l("Thirty minutes in. The agents are fine; you may want some water."),
+    d("Half an hour. Somewhere a sprint goal is quietly rewriting itself."),
+  ],
+  "run-long-60": [
+    l("An hour in. At this point it's a relationship."),
+    d("An hour. The agents have started to recognise your approval rhythm."),
+  ],
+  "tools-100": [
+    l("100 tool calls so far. Somebody is reading a lot of files."),
+    d("100 tool calls. The Builder never met a file it didn't want to open."),
+  ],
+  "tools-250": [
+    l("250 tool calls. That is a lot of looking for a small change."),
+    d("250 tool calls. The repository has been examined, interrogated and released."),
+  ],
+  "prompts-25": [
+    l("Prompt number 25. You are the bottleneck, and a good one."),
+    d("25 prompts answered. The agents consider you their manager, and also their weather."),
+  ],
+  "prompts-50": [
+    l("That's 50 prompts. At this point the approvals are a love language."),
+    d("50 prompts. The trust fall has become a trust marathon."),
+  ],
+  "overseer-repair-many": [
+    l("Veto number {n} this run. The Overseer is enjoying this a little.", "overseer"),
+    l("Repair number {n}. The word 'iteration' is doing heavy lifting.", "overseer"),
+    d("Veto {n}. At this point it's less a review than a hobby.", "overseer"),
+    d("{n} repairs and counting. The budget would like a word, and a lawyer.", "overseer"),
+  ],
+  "award-answer-fast": [
+    l("Your average answer time: {n}s. The agents have learned your rhythm, and not to rely on it."),
+    l("About {n}s per approval. Skimming is a skill. So is regret."),
+    d("You answered in about {n}s each time. A very trusting soul or a very fast reader."),
+  ],
+  "award-answer-slow": [
+    l("Your average answer took {n}s. The agents used the time to reflect, then to wait."),
+    d("About {n}s per answer. The agents have taken up a hobby."),
+  ],
+  "award-sent-back": [
+    l("Most sent back: {phase}, {n} time(s). Resilient, or just stubborn."),
+    l("{phase} was sent back {n} time(s). It builds character, supposedly."),
+    d("{phase} got sent back {n} time(s). The Overseer has stopped saying please."),
+  ],
+  "award-priciest": [
+    l("Most expensive agent: {phase}, at ${cost}. It has expensive taste."),
+    l("{phase} spent ${cost}, the most of anyone. Big thinker, bigger invoice."),
+    d("{phase} cost ${cost}. The accountant has questions and a long memory."),
+  ],
+  "award-tool-hog": [
+    l("Most tool calls: {phase}, with {n}. Thorough or anxious; the log can't tell."),
+    d("{phase} made {n} tool calls. It never met a file it didn't want to read."),
+  ],
+  "award-quiet": [
+    l("Zero prompts this run. Everything was read-only or already trusted."),
+    d("Not a single prompt. Either well-trusted agents or a very quiet crime scene."),
   ],
   "overseer-continue": [
-    l("Proceed. The record shows no objection.", "overseer"),
+    clean(l("Proceed. The record shows no objection.", "overseer")),
+    repaired(l("Proceed, for now. The record shows several objections.", "overseer")),
     l("Continue. Nobody filed an appeal.", "overseer"),
     d("Continue. The veto stays in my pocket, loaded.", "overseer"),
     d("Carried. The opposition was a flaky test and has been dismissed.", "overseer"),
@@ -343,24 +470,27 @@ export function fill(text: string, vars: PickVars = {}): string | undefined {
 
 export interface Picked {
   text: string;
+  /** The catalog text before placeholders were filled: what a run remembers it has already used. */
+  template: string;
   dark: boolean;
   by: Speaker;
 }
 
 /**
  * One line for a moment at a level, chosen deterministically from `seed` and `counter` (so a run's
- * commentary is reproducible and testable, not random). `avoid` is the text of the previous pick, so the
- * same line doesn't come twice in a row. "off" returns nothing; "dry" never returns a dark line.
+ * commentary is reproducible and testable, not random). `used` is the templates this run has already
+ * spoken: a fresh one is preferred, so "Enjoy it; it's a loan" doesn't come out twice in one run just
+ * because two different phases passed. "off" returns nothing; "dry" never returns a dark line.
  */
-export function pick(moment: Moment, level: HumorLevel, seed: string, counter = 0, vars: PickVars = {}, avoid?: string): Picked | undefined {
+export function pick(moment: Moment, level: HumorLevel, seed: string, counter = 0, vars: PickVars = {}, used?: ReadonlySet<string>, repaired?: boolean): Picked | undefined {
   if (level === "off") return undefined;
-  const eligible = (CATALOG[moment] ?? []).filter((x) => level === "dark" || !x.dark);
+  const eligible = (CATALOG[moment] ?? []).filter((x) => (level === "dark" || !x.dark) && (repaired === undefined || !x.when || (x.when === "repaired") === repaired));
   const filled = eligible.map((x) => ({ x, text: fill(x.text, vars) })).filter((e): e is { x: Line; text: string } => e.text !== undefined);
   if (!filled.length) return undefined;
-  let i = fnv1a(`${seed}|${moment}|${counter}`) % filled.length;
-  if (filled.length > 1 && filled[i].text === avoid) i = (i + 1) % filled.length;
-  const e = filled[i];
-  return { text: e.text, dark: Boolean(e.x.dark), by: e.x.by ?? "narrator" };
+  const fresh = filled.filter((e) => !used?.has(e.x.text));
+  const pool = fresh.length ? fresh : filled;
+  const e = pool[fnv1a(`${seed}|${moment}|${counter}`) % pool.length];
+  return { text: e.text, template: e.x.text, dark: Boolean(e.x.dark), by: e.x.by ?? "narrator" };
 }
 
 /** What the web UI needs, served as /persona.js: the idle lines, the personas, and the ceiling the run
@@ -403,26 +533,61 @@ export function insightsLine(i: InsightsLike, level: HumorLevel): string | undef
 
 // ---------- the director: turns a run's events into notes
 
-/** Notes a run may get in total, and the least time between two (by event timestamps), so the
- * commentary stays a seasoning. Run-end notes ignore both. */
-export const MAX_NOTES_PER_RUN = 30;
-export const MIN_NOTE_GAP_MS = 6000;
+/**
+ * Pacing. A real run is minutes long with dozens of events a minute, so what speaks has to be chosen.
+ * Replaying realistic runs (test/persona-sim.mjs) showed the first version getting this backwards: a flat
+ * minimum gap between notes swallowed exactly the lines that carry the personality (each agent's opening
+ * line, the Overseer's veto) because they come a fraction of a second after the previous note, while
+ * the generic "X passed" filler took the slots. So:
+ *  - KEY moments (an agent's opening line, a retry, a veto, a refusal streak, the ending, the awards) always
+ *    speak, up to a cap, and may come in pairs: the Overseer's veto and the Builder's reply.
+ *  - Everything else is seasoning: at least SEASONING_GAP_MS after the last note of any kind, at most
+ *    MAX_SEASONING_PER_RUN a run, and often skipped (a fixed chance, decided by the run's seed).
+ *  - A template isn't repeated within a run until all of that moment's templates have been used.
+ */
+export const MAX_NOTES_PER_RUN = 40;
+export const MAX_SEASONING_PER_RUN = 12;
+export const SEASONING_GAP_MS = 20_000;
 export const FAST_APPROVAL_MS = 1500;
 export const SLOW_APPROVAL_MS = 120_000;
+export const LONG_RUN_MS = [30 * 60_000, 60 * 60_000] as const;
+export const MAX_AWARDS = 2;
+
+const KEY_MOMENT = /^(run-start|phase-start:|phase-retry:|overseer-repair|overseer-stop|approval-denial-streak|approval-fast|approval-slow|run-done|run-failed|run-stopped|award-)/;
+/** The share of the time a seasoning moment speaks at all; the rest are skipped. */
+const SEASONING_CHANCE: Partial<Record<Moment, number>> = { "phase-pass": 0.3, "overseer-continue": 0.3, "approval-denied": 0.6, "rule-saved": 0.7 };
 
 interface RunState {
   seed: string;
+  startMs: number;
   notes: number;
+  seasoning: number;
   lastNoteAt: number;
   counters: Map<string, number>;
-  last: Map<string, string>;
+  used: Set<string>;
   once: Set<string>;
   repairs: number;
+  repairsByPhase: Map<string, number>;
   humanAllows: number;
   denialStreak: number;
   rules: number;
+  prompts: number;
+  answerMs: number[];
   cost: number;
+  costByPhase: Map<string, number>;
+  tools: number;
+  toolsByPhase: Map<string, number>;
   pendingAt: Map<string, number>;
+}
+
+const isPhase = (x: unknown): x is PhaseName => typeof x === "string" && (PHASES as readonly string[]).includes(x);
+const finiteCost = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x) && x >= 0 && x < 1e6;
+const maxEntry = (m: Map<string, number>): [string, number] | undefined => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+
+export interface DirectorOptions {
+  level: HumorLevel;
+  /** Hour of day (0-23) and weekday (0 = Sunday) for a timestamp, in the person's own time zone. Injectable for tests. */
+  clock?: { hourOf(ms: number): number; dayOf(ms: number): number };
 }
 
 /**
@@ -434,35 +599,54 @@ interface RunState {
 export class PersonaDirector {
   private runs = new Map<string, RunState>();
   private listener = (ev: AgentEvent) => this.onEvent(ev);
+  private clock: NonNullable<DirectorOptions["clock"]>;
 
-  constructor(private bus: EventBus, private opts: { level: HumorLevel }) {}
+  constructor(private bus: EventBus, private opts: DirectorOptions) {
+    this.clock = opts.clock ?? { hourOf: (ms) => new Date(ms).getHours(), dayOf: (ms) => new Date(ms).getDay() };
+  }
 
   attach() {
     if (this.opts.level !== "off") this.bus.on("event", this.listener);
     return { detach: () => this.bus.off("event", this.listener) };
   }
 
-  private state(runId: string): RunState {
+  private state(runId: string, ts: string): RunState {
     let s = this.runs.get(runId);
     if (!s) {
-      s = { seed: runId, notes: 0, lastNoteAt: -Infinity, counters: new Map(), last: new Map(), once: new Set(), repairs: 0, humanAllows: 0, denialStreak: 0, rules: 0, cost: 0, pendingAt: new Map() };
+      const at = Date.parse(ts);
+      s = {
+        seed: runId, startMs: Number.isFinite(at) ? at : Date.now(), notes: 0, seasoning: 0, lastNoteAt: -Infinity, counters: new Map(), used: new Set(), once: new Set(),
+        repairs: 0, repairsByPhase: new Map(), humanAllows: 0, denialStreak: 0, rules: 0, prompts: 0, answerMs: [], cost: 0, costByPhase: new Map(), tools: 0,
+        toolsByPhase: new Map(), pendingAt: new Map(),
+      };
       this.runs.set(runId, s);
     }
     return s;
   }
 
-  private say(ev: AgentEvent, moment: Moment, vars: PickVars = {}, opts: { force?: boolean; once?: boolean; phase?: PhaseName } = {}) {
-    const s = this.state((ev as { runId: string }).runId);
+  private say(ev: AgentEvent, moment: Moment, vars: PickVars = {}, opts: { once?: boolean; phase?: PhaseName; force?: boolean } = {}) {
+    const s = this.state((ev as { runId: string }).runId, ev.ts);
     const at = Date.parse(ev.ts);
+    const key = KEY_MOMENT.test(moment);
     if (opts.once && s.once.has(moment)) return;
-    if (!opts.force && (s.notes >= MAX_NOTES_PER_RUN || at - s.lastNoteAt < MIN_NOTE_GAP_MS)) return;
+    if (!opts.force) {
+      if (s.notes >= MAX_NOTES_PER_RUN) return;
+      if (!key) {
+        if (s.seasoning >= MAX_SEASONING_PER_RUN || at - s.lastNoteAt < SEASONING_GAP_MS) return;
+        const n = s.counters.get(`chance|${moment}`) ?? 0;
+        s.counters.set(`chance|${moment}`, n + 1);
+        const p = SEASONING_CHANCE[moment] ?? 1;
+        if (p < 1 && (fnv1a(`${s.seed}|${moment}|${n}|chance`) % 1000) / 1000 >= p) return;
+      }
+    }
     const n = s.counters.get(moment) ?? 0;
-    const picked = pick(moment, this.opts.level, s.seed, n, vars, s.last.get(moment));
+    const picked = pick(moment, this.opts.level, s.seed, n, vars, s.used, s.repairs > 0);
     if (!picked) return;
     s.counters.set(moment, n + 1);
-    s.last.set(moment, picked.text);
+    s.used.add(picked.template);
     if (opts.once) s.once.add(moment);
     s.notes++;
+    if (!key) s.seasoning++;
     if (Number.isFinite(at)) s.lastNoteAt = at;
     const note: AgentEvent = { type: "persona-note", runId: s.seed, phase: opts.phase, moment, text: picked.text, dark: picked.dark, speaker: picked.by, ts: ev.ts };
     // After the triggering event has been delivered to every listener, so a screen shows them in order.
@@ -479,23 +663,45 @@ export class PersonaDirector {
     if (ev.type === "persona-note") return;
     const runId = (ev as { runId?: string }).runId;
     if (typeof runId !== "string") return;
-    const s = this.state(runId);
+    const s = this.state(runId, ev.ts);
+    const at = Date.parse(ev.ts);
+
+    // How long the run has been going: spoken on whatever event first shows it has crossed a mark.
+    if (Number.isFinite(at)) {
+      const elapsed = at - s.startMs;
+      if (elapsed >= LONG_RUN_MS[1]) this.say(ev, "run-long-60", {}, { once: true });
+      else if (elapsed >= LONG_RUN_MS[0]) this.say(ev, "run-long-30", {}, { once: true });
+    }
+
     switch (ev.type) {
-      case "run-start":
-        this.say(ev, "run-start", {}, { force: true });
-        break;
-      case "phase-start":
-        if (ev.attempt === 1 && (PHASES as readonly string[]).includes(ev.phase)) this.say(ev, `phase-start:${ev.phase}`, {}, { phase: ev.phase });
-        break;
-      case "phase-end": {
-        if (ev.verdict.headline === "Skipped") break;
-        this.say(ev, ev.verdict.outcome === "pass" ? "phase-pass" : "phase-fail", { phase: ev.phase }, { phase: ev.phase });
+      case "run-start": {
+        const h = this.clock.hourOf(at), day = this.clock.dayOf(at);
+        // An unreadable timestamp gives NaN, which compares false everywhere, so it lands on the plain opening.
+        const moment: Moment = h < 5 ? "run-start-night" : h < 7 ? "run-start-early" : day === 5 && h >= 15 ? "run-start-friday" : day === 0 || day === 6 ? "run-start-weekend" : "run-start";
+        this.say(ev, moment, {}, { force: true });
         break;
       }
+      case "phase-start":
+        if (!isPhase(ev.phase)) break;
+        // The attempt number is only ever shown through fill(), which accepts a whole number from 0 to 9999 and nothing else.
+        if (ev.attempt === 1) this.say(ev, `phase-start:${ev.phase}`, {}, { phase: ev.phase });
+        else this.say(ev, `phase-retry:${ev.phase}`, { n: ev.attempt }, { phase: ev.phase });
+        break;
       case "overseer-decision": {
         const a = ev.decision.action;
-        if (a === "repair") s.repairs++;
-        this.say(ev, a === "repair" ? "overseer-repair" : a === "continue" ? "overseer-continue" : "overseer-stop", {}, { phase: ev.phase });
+        if (a === "repair") {
+          s.repairs++;
+          const target = isPhase(ev.decision.repairTarget) ? ev.decision.repairTarget : ev.phase;
+          if (isPhase(target)) s.repairsByPhase.set(target, (s.repairsByPhase.get(target) ?? 0) + 1);
+          this.say(ev, s.repairs >= 3 ? "overseer-repair-many" : "overseer-repair", { n: s.repairs }, { phase: isPhase(ev.phase) ? ev.phase : undefined });
+        } else if (a === "stop") {
+          this.say(ev, "overseer-stop", {}, { phase: isPhase(ev.phase) ? ev.phase : undefined });
+        } else if (isPhase(ev.phase)) {
+          // A pass is worth a word only now and then: the verdict block already says it passed.
+          const moment: Moment = fnv1a(`${s.seed}|${s.counters.get("pass") ?? 0}`) % 2 ? "overseer-continue" : "phase-pass";
+          s.counters.set("pass", (s.counters.get("pass") ?? 0) + 1);
+          this.say(ev, moment, { phase: ev.phase }, { phase: ev.phase });
+        }
         break;
       }
       case "approval-request":
@@ -506,10 +712,14 @@ export class PersonaDirector {
         s.pendingAt.delete(ev.requestId);
         if (ev.auto) break;
         const waited = asked !== undefined ? Date.parse(ev.ts) - asked : undefined;
+        s.prompts++;
+        if (waited !== undefined && waited >= 0 && Number.isFinite(waited)) s.answerMs.push(waited);
+        if (s.prompts === 25) this.say(ev, "prompts-25", {}, { once: true });
+        if (s.prompts === 50) this.say(ev, "prompts-50", {}, { once: true });
         if (ev.decision === "deny") {
           s.denialStreak++;
           s.humanAllows = 0;
-          if (s.denialStreak === 3) this.say(ev, "approval-denial-streak", {}, { force: true, once: true });
+          if (s.denialStreak === 3) this.say(ev, "approval-denial-streak", {}, { once: true });
           else this.say(ev, "approval-denied", {}, {});
         } else {
           s.denialStreak = 0;
@@ -518,11 +728,17 @@ export class PersonaDirector {
           else if (waited !== undefined && waited >= 0 && waited < FAST_APPROVAL_MS && s.humanAllows >= 5) this.say(ev, "approval-fast", {}, { once: true });
           if (ev.rememberedRule) {
             s.rules++;
-            this.say(ev, s.rules === 3 ? "rules-many" : "rule-saved", {}, { once: s.rules !== 3 ? true : false });
+            this.say(ev, s.rules === 3 ? "rules-many" : "rule-saved", {}, { once: s.rules !== 3 });
           }
         }
         break;
       }
+      case "tool-call":
+        s.tools++;
+        if (isPhase(ev.phase)) s.toolsByPhase.set(ev.phase, (s.toolsByPhase.get(ev.phase) ?? 0) + 1);
+        if (s.tools === 100) this.say(ev, "tools-100", {}, { once: true });
+        if (s.tools === 250) this.say(ev, "tools-250", {}, { once: true });
+        break;
       case "browser-session-started":
         this.say(ev, "browser-start", {}, { once: true });
         break;
@@ -533,8 +749,10 @@ export class PersonaDirector {
         if (ev.isError) this.say(ev, "desktop-refused", {}, { once: true });
         break;
       case "usage": {
+        if (!finiteCost(ev.costUsd)) break;
         const before = s.cost;
         s.cost += ev.costUsd;
+        if (isPhase(ev.phase)) s.costByPhase.set(ev.phase, (s.costByPhase.get(ev.phase) ?? 0) + ev.costUsd);
         for (const [t, m] of [[1, "cost-1"], [5, "cost-5"], [20, "cost-20"]] as const) {
           if (before < t && s.cost >= t) this.say(ev, m, { cost: s.cost }, { once: true });
         }
@@ -544,10 +762,30 @@ export class PersonaDirector {
         const moment: Moment =
           ev.status === "done" ? (s.repairs === 0 ? "run-done-clean" : "run-done-repaired") : ev.status === "stopped" ? "run-stopped" : "run-failed";
         this.say(ev, moment, { n: s.repairs }, { force: true });
+        for (const [m, vars] of this.awards(s, ev.status).slice(0, MAX_AWARDS)) this.say(ev, m, vars, { force: true });
         this.runs.delete(runId);
         break;
       }
     }
+  }
+
+  /** What the run's own numbers say about it, most pointed first: how fast the person answered, who was sent back
+   * most, who cost most, who called the most tools. Only validated numbers and phase names go in. */
+  private awards(s: RunState, status: string): Array<[Moment, PickVars]> {
+    const out: Array<[Moment, PickVars]> = [];
+    if (s.answerMs.length >= 5) {
+      const avgSec = s.answerMs.reduce((a, b) => a + b, 0) / s.answerMs.length / 1000;
+      if (avgSec < 3) out.push(["award-answer-fast", { n: Math.max(1, Math.round(avgSec)) }]);
+      else if (avgSec >= 45) out.push(["award-answer-slow", { n: Math.min(9999, Math.round(avgSec)) }]);
+    }
+    if (s.prompts === 0 && status === "done") out.push(["award-quiet", {}]);
+    const sentBack = maxEntry(s.repairsByPhase);
+    if (sentBack && sentBack[1] >= 2 && isPhase(sentBack[0])) out.push(["award-sent-back", { phase: sentBack[0], n: sentBack[1] }]);
+    const priciest = maxEntry(s.costByPhase);
+    if (priciest && s.cost >= 0.5 && priciest[1] / s.cost >= 0.4 && isPhase(priciest[0])) out.push(["award-priciest", { phase: priciest[0], cost: priciest[1] }]);
+    const hog = maxEntry(s.toolsByPhase);
+    if (hog && hog[1] >= 40 && hog[1] / Math.max(1, s.tools) >= 0.4 && isPhase(hog[0])) out.push(["award-tool-hog", { phase: hog[0], n: hog[1] }]);
+    return out;
   }
 }
 
@@ -585,9 +823,12 @@ export function lintCatalog(): string[] {
         if (re.test(lower)) problems.push(`${where}: contains banned term "${term.trim()}"`);
       }
       if (line.by && !(line.by in PERSONAS)) problems.push(`${where}: unknown speaker ${line.by}`);
+      if (line.when !== undefined && line.when !== "clean" && line.when !== "repaired") problems.push(`${where}: unknown "when" ${String(line.when)}`);
     }
-    if (!moment.startsWith("insights-") && moment !== "rules-many" && moment !== "run-stopped" && moment !== "cost-20" && !lines.some((x) => !x.dark)) {
-      problems.push(`${moment}: needs at least one dry line, so "dry" never comes up empty`);
+    if (!moment.startsWith("insights-") && moment !== "rules-many" && moment !== "run-stopped" && moment !== "cost-20") {
+      for (const state of ["clean", "repaired"] as const) {
+        if (!lines.some((x) => !x.dark && (!x.when || x.when === state))) problems.push(`${moment}: needs at least one dry line for a ${state} run, so "dry" never comes up empty`);
+      }
     }
   }
   return problems;

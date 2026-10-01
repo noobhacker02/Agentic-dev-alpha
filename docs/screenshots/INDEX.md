@@ -58,10 +58,12 @@ test app shows only its own widgets and title, so there is nothing else in frame
 
 ## `persona/`
 
-Captured by `SAVE_UI_SCREENSHOTS=1 node --experimental-sqlite --no-warnings test/ui-persona.mjs`, from real
-events through the real server in a real Chromium (`docs/PERSONA.md`).
+Captured by `SAVE_UI_SCREENSHOTS=1 node --experimental-sqlite --no-warnings test/ui-persona.mjs`, from a realistic
+simulated run (`test/persona-sim.mjs`) played through the real director, server and page in a real Chromium
+(`docs/PERSONA.md`).
 
 | File | What it shows |
 | --- | --- |
-| `01-voice-in-the-transcript.png` | A run part-way through at `jokes: dark`: opening lines in each agent's voice, the Overseer's veto, and an approval prompt at the bottom with none of it in. |
-| `02-dry-level.png` | The same run after turning the page down to `jokes: dry`: the dark lines are hidden, the dry ones stay. |
+| `01-voice-in-the-transcript.png` | A run part-way through at `jokes: dark`: the Overseer's veto and the agent's reply, and an approval prompt at the bottom with none of it in. |
+| `02-end-of-run-and-awards.png` | The end of the same run: the ending line, then the awards the run's numbers earned. |
+| `03-dry-level.png` | The same page after turning it down to `jokes: dry`: the dark lines are hidden, the dry ones stay. |

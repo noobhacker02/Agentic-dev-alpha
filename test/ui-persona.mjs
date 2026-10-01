@@ -201,36 +201,50 @@ const toggle = (page) => page.locator("#humor-toggle");
   await srv.close();
 }
 
-// ---------- docs screenshots (only when asked: SAVE_UI_SCREENSHOTS=1)
+// ---------- docs screenshots (only when asked: SAVE_UI_SCREENSHOTS=1), from a realistic simulated run
 if (process.env.SAVE_UI_SCREENSHOTS === "1") {
   const { mkdirSync } = await import("node:fs");
+  const { simulateRun } = await import("./persona-sim.mjs");
+  const { PersonaDirector } = await import("../dist/persona.js");
   const out = join(process.cwd(), "docs", "screenshots", "persona");
   mkdirSync(out, { recursive: true });
   const bus = new EventBus();
+  new PersonaDirector(bus, { level: "dark", clock: { hourOf: () => 15, dayOf: () => 2 } }).attach();
   const srv = await startServer(bus, 0, { humor: "dark" });
   const { page, ctx } = await open(srv.url);
-  const pick = (m, dark) => CATALOG[m].find((x) => Boolean(x.dark) === dark && !/\{/.test(x.text));
-  const e = (x) => bus.emitEvent({ runId: "demo", ts: ts(), ...x });
-  const note = (m, dark, speaker = "narrator", phase) => e({ type: "persona-note", phase, moment: m, text: pick(m, dark).text, dark, speaker });
-  e({ type: "run-start", task: "Add a dark-mode toggle to the settings page", workDir: "/tmp/demo" });
-  note("run-start", false);
-  e({ type: "phase-start", phase: "planner", attempt: 1 });
-  note("phase-start:planner", true, "planner", "planner");
-  e({ type: "phase-end", phase: "planner", attempt: 1, verdict: { completed: true, outcome: "pass", headline: "Plan written", details: "Two files, one test.", concerns: [], blockingFindings: [] } });
-  e({ type: "phase-start", phase: "builder", attempt: 1 });
-  note("phase-start:builder", false, "builder", "builder");
-  e({ type: "phase-end", phase: "builder", attempt: 1, verdict: { completed: true, outcome: "fail", headline: "Toggle renders, state is lost on reload", details: "", concerns: [], blockingFindings: ["Preference isn't persisted"] } });
-  e({ type: "overseer-decision", phase: "builder", decision: { action: "repair", repairTarget: "builder", reasoning: "Persist the choice, then re-verify." } });
-  note("overseer-repair", true, "overseer", "builder");
-  e({ type: "approval-request", phase: "builder", requestId: "demo-q", toolUseId: "demo-t", toolName: "Bash", toolInput: { command: "npm test -- settings" } });
+  // Start it "20 minutes ago", so the header's clock reads like a real run; leave out the tool-call filler the
+  // simulator adds only so the director can count them -- the screenshots are about the voice, not about Read(a).
+  const { events: all } = simulateRun("rough", { runId: "demo-run", startMs: Date.now() - 20 * 60_000 });
+  const events = all.filter((e) => e.type !== "tool-call");
+  const tick = () => new Promise((r) => setImmediate(r));
+  const play = async (list) => { for (const e of list) { bus.emitEvent(e); await tick(); } };
+  // Stop just after the second veto and its reply, and leave a real approval prompt open.
+  let vetoes = 0, cut = events.findIndex((e) => e.type === "overseer-decision" && e.decision.action === "repair" && ++vetoes === 2);
+  cut = events.findIndex((e, i) => i > cut && e.type === "phase-start") + 12;
+  // Drop approvals that are still open at the cut so the demo prompt is the only one pending.
+  const head = events.slice(0, cut);
+  const open_ = new Set(head.filter((e) => e.type === "approval-request").map((e) => e.requestId));
+  for (const e of head) if (e.type === "approval-resolved") open_.delete(e.requestId);
+  await play(head.filter((e) => !(e.type === "approval-request" && open_.has(e.requestId))));
+  await play([{ type: "approval-request", runId: "demo-run", phase: "builder", requestId: "demo-q", toolUseId: "demo-t", toolName: "Bash", toolInput: { command: "npm test -- settings" }, ts: head.at(-1).ts }]);
   await page.waitForSelector("#dock .prompt");
-  await page.waitForTimeout(600); // let the blocks finish their fade-in
+  await page.evaluate(() => { document.getElementById("scroll").scrollTop = 1e9; });
+  await page.waitForTimeout(700);
   await page.screenshot({ path: join(out, "01-voice-in-the-transcript.png") });
   console.log("[saved] docs/screenshots/persona/01-voice-in-the-transcript.png");
+  bus.resolveApproval("demo-q", { decision: "allow" });
+  bus.emitEvent({ type: "approval-resolved", runId: "demo-run", phase: "builder", requestId: "demo-q", toolUseId: "demo-t", decision: "allow", auto: false, ts: head.at(-1).ts });
+  await play(events.slice(cut));
+  await page.waitForSelector(".blk.run-end");
+  await page.evaluate(() => { document.getElementById("scroll").scrollTop = 1e9; });
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: join(out, "02-end-of-run-and-awards.png") });
+  console.log("[saved] docs/screenshots/persona/02-end-of-run-and-awards.png");
   await page.locator("#humor-toggle").click(); await page.locator("#humor-toggle").click(); // dark -> off -> dry
-  await page.waitForTimeout(600);
-  await page.screenshot({ path: join(out, "02-dry-level.png") });
-  console.log("[saved] docs/screenshots/persona/02-dry-level.png");
+  await page.evaluate(() => { document.getElementById("scroll").scrollTop = 1e9; });
+  await page.waitForTimeout(700);
+  await page.screenshot({ path: join(out, "03-dry-level.png") });
+  console.log("[saved] docs/screenshots/persona/03-dry-level.png");
   await ctx.close();
   await srv.close();
 }

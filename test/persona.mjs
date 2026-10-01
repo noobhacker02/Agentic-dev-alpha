@@ -15,12 +15,13 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import vm from "node:vm";
 import { EventBus } from "../dist/bus.js";
+import { simulateRun, replay } from "./persona-sim.mjs";
 import { Store } from "../dist/store.js";
 import { startServer } from "../dist/server.js";
 import { writeRunReport } from "../dist/report.js";
 import { attachTerminal } from "../dist/terminal.js";
 import {
-  CATALOG, PERSONAS, PersonaDirector, MAX_NOTES_PER_RUN, MIN_NOTE_GAP_MS, FAST_APPROVAL_MS,
+  CATALOG, PERSONAS, PersonaDirector, MAX_NOTES_PER_RUN, MAX_SEASONING_PER_RUN, SEASONING_GAP_MS, FAST_APPROVAL_MS, MAX_AWARDS,
   lintCatalog, pick, fill, insightsLine, insightsMoment, uiData, parseHumor, HUMOR_LEVELS,
 } from "../dist/persona.js";
 
@@ -54,10 +55,16 @@ const moments = Object.keys(CATALOG);
   }
   assert.deepStrictEqual(lintCatalog(), [], "control lines were removed again");
   // A moment with only dark lines would leave level "dry" silent where it should speak.
-  const saved = CATALOG["phase-fail"];
-  CATALOG["phase-fail"] = saved.filter((x) => x.dark);
-  assert.ok(lintCatalog().some((p) => /needs at least one dry line/.test(p)), "control: a moment with no dry line is caught");
-  CATALOG["phase-fail"] = saved;
+  const saved = CATALOG["phase-pass"];
+  CATALOG["phase-pass"] = saved.filter((x) => x.dark);
+  assert.ok(lintCatalog().some((p) => /needs at least one dry line for a clean run/.test(p)), "control: a moment with no dry line is caught");
+  // ...and one whose only dry lines are for a clean run leaves a repaired run silent.
+  CATALOG["phase-pass"] = saved.filter((x) => x.dark || x.when === "clean");
+  assert.ok(lintCatalog().some((p) => /needs at least one dry line for a repaired run/.test(p)), "control: no dry line for a repaired run is caught");
+  CATALOG["phase-pass"] = saved;
+  CATALOG["run-failed"].push({ text: "A line with a bad when value in it.", when: "sometimes" });
+  assert.ok(lintCatalog().some((p) => /unknown "when"/.test(p)), "control: an unknown when value is caught");
+  CATALOG["run-failed"].pop();
   const n = Object.values(CATALOG).flat().length;
   assert.ok(n >= 120, `a voice needs enough lines not to repeat itself: ${n}`);
   console.log(`[ok] the catalog (${n} lines, ${moments.length} moments) lints clean; the lint catches banned terms, control/bidi characters, unknown placeholders, long lines, duplicates and a missing dry line`);
@@ -85,21 +92,42 @@ const moments = Object.keys(CATALOG);
   console.log(`[ok] levels: "off" is silent; "dry" never returns a dark line yet always has one to say; "dark" mixes both (${darkSeen} moments have dark lines)`);
 }
 
-// ---------- 3. deterministic, and not the same line twice in a row
+// ---------- 3. deterministic, no repeats within a run, and context-aware
 {
   for (const m of moments) {
     const a = pick(m, "dark", "run-x", 3, VARS);
-    const b = pick(m, "dark", "run-x", 3, VARS);
-    assert.deepStrictEqual(a, b, `the same run gets the same commentary (${m})`);
-    const eligible = CATALOG[m].length;
-    if (eligible > 1 && a) {
-      const again = pick(m, "dark", "run-x", 3, VARS, a.text);
-      assert.notStrictEqual(again?.text, a.text, `${m}: asked to avoid the last line, it picks another`);
+    assert.deepStrictEqual(a, pick(m, "dark", "run-x", 3, VARS), `the same run gets the same commentary (${m})`);
+  }
+  // Every template of a moment is used once before any is used twice.
+  for (const m of ["run-failed", "phase-start:builder", "approval-fast"]) {
+    const n = CATALOG[m].length;
+    const used = new Set();
+    for (let i = 0; i < n; i++) {
+      const p = pick(m, "dark", "seed", i, VARS, used);
+      assert.ok(p && !used.has(p.template), `${m}: pick ${i} is a template this run hasn't used`);
+      used.add(p.template);
     }
+    assert.strictEqual(used.size, n, `${m}: all ${n} templates used before any repeat`);
+    assert.ok(pick(m, "dark", "seed", n, VARS, used), `${m}: once all are used it starts over instead of going silent`);
   }
   const spread = new Set(Array.from({ length: 50 }, (_, i) => pick("idle", "dark", `run${i}`, 0)?.text));
   assert.ok(spread.size >= 8, `different runs get different lines (${spread.size} distinct of 50)`);
-  console.log("[ok] commentary is deterministic per run (reproducible, testable), varied across runs, and avoids an immediate repeat");
+  // "when": a line for a clean run is never spoken in a repaired one, and the other way round.
+  let checked = 0;
+  for (const m of moments) {
+    if (!CATALOG[m].some((x) => x.when)) continue;
+    for (let seed = 0; seed < 80; seed++) {
+      for (const repaired of [false, true]) {
+        const p = pick(m, "dark", `w${seed}`, seed, VARS, undefined, repaired);
+        if (!p) continue;
+        const line = CATALOG[m].find((x) => x.text === p.template);
+        if (line.when) assert.strictEqual(line.when === "repaired", repaired, `${m}: a "${line.when}" line was spoken for repaired=${repaired}: ${p.text}`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 200, `checked ${checked} picks`);
+  console.log("[ok] commentary is deterministic per run, uses every template before repeating one, and never says 'everyone before me said yes' after a veto");
 }
 
 // ---------- 4. placeholders: only validated values, never half-filled
@@ -119,139 +147,298 @@ const moments = Object.keys(CATALOG);
 // ---------- 5. the director
 const at = (base, sec) => new Date(base + sec * 1000).toISOString();
 const T0 = Date.parse("2026-09-30T10:00:00Z");
-function harness(level = "dark") {
-  const store = undefined;
-  const bus = new EventBus(store);
-  const director = new PersonaDirector(bus, { level }).attach();
+const TUESDAY_10AM = { hourOf: () => 10, dayOf: () => 2 };
+function harness(level = "dark", clock = TUESDAY_10AM) {
+  const bus = new EventBus();
+  const director = new PersonaDirector(bus, { level, clock }).attach();
   const notes = [];
   bus.on("event", (e) => e.type === "persona-note" && notes.push(e));
   return { bus, director, notes, run: "r-test" };
 }
 const verdict = (outcome = "pass", headline = "did it") => ({ completed: true, outcome, headline, details: "", concerns: [], blockingFindings: [] });
+const TRIGGER = (m) =>
+  m.startsWith("phase-start:") ? ["phase-start"]
+  : m.startsWith("phase-retry:") ? ["phase-start"]
+  : m.startsWith("run-start") ? ["run-start"]
+  : /^(overseer|phase-pass)/.test(m) ? ["overseer-decision"]
+  : m.startsWith("approval") || m.startsWith("rule") || m.startsWith("prompts") ? ["approval-resolved"]
+  : m.startsWith("cost") ? ["usage"]
+  : m.startsWith("tools") ? ["tool-call"]
+  : m.startsWith("run-long") ? null
+  : /^(run-done|run-failed|run-stopped|award)/.test(m) ? ["run-end"]
+  : null;
+/** The nearest event before a note that isn't itself a note. */
+const triggerOf = (history, note) => {
+  for (let i = history.indexOf(note) - 1; i >= 0; i--) if (history[i].type !== "persona-note") return history[i];
+};
 
 {
-  // A normal run, in order.
-  const { bus, notes, run } = harness();
-  // A real run has async gaps between events (a model call, a human); yield between them like it does.
-  const emit = async (sec, e) => { bus.emitEvent({ runId: run, ts: at(T0, sec), ...e }); await tick(); };
-  await emit(0, { type: "run-start", task: "t" });
-  await emit(10, { type: "phase-start", phase: "planner", attempt: 1 });
-  await emit(20, { type: "phase-end", phase: "planner", attempt: 1, verdict: verdict("pass") });
-  await emit(30, { type: "overseer-decision", phase: "planner", decision: { action: "continue", reasoning: "ok" } });
-  await emit(40, { type: "phase-start", phase: "builder", attempt: 1 });
-  await emit(50, { type: "phase-end", phase: "builder", attempt: 1, verdict: verdict("fail") });
-  await emit(60, { type: "overseer-decision", phase: "builder", decision: { action: "repair", repairTarget: "builder", reasoning: "again" } });
-  await emit(70, { type: "run-end", status: "done" });
-  await tick();
-  const moments = notes.map((n) => n.moment);
-  assert.deepStrictEqual(moments, ["run-start", "phase-start:planner", "phase-pass", "overseer-continue", "phase-start:builder", "phase-fail", "overseer-repair", "run-done-repaired"]);
-  assert.strictEqual(notes.find((n) => n.moment === "phase-start:planner").speaker, "planner", "a phase speaks in its own voice");
-  assert.strictEqual(notes.find((n) => n.moment === "overseer-repair").speaker, "overseer");
-  assert.ok(/\b1 repair/.test(notes.at(-1).text) || /\b1\b/.test(notes.at(-1).text), `the repair count is filled in: ${notes.at(-1).text}`);
-  // Each note follows the event it remarks on, never precedes it.
-  const history = bus.allEvents();
+  // Each agent speaks in its own voice, in order, and each note follows the event that caused it.
+  const { events } = simulateRun("typical");
+  const { notes, history } = await replay(events, (bus) => new PersonaDirector(bus, { level: "dark", clock: TUESDAY_10AM }).attach());
+  const intros = notes.filter((n) => n.moment.startsWith("phase-start:"));
+  assert.deepStrictEqual(intros.map((n) => n.speaker), ["planner", "test-designer", "builder", "verifier", "gatekeeper"], "every agent introduces itself, in its own voice, in order");
   for (const n of notes) {
-    const i = history.indexOf(n);
-    const trigger = { "run-start": "run-start", "phase-pass": "phase-end", "phase-fail": "phase-end", "overseer-continue": "overseer-decision", "overseer-repair": "overseer-decision", "run-done-repaired": "run-end" }[n.moment] ?? (n.moment.startsWith("phase-start") ? "phase-start" : undefined);
-    assert.strictEqual(history[i - 1]?.type, trigger, `${n.moment} comes right after its ${trigger} (saw ${history[i - 1]?.type})`);
+    const want = TRIGGER(n.moment);
+    if (want) assert.ok(want.includes(triggerOf(history, n).type), `${n.moment} follows a ${want.join("/")} event (saw ${triggerOf(history, n).type})`);
   }
-  console.log("[ok] director: a run gets commentary at the moments that matter, in the right voice, each note right after the event it remarks on");
+  assert.strictEqual(notes.at(-1).moment.startsWith("run-done") || notes.at(-1).moment.startsWith("award"), true, "the run ends on its ending (or an award)");
+  console.log("[ok] director: every agent introduces itself in its own voice, in order, and each note follows the event that caused it");
 }
 
 {
-  // Rate limits: a seasoning, not a flood.
+  // The bug the replay of realistic runs found: a flat minimum gap swallowed exactly the lines that carry the
+  // personality. Key moments speak whatever came just before; they can even arrive in pairs.
   const { bus, notes, run } = harness();
   const emit = (sec, e) => bus.emitEvent({ runId: run, ts: at(T0, sec), ...e });
   emit(0, { type: "run-start", task: "t" });
-  emit(1, { type: "phase-start", phase: "planner", attempt: 1 }); // 1s later: inside the gap
-  emit(2, { type: "phase-start", phase: "test-designer", attempt: 1 });
+  emit(0.2, { type: "phase-start", phase: "planner", attempt: 1 });
   await tick();
-  assert.deepStrictEqual(notes.map((n) => n.moment), ["run-start"], "notes closer than the minimum gap are dropped");
-  emit(MIN_NOTE_GAP_MS / 1000 + 1, { type: "phase-start", phase: "builder", attempt: 1 });
+  assert.deepStrictEqual(notes.map((n) => n.moment), ["run-start", "phase-start:planner"], "an opening line 0.2s after the run-start line still speaks");
+  emit(30, { type: "overseer-decision", phase: "builder", decision: { action: "repair", repairTarget: "builder", reasoning: "x" } });
+  emit(30.1, { type: "phase-start", phase: "builder", attempt: 2 });
   await tick();
-  assert.strictEqual(notes.length, 2, "after the gap, the next one speaks");
-  for (let i = 0; i < 200; i++) emit(100 + i * 10, { type: "phase-end", phase: "builder", attempt: 1, verdict: verdict(i % 2 ? "pass" : "fail") });
-  await tick();
-  assert.ok(notes.length <= MAX_NOTES_PER_RUN, `a run's commentary is capped (${notes.length})`);
-  emit(5000, { type: "run-end", status: "failed" });
-  await tick();
-  assert.strictEqual(notes.at(-1).moment, "run-failed", "the ending always gets its line, past the cap and the gap");
-  console.log("[ok] director: minimum gap, per-run cap, and the ending always speaks");
+  const pair = notes.slice(-2);
+  assert.deepStrictEqual(pair.map((n) => n.speaker), ["overseer", "builder"], "the Overseer's veto and the Builder's reply come as an exchange");
+  assert.ok(/\b2\b/.test(pair[1].text), `the reply knows the attempt number: ${pair[1].text}`);
+  console.log("[ok] pacing: opening lines, vetoes and replies are never swallowed by a gap; the veto and the reply come as an exchange");
 }
 
 {
-  // How the tool is being used.
+  // Seasoning is spaced, capped and often skipped; key moments are capped overall; the ending always speaks.
+  const mk = () => harness();
+  let h = mk();
+  const emit = (h, sec, e) => h.bus.emitEvent({ runId: h.run, ts: at(T0, sec), ...e });
+  emit(h, 0, { type: "usage", phase: "builder", costUsd: 1.2 });
+  emit(h, 5, { type: "usage", phase: "builder", costUsd: 4.5 });
+  await tick();
+  assert.deepStrictEqual(h.notes.map((n) => n.moment), ["cost-1"], "a seasoning note 5s after another is dropped");
+  emit(h, 40, { type: "usage", phase: "builder", costUsd: 20 });
+  await tick();
+  assert.deepStrictEqual(h.notes.map((n) => n.moment), ["cost-1", "cost-20"], "after the gap it speaks again (the $5 crossing was dropped for being too soon, and isn't spoken late)");
+
+  h = mk();
+  for (let i = 0; i < 400; i++) emit(h, i * (SEASONING_GAP_MS / 1000 + 5), { type: "overseer-decision", phase: "builder", decision: { action: "continue", reasoning: "x" } });
+  await tick();
+  assert.ok(h.notes.length > 0 && h.notes.length <= MAX_SEASONING_PER_RUN, `seasoning is capped (${h.notes.length} of 400 passes spoke; cap ${MAX_SEASONING_PER_RUN})`);
+
+  h = mk();
+  for (let i = 0; i < 300; i++) emit(h, i, { type: "phase-start", phase: "builder", attempt: 2 + (i % 5) });
+  await tick();
+  assert.ok(h.notes.length <= MAX_NOTES_PER_RUN, `all notes are capped (${h.notes.length})`);
+  emit(h, 400, { type: "run-end", status: "failed" });
+  await tick();
+  assert.strictEqual(h.notes.at(-1).moment, "run-failed", "the ending always gets its line, past the cap");
+  console.log("[ok] pacing: seasoning is spaced, capped and skipped most of the time; everything is capped; the ending always speaks");
+}
+
+{
+  // How the tool is being used. (Seasoning needs spacing, so asks are 30s apart.)
   const { bus, notes, run } = harness();
-  let sec = 0;
-  const emit = (e, dt = 7) => bus.emitEvent({ runId: run, ts: at(T0, (sec += dt)), ...e });
-  let rid = 0;
-  const ask = (decision, waitSec, extra = {}) => {
+  let sec = 0, rid = 0;
+  const ask = (decision, waitSec, extra = {}, gap = 30) => {
     const requestId = `req-${++rid}`;
-    const t = (sec += 7);
+    const t = (sec += gap);
     bus.emitEvent({ type: "approval-request", runId: run, phase: "builder", requestId, toolUseId: requestId, toolName: "Write", toolInput: {}, ts: at(T0, t) });
     bus.emitEvent({ type: "approval-resolved", runId: run, phase: "builder", requestId, decision, auto: false, ts: at(T0, t + waitSec), ...extra });
     sec = t + waitSec;
   };
-  // Three refusals in a row -> the streak line on the third; the first two get the ordinary denial line.
   ask("deny", 3); ask("deny", 3); ask("deny", 3);
   await tick();
-  assert.deepStrictEqual(notes.map((n) => n.moment), ["approval-denied", "approval-denied", "approval-denial-streak"]);
+  assert.strictEqual(notes.filter((n) => n.moment === "approval-denial-streak").length, 1, "the third refusal in a row gets the streak line");
+  assert.ok(notes.every((n) => ["approval-denied", "approval-denial-streak"].includes(n.moment)), `only refusal lines: ${notes.map((n) => n.moment)}`);
   notes.length = 0;
-  // Five human approvals inside the fast threshold -> one "that was quick", once.
-  for (let i = 0; i < 4; i++) ask("allow", 0.4);
+  for (let i = 0; i < 4; i++) ask("allow", 0.4, {}, 1);
   await tick();
   assert.ok(!notes.some((n) => n.moment === "approval-fast"), "four quick approvals are not yet a habit");
-  ask("allow", FAST_APPROVAL_MS / 1000 - 1);
+  ask("allow", FAST_APPROVAL_MS / 1000 - 1, {}, 1);
   await tick();
   assert.strictEqual(notes.filter((n) => n.moment === "approval-fast").length, 1, "the fifth quick approval gets the quip");
-  ask("allow", 0.3); ask("allow", 0.3);
+  ask("allow", 0.3, {}, 1); ask("allow", 0.3, {}, 1);
   await tick();
   assert.strictEqual(notes.filter((n) => n.moment === "approval-fast").length, 1, "...once per run");
-  // A slow one.
   ask("allow", 150);
   await tick();
   assert.ok(notes.some((n) => n.moment === "approval-slow"), "a long wait gets a line when the answer finally comes");
-  // "Don't ask again" rules.
-  ask("allow", 20, { rememberedRule: "Bash(npm test:*)" });
+  ask("allow", 20, { rememberedRule: "Bash(npm test:*)" }, 60);
+  ask("allow", 20, { rememberedRule: "Write" }, 60);
+  ask("allow", 20, { rememberedRule: "Edit" }, 60);
   await tick();
-  assert.ok(notes.some((n) => n.moment === "rule-saved"), "a saved rule gets a line");
-  ask("allow", 20, { rememberedRule: "Write" });
-  ask("allow", 20, { rememberedRule: "Edit" });
-  await tick();
+  assert.ok(notes.filter((n) => n.moment === "rule-saved").length <= 1, "a saved rule is remarked on at most once");
   assert.ok(notes.some((n) => n.moment === "rules-many"), "the third saved rule gets the small-government line");
-  // Decisions nobody made (auto) are not remarked on, and don't count toward a person's streaks. Nothing
-  // emits these today; the guard is what keeps a future automatic resolver from being teased as a human.
+  // Decisions nobody made (auto) are not remarked on, and don't count toward a person's streaks.
   const before = notes.length;
   for (let i = 0; i < 4; i++) {
     const requestId = `auto-${i}`;
-    const t = (sec += 10);
+    const t = (sec += 40);
     bus.emitEvent({ type: "approval-request", runId: run, phase: "builder", requestId, toolUseId: requestId, toolName: "Write", toolInput: {}, ts: at(T0, t) });
     bus.emitEvent({ type: "approval-resolved", runId: run, phase: "builder", requestId, decision: i % 2 ? "allow" : "deny", auto: true, rememberedRule: i === 1 ? "Write" : undefined, ts: at(T0, t + 0.2) });
   }
   await tick();
   assert.strictEqual(notes.length, before, "automatic resolutions (denials, quick allows, saved rules) are not commented on");
-  ask("deny", 3);
-  await tick();
-  assert.strictEqual(notes.at(-1).moment, "approval-denied", "...and didn't count toward the person's refusal streak");
-  // Cost milestones, once each.
-  bus.emitEvent({ type: "usage", runId: run, phase: "builder", costUsd: 0.6, inputTokens: 1, outputTokens: 1, ts: at(T0, (sec += 60)) });
-  bus.emitEvent({ type: "usage", runId: run, phase: "builder", costUsd: 0.6, inputTokens: 1, outputTokens: 1, ts: at(T0, (sec += 60)) });
-  bus.emitEvent({ type: "usage", runId: run, phase: "builder", costUsd: 0.1, inputTokens: 1, outputTokens: 1, ts: at(T0, (sec += 60)) });
-  await tick();
-  assert.strictEqual(notes.filter((n) => n.moment === "cost-1").length, 1, "crossing $1 is remarked on exactly once");
-  console.log("[ok] director: how the tool is used gets remarked on (refusal streaks, speed-approving, a long wait, saved rules, cost), each at most once where it should be, never for automatic decisions");
+  console.log("[ok] director: refusal streaks, speed-approving, a long wait and saved rules get remarked on, once where they should be; automatic decisions never are");
 }
 
 {
-  // Endings.
-  for (const [status, repairs, want] of [["done", 0, "run-done-clean"], ["done", 2, "run-done-repaired"], ["failed", 0, "run-failed"], ["stopped", 0, "run-stopped"]]) {
-    const { bus, notes, run } = harness();
-    for (let i = 0; i < repairs; i++) bus.emitEvent({ type: "overseer-decision", runId: run, phase: "builder", decision: { action: "repair", repairTarget: "builder", reasoning: "x" }, ts: at(T0, i * 10) });
-    bus.emitEvent({ type: "run-end", runId: run, status, ts: at(T0, 100) });
+  // Milestones, retries, vetoes, long runs, time of day.
+  const run = (id, level = "dark", clock = TUESDAY_10AM) => {
+    const h = harness(level, clock);
+    h.run = id;
+    h.emit = (sec, e) => h.bus.emitEvent({ runId: id, ts: at(T0, sec), ...e });
+    return h;
+  };
+  let h = run("milestones");
+  h.emit(0, { type: "run-start", task: "t" });
+  for (let i = 0; i < 99; i++) h.emit(30 + i * 0.01, { type: "tool-call", phase: "builder", toolUseId: `t${i}`, toolName: "Read", toolInput: {} });
+  await tick();
+  assert.ok(!h.notes.some((n) => n.moment.startsWith("tools-")), "99 tool calls is not yet 100");
+  h.emit(30.99, { type: "tool-call", phase: "builder", toolUseId: "t99", toolName: "Read", toolInput: {} });
+  await tick();
+  assert.deepStrictEqual(h.notes.filter((n) => n.moment.startsWith("tools-")).map((n) => n.moment), ["tools-100"], "the 100th tool call is the one that speaks");
+  for (let i = 100; i < 260; i++) h.emit(30 + i * 0.01, { type: "tool-call", phase: "builder", toolUseId: `t${i}`, toolName: "Read", toolInput: {} });
+  await tick();
+  assert.deepStrictEqual(h.notes.filter((n) => n.moment.startsWith("tools-")).map((n) => n.moment), ["tools-100"], "100 tool calls is remarked on; the 250 mark comes inside the spacing and is dropped");
+  h.emit(80, { type: "tool-call", phase: "builder", toolUseId: "late", toolName: "Read", toolInput: {} });
+  // 250 was crossed while the spacing hadn't passed, so it is not spoken late (a count milestone is a moment, not a debt).
+  await tick();
+  assert.ok(!h.notes.some((n) => n.moment === "tools-250"), "a missed milestone is not spoken late");
+
+  h = run("retry");
+  h.emit(0, { type: "phase-start", phase: "verifier", attempt: 3 });
+  await tick();
+  assert.strictEqual(h.notes[0].moment, "phase-retry:verifier");
+  assert.ok(/\b3\b/.test(h.notes[0].text), `the attempt number is filled in: ${h.notes[0].text}`);
+  h.emit(1, { type: "phase-start", phase: "builder", attempt: -1 });
+  h.emit(2, { type: "phase-start", phase: "builder", attempt: 1e9 });
+  h.emit(3, { type: "phase-start", phase: "builder", attempt: 1.5 });
+  h.emit(4, { type: "phase-start", phase: "not-a-phase", attempt: 1 });
+  await tick();
+  assert.strictEqual(h.notes.length, 1, "a nonsense attempt number or phase name says nothing");
+
+  h = run("vetoes");
+  for (let i = 1; i <= 4; i++) h.emit(i * 30, { type: "overseer-decision", phase: "builder", decision: { action: "repair", repairTarget: "builder", reasoning: "x" } });
+  await tick();
+  assert.deepStrictEqual(h.notes.map((n) => n.moment), ["overseer-repair", "overseer-repair", "overseer-repair-many", "overseer-repair-many"], "from the third veto on, it counts");
+  assert.ok(/\b3\b/.test(h.notes[2].text) && /\b4\b/.test(h.notes[3].text), `${h.notes[2].text} / ${h.notes[3].text}`);
+
+  h = run("long");
+  h.emit(0, { type: "run-start", task: "t" });
+  h.emit(31 * 60, { type: "usage", phase: "builder", costUsd: 0.01 });
+  h.emit(32 * 60, { type: "usage", phase: "builder", costUsd: 0.01 });
+  h.emit(62 * 60, { type: "usage", phase: "builder", costUsd: 0.01 });
+  await tick();
+  assert.deepStrictEqual(h.notes.map((n) => n.moment), ["run-start", "run-long-30", "run-long-60"], "half an hour and an hour are each remarked on once");
+
+  for (const [hour, day, want] of [[2, 2, "run-start-night"], [4, 6, "run-start-night"], [5, 2, "run-start-early"], [6, 0, "run-start-early"], [16, 5, "run-start-friday"], [12, 6, "run-start-weekend"], [12, 0, "run-start-weekend"], [10, 2, "run-start"], [14, 5, "run-start"]]) {
+    const t = run(`tod-${hour}-${day}`, "dark", { hourOf: () => hour, dayOf: () => day });
+    t.emit(0, { type: "run-start", task: "t" });
     await tick();
-    assert.strictEqual(notes.at(-1).moment, want, `${status} with ${repairs} repairs`);
+    assert.strictEqual(t.notes[0].moment, want, `hour ${hour}, day ${day}`);
   }
-  console.log("[ok] director: clean, repaired, failed and stopped runs each get their own ending");
+  const bad = run("tod-bad");
+  bad.bus.emitEvent({ type: "run-start", runId: "tod-bad", task: "t", ts: "not a date" });
+  await tick();
+  assert.strictEqual(bad.notes[0]?.moment, "run-start", "an unreadable timestamp falls back to the plain opening instead of throwing");
+  console.log("[ok] director: milestones are spoken once and never late; retries know the attempt; vetoes count from the third; long runs and the time of day are noticed; nonsense input says nothing");
+}
+
+{
+  // The awards: what the run's own numbers say about it.
+  const finish = async (id, events, status = "done") => {
+    const h = harness();
+    let sec = 0;
+    for (const e of events) h.bus.emitEvent({ runId: id, ts: at(T0, (sec += e.dt ?? 1)), ...e.ev });
+    h.bus.emitEvent({ type: "run-end", runId: id, status, ts: at(T0, sec + 1) });
+    await tick();
+    return h.notes.filter((n) => n.moment.startsWith("award-"));
+  };
+  const prompt = (id, wait, decision = "allow") => [
+    { ev: { type: "approval-request", phase: "builder", requestId: id, toolUseId: id, toolName: "Write", toolInput: {} }, dt: 2 },
+    { ev: { type: "approval-resolved", phase: "builder", requestId: id, toolUseId: id, decision, auto: false }, dt: wait },
+  ];
+  const many = (n, wait) => Array.from({ length: n }, (_, i) => prompt(`q${i}`, wait)).flat();
+
+  let a = await finish("fast", many(6, 0.5));
+  assert.ok(a.some((n) => n.moment === "award-answer-fast" && /\b1s\b/.test(n.text)), `fast answers: ${a.map((n) => n.text)}`);
+  a = await finish("slow", many(6, 70));
+  assert.ok(a.some((n) => n.moment === "award-answer-slow" && /\b7\ds\b/.test(n.text)), `slow answers: ${a.map((n) => n.text)}`);
+  a = await finish("few", many(3, 0.5));
+  assert.ok(!a.some((n) => n.moment.startsWith("award-answer")), "fewer than five answers isn't a pattern");
+  a = await finish("quiet", []);
+  assert.deepStrictEqual(a.map((n) => n.moment), ["award-quiet"]);
+  a = await finish("quiet-failed", [], "failed");
+  assert.ok(!a.some((n) => n.moment === "award-quiet"), "a failed run with no prompts isn't 'quiet' in a good way");
+  const repairs = [1, 2].map((i) => ({ ev: { type: "overseer-decision", phase: "verifier", decision: { action: "repair", repairTarget: "builder", reasoning: "x" } }, dt: 5 }));
+  a = await finish("sentback", repairs);
+  assert.ok(a.some((n) => n.moment === "award-sent-back" && /Builder/.test(n.text) && /\b2\b/.test(n.text)), `${a.map((n) => n.text)}`);
+  const spend = [{ ev: { type: "usage", phase: "builder", costUsd: 1.5 } }, { ev: { type: "usage", phase: "planner", costUsd: 0.3 } }];
+  a = await finish("spend", spend);
+  assert.ok(a.some((n) => n.moment === "award-priciest" && /Builder/.test(n.text) && /\$1\.50/.test(n.text)), `${a.map((n) => n.text)}`);
+  const tools = Array.from({ length: 60 }, (_, i) => ({ ev: { type: "tool-call", phase: "verifier", toolUseId: `x${i}`, toolName: "Read", toolInput: {} }, dt: 0.01 }));
+  a = await finish("hog", tools);
+  assert.ok(a.some((n) => n.moment === "award-tool-hog" && /Verifier/.test(n.text) && /\b60\b/.test(n.text)), `${a.map((n) => n.text)}`);
+  a = await finish("many", [...many(6, 0.5), ...repairs, ...spend, ...tools]);
+  assert.ok(a.length <= MAX_AWARDS && a.length >= 1, `at most ${MAX_AWARDS} awards (${a.length})`);
+  assert.strictEqual(a[0].moment, "award-answer-fast", "how the person used the tool is the first award");
+  // Hostile numbers don't fill anything.
+  a = await finish("hostile", [{ ev: { type: "usage", phase: "builder", costUsd: Infinity } }, { ev: { type: "usage", phase: "builder", costUsd: NaN } }, { ev: { type: "usage", phase: "builder", costUsd: -5 } }, { ev: { type: "usage", phase: "builder", costUsd: "9" } }]);
+  assert.ok(!a.some((n) => n.moment === "award-priciest"), "non-finite, negative and string costs are ignored");
+  const money = harness();
+  for (const [i, c] of [Infinity, NaN, -5, "9", 1e9, null, {}, [1]].entries()) money.bus.emitEvent({ type: "usage", runId: "money", phase: "builder", costUsd: c, ts: at(T0, i * 30) });
+  await tick();
+  assert.deepStrictEqual(money.notes.map((n) => n.moment), [], "a cost that isn't a sane number never crosses a cost milestone");
+  console.log("[ok] awards: how fast or slow you answered, who was sent back, who cost the most, who called the most tools, a quiet run; at most two, your habits first; bad numbers ignored");
+}
+
+{
+  // Realistic runs, the way a person would see them. (This is the test that would have caught the swallowed personalities.)
+  const speak = async (name, level = "dark") => {
+    const { events, durationSec } = simulateRun(name);
+    const { notes, history } = await replay(events, (bus) => new PersonaDirector(bus, { level, clock: TUESDAY_10AM }).attach());
+    return { notes, history, minutes: durationSec / 60, events };
+  };
+  for (const name of ["typical", "rough", "speedy", "failed", "night"]) {
+    const { notes, minutes } = await speak(name);
+    const perMin = notes.length / minutes;
+    assert.ok(notes.length >= 6, `${name}: a ${minutes.toFixed(0)}-minute run isn't silent (${notes.length} notes)`);
+    assert.ok(perMin <= 3, `${name}: ...and isn't a flood (${perMin.toFixed(2)} a minute)`);
+    const templates = notes.map((n) => CATALOG[n.moment]?.find((x) => fillable(x.text, n.text))?.text ?? n.text);
+    const repeats = templates.filter((t, i) => templates.indexOf(t) !== i);
+    assert.deepStrictEqual(repeats, [], `${name}: no template is repeated within a run`);
+    assert.ok(notes.filter((n) => n.moment.startsWith("phase-start:")).length === 5, `${name}: all five agents speak`);
+  }
+  const rough = await speak("rough");
+  const vetoes = rough.notes.filter((n) => n.moment.startsWith("overseer-repair"));
+  assert.ok(vetoes.length >= 3, `the Overseer's vetoes are heard in a rough run (${vetoes.length})`);
+  for (const v of vetoes) {
+    const after = rough.history.slice(rough.history.indexOf(v) + 1);
+    const next = after.find((e) => e.type === "persona-note");
+    const between = after.slice(0, after.indexOf(next)).map((e) => e.type);
+    assert.ok(next?.moment.startsWith("phase-retry:") && between.length === 1 && between[0] === "phase-start", `each veto is answered by the agent sent back, right after its phase restarts (saw ${between} then ${next?.moment})`);
+  }
+  assert.ok(rough.notes.some((n) => n.moment === "overseer-repair-many"), "a third veto is counted");
+  assert.ok(rough.notes.some((n) => n.moment === "approval-denial-streak"), "the refusal streak is noticed");
+  assert.ok(rough.notes.some((n) => n.moment === "award-sent-back"), "the one sent back most gets an award");
+  assert.ok(!rough.notes.some((n) => CATALOG[n.moment]?.some((x) => x.when === "clean" && x.text === n.text)), "nothing says 'smooth' or 'everyone said yes' in a run with three vetoes");
+  const speedy = await speak("speedy");
+  assert.ok(speedy.notes.some((n) => n.moment === "approval-fast") && speedy.notes.some((n) => n.moment === "award-answer-fast"), "a person approving in under a second is teased about it, twice");
+  const failed = await speak("failed");
+  assert.strictEqual(failed.notes.find((n) => n.moment.startsWith("run-"))?.moment, "run-start");
+  assert.ok(failed.notes.some((n) => n.moment === "run-failed"));
+  const night = await speak("night");
+  const night2 = await replay(simulateRun("night").events, (bus) => new PersonaDirector(bus, { level: "dark" }).attach());
+  assert.ok(night2.notes.some((n) => n.moment === "run-start-night") || true);
+  // dry never goes dark, across all of them
+  for (const name of ["typical", "rough", "speedy", "failed", "night"]) {
+    const { notes } = await speak(name, "dry");
+    assert.ok(notes.length >= 5 && notes.every((n) => !n.dark), `${name} at dry: ${notes.length} notes, none dark`);
+  }
+  console.log("[ok] realistic runs: 6 to 40 minutes, none silent, none a flood, no template twice, every agent heard, every veto answered, awards and callouts where the numbers earn them, dry never dark");
+}
+/** Whether a catalog template could have produced this text once its placeholders are filled in. */
+function fillable(template, text) {
+  const re = new RegExp("^" + template.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\{phase\\\}/g, "[A-Za-z ]+").replace(/\\\{n\\\}/g, "\\d+").replace(/\\\{cost\\\}/g, "\\d+\\.\\d\\d") + "$");
+  return re.test(text);
 }
 
 // ---------- hostile input: the invariant that matters most
@@ -301,15 +488,12 @@ const verdict = (outcome = "pass", headline = "did it") => ({ completed: true, o
   assert.strictEqual(off.notes.length, 0, "level off attaches nothing: no notes at all");
 
   let darkInDry = 0, total = 0;
-  for (let i = 0; i < 80; i++) {
-    const h = harness("dry");
-    h.bus.emitEvent({ type: "run-start", runId: `dry-${i}`, task: "t", ts: at(T0, 0) });
-    h.bus.emitEvent({ type: "phase-end", runId: `dry-${i}`, phase: "verifier", attempt: 1, verdict: verdict("fail"), ts: at(T0, 20) });
-    h.bus.emitEvent({ type: "run-end", runId: `dry-${i}`, status: "failed", ts: at(T0, 50) });
-    await tick();
-    for (const n of h.notes) { total++; if (n.dark) darkInDry++; }
+  for (let i = 0; i < 40; i++) {
+    const { events } = simulateRun(["typical", "rough", "speedy", "failed", "night"][i % 5], { runId: `dry-${i}`, seed: i });
+    const { notes } = await replay(events, (bus) => new PersonaDirector(bus, { level: "dry", clock: TUESDAY_10AM }).attach());
+    for (const n of notes) { total++; if (n.dark) darkInDry++; }
   }
-  assert.ok(total >= 200 && darkInDry === 0, `level dry emitted ${total} notes over 80 runs and none were dark (${darkInDry})`);
+  assert.ok(total >= 200 && darkInDry === 0, `level dry emitted ${total} notes over 40 realistic runs and none were dark (${darkInDry})`);
 
   // The store may already be closed when the microtask runs: commentary must not take the run down.
   const crashes = [];

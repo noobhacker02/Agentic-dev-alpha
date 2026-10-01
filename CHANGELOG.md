@@ -26,6 +26,24 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Added
+- **The persona, evaluated on realistic runs and made much better** (docs/PERSONA.md). The first version was
+  tested for safety, not for what a person would actually see. A deterministic simulator
+  (`test/persona-sim.mjs`, shaped from numbers in real runs) showed:
+  - none of the agents' own opening lines and none of the Overseer's vetoes were ever heard (a flat minimum gap
+    between notes swallowed them, while the generic "X passed" filler took the slots);
+  - the same template twice in one run, and a line that was wrong for the run ("Everyone before me said yes"
+    after three vetoes);
+  - nothing noticed the hour, the length of the run or how much it had done.
+
+  Now: key moments always speak and seasoning is spaced, capped and often skipped; agents introduce
+  themselves in their own voice and react to the one before; a veto is answered by the agent sent back, and the
+  Overseer counts from the third; retries know the attempt number; lines can be for clean runs or repaired ones;
+  the hour (night, early, Friday afternoon, weekend), half an hour and an hour in, the 100th and 250th tool call,
+  prompts 25 and 50 are noticed; and the ending is followed by up to two awards from the run's own numbers (your
+  average answer time, who was sent back most, who cost the most, who called the most tools, a run with no
+  prompts). 209 lines across 56 moments, all still display-only and built from enumerated fields.
+  18 mutations of the new logic: 13 caught; five survived and were resolved (two redundant guards deleted, one
+  redundant type guard kept, two weak tests strengthened).
 - **A persona, properly** (docs/PERSONA.md). The request was for jokes that give the run life: dark but
   not too dark, memes and git and politics, jokes about how the tool is used, with some bite that isn't
   toxic. What had shipped was ten dry idle lines, and a changelog line saying it was deliberately kept
