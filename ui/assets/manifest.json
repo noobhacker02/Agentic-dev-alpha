@@ -1,0 +1,379 @@
+{
+  "version": 1,
+  "credits": [
+    {
+      "what": "cat",
+      "who": "sprite sheet supplied by the project owner (original artist not stated on the sheet)"
+    },
+    {
+      "what": "cursors",
+      "who": "sprite sheet supplied by the project owner (original artist not stated on the sheet)"
+    },
+    {
+      "what": "dino",
+      "who": "Chrome offline dinosaur; sheet credits: madK, RealHeroicGamer, Resistiv, roomjaguarproductions, DogToon64"
+    },
+    {
+      "what": "icons",
+      "who": "Craftpix free GUI icons, https://craftpix.net/freebies/ , licence https://craftpix.net/file-licenses/"
+    }
+  ],
+  "cat": {
+    "idle": {
+      "file": "cat/idle.png",
+      "frames": 10,
+      "w": 56,
+      "h": 69,
+      "fps": 5
+    },
+    "dance": {
+      "file": "cat/dance.png",
+      "frames": 25,
+      "w": 56,
+      "h": 69,
+      "fps": 10
+    },
+    "charge": {
+      "file": "cat/charge.png",
+      "frames": 1,
+      "w": 68,
+      "h": 72,
+      "fps": 0
+    },
+    "hop": {
+      "file": "cat/hop.png",
+      "frames": 1,
+      "w": 56,
+      "h": 67,
+      "fps": 0
+    },
+    "shadow": {
+      "file": "cat/shadow.png",
+      "frames": 1,
+      "w": 19,
+      "h": 5,
+      "fps": 0
+    },
+    "win": {
+      "file": "cat/win.png",
+      "frames": 2,
+      "w": 114,
+      "h": 81,
+      "fps": 2
+    }
+  },
+  "cursors": {
+    "default": {
+      "file": "cursors/default.png",
+      "w": 26,
+      "h": 33,
+      "x": 2,
+      "y": 1
+    },
+    "hover": {
+      "file": "cursors/hover.png",
+      "w": 26,
+      "h": 33,
+      "x": 2,
+      "y": 1
+    },
+    "not-allowed": {
+      "file": "cursors/not-allowed.png",
+      "w": 34,
+      "h": 33,
+      "x": 2,
+      "y": 1
+    },
+    "pointer": {
+      "file": "cursors/pointer.png",
+      "w": 30,
+      "h": 33,
+      "x": 10,
+      "y": 1
+    },
+    "no-drop": {
+      "file": "cursors/no-drop.png",
+      "w": 32,
+      "h": 34,
+      "x": 16,
+      "y": 17
+    },
+    "grab": {
+      "file": "cursors/grab.png",
+      "w": 31,
+      "h": 25,
+      "x": 15,
+      "y": 12
+    },
+    "grabbing": {
+      "file": "cursors/grabbing.png",
+      "w": 23,
+      "h": 22,
+      "x": 11,
+      "y": 11
+    },
+    "progress": {
+      "file": "cursors/progress.png",
+      "w": 31,
+      "h": 31,
+      "x": 15,
+      "y": 15
+    },
+    "wait": {
+      "file": "cursors/wait.png",
+      "w": 32,
+      "h": 34,
+      "x": 16,
+      "y": 17
+    },
+    "text": {
+      "file": "cursors/text.png",
+      "w": 19,
+      "h": 30,
+      "x": 9,
+      "y": 15
+    },
+    "crosshair": {
+      "file": "cursors/crosshair.png",
+      "w": 34,
+      "h": 34,
+      "x": 17,
+      "y": 17
+    },
+    "move": {
+      "file": "cursors/move.png",
+      "w": 32,
+      "h": 32,
+      "x": 16,
+      "y": 16
+    },
+    "ns-resize": {
+      "file": "cursors/ns-resize.png",
+      "w": 16,
+      "h": 32,
+      "x": 8,
+      "y": 16
+    },
+    "ew-resize": {
+      "file": "cursors/ew-resize.png",
+      "w": 32,
+      "h": 16,
+      "x": 16,
+      "y": 8
+    },
+    "nwse-resize": {
+      "file": "cursors/nwse-resize.png",
+      "w": 26,
+      "h": 26,
+      "x": 13,
+      "y": 13
+    },
+    "nesw-resize": {
+      "file": "cursors/nesw-resize.png",
+      "w": 26,
+      "h": 26,
+      "x": 13,
+      "y": 13
+    },
+    "zoom-in": {
+      "file": "cursors/zoom-in.png",
+      "w": 33,
+      "h": 33,
+      "x": 13,
+      "y": 13
+    },
+    "locked": {
+      "file": "cursors/locked.png",
+      "w": 30,
+      "h": 34,
+      "x": 15,
+      "y": 17
+    }
+  },
+  "icons": {
+    "size": 17,
+    "small": 12,
+    "items": {
+      "planner": {
+        "file": "icons/planner.png",
+        "small": "icons/planner-s.png"
+      },
+      "test-designer": {
+        "file": "icons/test-designer.png",
+        "small": "icons/test-designer-s.png"
+      },
+      "builder": {
+        "file": "icons/builder.png",
+        "small": "icons/builder-s.png"
+      },
+      "verifier": {
+        "file": "icons/verifier.png",
+        "small": "icons/verifier-s.png"
+      },
+      "gatekeeper": {
+        "file": "icons/gatekeeper.png",
+        "small": "icons/gatekeeper-s.png"
+      },
+      "overseer": {
+        "file": "icons/overseer.png",
+        "small": "icons/overseer-s.png"
+      },
+      "running": {
+        "file": "icons/running.png",
+        "small": "icons/running-s.png"
+      },
+      "approval": {
+        "file": "icons/approval.png",
+        "small": "icons/approval-s.png"
+      },
+      "unlocked": {
+        "file": "icons/unlocked.png",
+        "small": "icons/unlocked-s.png"
+      },
+      "thinking": {
+        "file": "icons/thinking.png",
+        "small": "icons/thinking-s.png"
+      },
+      "time": {
+        "file": "icons/time.png",
+        "small": "icons/time-s.png"
+      },
+      "decisions": {
+        "file": "icons/decisions.png",
+        "small": "icons/decisions-s.png"
+      },
+      "persona": {
+        "file": "icons/persona.png",
+        "small": "icons/persona-s.png"
+      },
+      "gear": {
+        "file": "icons/gear.png",
+        "small": "icons/gear-s.png"
+      },
+      "quill": {
+        "file": "icons/quill.png",
+        "small": "icons/quill-s.png"
+      },
+      "feather": {
+        "file": "icons/feather.png",
+        "small": "icons/feather-s.png"
+      },
+      "pickaxe": {
+        "file": "icons/pickaxe.png",
+        "small": "icons/pickaxe-s.png"
+      },
+      "magnifier": {
+        "file": "icons/magnifier.png",
+        "small": "icons/magnifier-s.png"
+      },
+      "compass": {
+        "file": "icons/compass.png",
+        "small": "icons/compass-s.png"
+      },
+      "fist": {
+        "file": "icons/fist.png",
+        "small": "icons/fist-s.png"
+      },
+      "flame": {
+        "file": "icons/flame.png",
+        "small": "icons/flame-s.png"
+      },
+      "heart": {
+        "file": "icons/heart.png"
+      }
+    }
+  },
+  "dino": {
+    "stand": {
+      "file": "dino/stand.png",
+      "frames": 1,
+      "w": 42,
+      "h": 43
+    },
+    "run": {
+      "file": "dino/run.png",
+      "frames": 2,
+      "w": 42,
+      "h": 43,
+      "fps": 8
+    },
+    "dead": {
+      "file": "dino/dead.png",
+      "frames": 1,
+      "w": 42,
+      "h": 43
+    },
+    "duck": {
+      "file": "dino/duck.png",
+      "frames": 2,
+      "w": 55,
+      "h": 26,
+      "fps": 8
+    },
+    "digits": {
+      "file": "dino/digits.png",
+      "w": 118,
+      "h": 11,
+      "glyphs": {
+        "0": [
+          0,
+          9
+        ],
+        "1": [
+          10,
+          8
+        ],
+        "2": [
+          19,
+          9
+        ],
+        "3": [
+          29,
+          9
+        ],
+        "4": [
+          39,
+          9
+        ],
+        "5": [
+          49,
+          9
+        ],
+        "6": [
+          59,
+          9
+        ],
+        "7": [
+          69,
+          9
+        ],
+        "8": [
+          79,
+          9
+        ],
+        "9": [
+          89,
+          9
+        ],
+        "H": [
+          99,
+          9
+        ],
+        "I": [
+          109,
+          8
+        ]
+      }
+    },
+    "gameover": {
+      "file": "dino/gameover.png",
+      "w": 191,
+      "h": 11
+    },
+    "restart": {
+      "file": "dino/restart.png",
+      "w": 31,
+      "h": 27
+    }
+  }
+}

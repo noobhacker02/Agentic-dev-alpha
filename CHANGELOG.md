@@ -25,7 +25,45 @@ All notable changes to this project are documented here. Format follows
     stopping.
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
+### Fixed
+- **A saved report corrupted any run whose events contained `$'`, `$&`, ``$` `` or `$$`** (found while reading the code for
+  the sprite work, then reproduced: `echo $'x' && echo $&` turned into a broken script and an empty page). `report.ts` embedded
+  the run with `String.replace` and a replacement *string*, which expands those patterns; shell commands are full of them.
+  Now a function replacer; `test/report.mjs` has a command containing all four.
+- **The light look's bold text was white on white** (the "Task:" label and every `**bold**`), so it was invisible. Fixed.
+- Found by the new tests while building the above, all in the new code: the cat stood 12 px low on a prompt because it measured
+  the prompt mid-slide; the dinosaur's first jump was cancelled on the takeoff frame (height still exactly 0 read as "landed");
+  the 12 px icons had been paired with the wrong 17 px icons because the PSD's layer names do not match (a map's small twin was
+  a telescope) — they are now paired by position and checked by colour.
+
 ### Added
+- **The run UI, friendlier and closer to Claude Code, with a cat that runs to whatever needs you** (docs/UI.md,
+  docs/ASSETS.md). Additive: no existing id or class changed meaning, and the earlier UI suites pass unchanged.
+  - **A welcome card**, Claude Code's turning `✻` with a verb for the agent that is working ("Hammering…"), an orange `>`
+    input with a shortcut hint, a pixel icon per agent on the stepper and per tool in the transcript, and a plain-words
+    chip on every permission prompt (*runs a shell command*, *changes files*, *controls the browser*, *controls a
+    desktop window*; taken from the tool's name, never its arguments; an unknown tool gets none). `?` opens help
+    (shortcuts, options, credits); `t` flips to the tree, `m` cycles sound. While help is open no key can answer a prompt.
+    The tab icon shows a lock when you are needed, a bolt while it works, a heart when done.
+  - **The cat** lives by the input box, sways, dances while an agent works, and **when a permission prompt is waiting it
+    runs to the prompt, stands on its top edge, hops until you answer, and says who needs you**, nudging after 20 s, 1
+    minute and 3 minutes. Stars on success, slumps on failure, naps after 90 s. It covers at most 10 px of a prompt and
+    never a button, honours reduced motion, and can be switched off (and stays off).
+  - **The offline dinosaur**: when the page loses its server mid-run it shows "Can't reach agent-loop", counts attempts,
+    offers *Retry now* and Chrome's dinosaur game (Space/↑ jump, ↓ duck, tap), and leaves by itself on reconnect with exactly
+    one socket. Never for a finished run or a saved report.
+  - **Sound, off by default** with no audio engine created while off: blips, or blips plus a quiet chiptune loop that follows
+    the run (busier while an agent works, thinned out while something waits on you, stops 9 s after the run ends). All
+    synthesised in the browser; a remembered setting waits for your first click; replayed history is silent.
+  - **Pixel mouse cursors** (switchable), 18 of them with hotspots.
+  - The art: 74 small PNGs and a manifest (under 60 KB) cut from the sprite sheets supplied for the project by
+    `scripts/build-sprites.py`, served as one inline data script (`src/sprites.ts`, `/sprite-data.js`) so a saved report
+    carries it and needs no network. `npm run check:sprites` validates a swapped sprite. **The cat's and cursors' licence
+    status is unknown and the others have not been checked; see docs/ASSETS.md before publishing.**
+  - Tests: `test/sprites.mjs`, `test/ui-mascot.mjs`, `test/ui-offline.mjs`, `test/ui-sound.mjs` (26 suites now). They
+    measure rather than eyeball: the cat's feet are within 2 px of the prompt's edge, the hop is real motion, the dinosaur
+    jumps and dies and reconnects, sound is audible and does not clip on the real output. The page also works, and prompts
+    can still be answered, with sprites, the cat, the helper or every extra missing.
 - **Captioned walkthrough videos of each feature, on GitHub** (README "Feature walkthroughs", `docs/media/`).
   Four recordings, each with a short looping GIF preview that GitHub shows inline and the full `.mp4` one click away:
   the lineage tree (59 s), the persona (79 s), desktop control in the web UI (51 s), and desktop control on a

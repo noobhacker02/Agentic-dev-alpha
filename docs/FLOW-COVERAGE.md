@@ -8,7 +8,7 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 
 | Where it runs | What | Cost |
 |---|---|---|
-| `npm test` (and CI) | 22 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
+| `npm test` (and CI) | 26 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
 | `bash test/stress/pipeline_logic.sh` (and CI) | 11 pipeline edge cases with the scripted fake SDK | none |
 | `npm run test:desktop-real` (and CI, `REQUIRE_DESKTOP_REAL=1`) | The real native driver, real X11 input, real window manager, real windows, under Xvfb | none |
 | `npm run test:real-model-browser`, `npm run test:real-model-desktop` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window | a few cents each (Haiku) |
@@ -32,6 +32,13 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 | The persona: levels, the ceiling, hostile text in every event field, never inside an approval, never reaching a model, terminal/report/CLI/insights | `persona.mjs`; `ui-persona.mjs` (real Chromium); 18 mutations, all caught | real (nothing to fake) |
 | The lineage: tree of attempts, repairs as branches, file attribution, handoff notes, cost/approval totals, `lineage-updated`, store rebuild, `agent-loop lineage`, `lineage.md/json`, the tree view | `lineage.mjs` (totals cross-checked against the raw events); `ui-lineage.mjs` (real Chromium); 46 mutations, all caught | real (derived from events; nothing to fake) |
 | Web UI rendering, panels, prompts, hostile strings inert | `ui-render.mjs`, `ui-desktop.mjs` | real Chromium |
+| The cat: where it stands in each state (feet on the prompt's top edge, clear of every answer button), that it hops, goes home when you answer, naps and wakes, can be switched off and stays off, reduced motion, hostile agent names inert | `ui-mascot.mjs` (positions measured in px; 8 mutations in the matrix) | real Chromium |
+| Cursors, icons, tab icon, the plain-words label on each prompt, help-window keys never answering a prompt | `ui-mascot.mjs` | real Chromium |
+| The offline dialog and dinosaur: debounced, attempts counted, game playable, reconnect leaves by itself with exactly one socket, *Retry now* clicked six times at once, never for a finished run or a saved report, phone width | `ui-offline.mjs` against a server that really goes away and comes back | real Chromium, real server |
+| Sound: off by default with no audio engine created, never autoplays after a reload, rate-limited, follows the run, stops after it, silent for replayed history, audible and not clipping on the real output | `ui-sound.mjs` (an instrumented `AudioContext` and an analyser on the real output) | real Chromium |
+| The sprites: the shipped set validates, 11 kinds of wrong sprite are each reported, a `../` path is never read, an unreadable manifest yields an empty set, the server and a saved report carry the same art | `sprites.mjs` | none needed |
+| The page without its extras (no sprites, no cat script, no helper, no sound script, none of them) | `ui-mascot.mjs`, `ui-sound.mjs`, `ui-offline.mjs` | real Chromium |
+| A saved report is one self-contained file (no network request, no external script, event text with `$'` `$&` intact) | `report.mjs` | real Chromium |
 
 ## What the real-model tests found
 
@@ -57,4 +64,8 @@ The scripted fake SDK never emits a tool call, so these only appear with a model
 | Browser: DNS lookups from a page; refs only for the main frame | Possible side channel; iframe content needs `click_at` | A DNS-counting resolver; a per-frame ref design |
 | One unexplained flaky GTK accessibility-tree run | Not reproduced in 14+ reruns; a readiness gate and clearer failure message were added, not a root cause | Keep CI history; investigate if it recurs |
 | The Dev-Skill repo has no CI on branch pushes | Its checks run locally via its hooks and scripts, not on GitHub | A workflow |
+| The UI extras in any browser but Chromium; on a real touch device; with a screen reader | Everything was driven in headless Chromium only | Firefox/WebKit runs; a person using VoiceOver/NVDA |
+| The tab title alternating with "needs you" while the tab is hidden | A headless Chromium cannot be put in a background tab, so only the visible-tab title (`(1) approval needed …`) is asserted | A headed run with a second tab |
+| How the sound *sounds*, and a real speaker | The tests measure notes, rate and peak level on the real output, not taste or a real device | You listening |
+| The cat's and cursors' licence status; the dinosaur's and icons' terms | The sheets carry no artist or licence; nobody here checked the others (docs/ASSETS.md) | The owner confirming, or swapping the sprites |
 | A model with no desktop or browser tools at all | Covered only by the fake-SDK wiring tests (tools absent from non-builder/verifier phases) | n/a |

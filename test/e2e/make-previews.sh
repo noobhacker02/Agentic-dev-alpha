@@ -17,3 +17,5 @@ gif lineage-tree 29 13 7 720          # the run as a tree: the fork, the repair,
 gif persona-voice 24 14 7 720         # a veto and the agent sent back replying, an approval prompt with no jokes
 gif desktop-agent-ui 9 14 7 720       # the approval prompt: the exact click on the window as captured
 gif desktop-real-window 8 18 7 720    # a real window: what the agent sees, clicks landing, a terminal refused
+gif ui-v3-tour 20 17 8 720            # the cat runs to the waiting prompt, hops, and goes home when answered
+gif offline-dino 6 16 8 720           # the offline dialog and a bot playing the dinosaur

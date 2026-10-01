@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-loop</title>
 <!-- Suppresses the browser's automatic /favicon.ico request, which this server has no route for. -->
-<link rel="icon" href="data:," />
+<link rel="icon" id="favicon" href="data:," />
 <style>
   /* Modeled on Claude Code's terminal UI: warm dark background, one transcript column, tool calls as
      "⏺ Tool(args)" with "⎿" output, a permission prompt pinned to the bottom. */
@@ -180,6 +180,7 @@
   .blk.run-end.done { border-color: #4eba6588; } .blk.run-end.failed, .blk.run-end.stopped { border-color: #ff6b8088; }
   .md code { background: var(--panel-2); padding: 0 4px; border-radius: 3px; }
   .md strong { color: #fff; }
+  :root[data-theme="desktop"] .md strong { color: var(--text); }
   #jump { display: none; position: sticky; bottom: 10px; margin: 0 auto; width: max-content; padding: 4px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
   #jump.show { display: block; }
 
@@ -275,6 +276,132 @@
   :root[data-theme="desktop"] .inputrow { border-radius: 999px; background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.06); border-color: transparent; }
   :root[data-theme="desktop"] aside { border-left: none; box-shadow: -1px 0 3px rgba(0,0,0,.03); }
 
+
+  /* ---------- v3: friendlier and closer to Claude Code, with the pixel set (ui/sprites.js, mascot.js, docs/UI.md).
+     Everything here is additive: no existing id or class changed meaning. */
+  :root { --accent-soft: rgba(217, 119, 87, .14); --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+  :root[data-theme="desktop"] { --accent-soft: rgba(204, 124, 82, .12); }
+  kbd { font: inherit; font-size: 11px; padding: 0 5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--text); white-space: nowrap; }
+
+  /* pixel cursors: the page's own set, switchable in the help dialog; each falls back to the system one */
+  html[data-cursors="on"] body { cursor: var(--cur-default, default); }
+  html[data-cursors="on"] :is(button, a, summary, label, .step, .opt, .more, .shot-gallery img, .desk-gallery img, #cat .cat-body) { cursor: var(--cur-pointer, pointer); }
+  html[data-cursors="on"] :is(input[type=text], textarea) { cursor: var(--cur-text, text); }
+  html[data-cursors="on"] :is(button:disabled) { cursor: var(--cur-not-allowed, not-allowed); }
+  html[data-cursors="on"] :is(#browser-panel a img, .desk-shot img) { cursor: var(--cur-zoom-in, zoom-in); }
+  html[data-cursors="on"] :is(.blk.thinking) { cursor: var(--cur-pointer, pointer); }
+
+  /* header: wraps instead of overflowing; one family of small pill buttons */
+  header { flex-wrap: wrap; row-gap: 6px; }
+  #task { flex: 1 1 180px; }
+  #sound-toggle, #help-btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
+  header button:hover { border-color: var(--dim); }
+  header button:focus-visible, .step:focus-visible, .opt:focus-visible, .smallbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #sound-toggle[data-mode="music"], #sound-toggle[data-mode="sfx"] { color: var(--accent); border-color: var(--accent); }
+
+  /* the welcome card: the first thing you see, like Claude Code's boxed greeting */
+  #welcome { max-width: 960px; margin: 16px auto 2px; padding: 0 22px; }
+  .wc { position: relative; display: flex; gap: 14px; align-items: flex-end; border: 1px solid var(--accent); border-radius: 12px; padding: 16px 18px 14px;
+        background: linear-gradient(180deg, var(--accent-soft), transparent 75%), var(--panel); }
+  .wc-tag { position: absolute; top: -10px; left: 16px; padding: 0 8px; background: var(--bg); color: var(--accent); font-weight: 700; }
+  #w-cat-spot { flex: none; width: 64px; height: 72px; }
+  .wc-main { min-width: 0; flex: 1; }
+  .wc h2 { margin: 0 0 2px; font-size: 15px; font-weight: 700; }
+  .wc .sub { color: var(--dim); }
+  .wc .flow { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+  .wc .flow span { display: inline-flex; align-items: center; gap: 6px; padding: 1px 10px 1px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--panel); }
+  .wc ul { margin: 8px 0 0; padding: 0; list-style: none; color: var(--dim); }
+  .wc li { position: relative; padding-left: 14px; }
+  .wc li::before { content: "›"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+  .wc .cwd { margin-top: 8px; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 640px) { .wc ul, #w-cat-spot { display: none; } .wc { padding: 14px; } }
+
+  /* the stepper: a pixel icon per agent; the one that needs you bobs */
+  .step { padding: 3px 11px 3px 8px; }
+  .step[data-state="pending"] .px, .step[data-state="skipped"] .px { opacity: .5; filter: grayscale(.5); }
+  .step[data-waiting="1"] .px { animation: icon-bob .9s ease-in-out infinite; }
+  @keyframes icon-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  .blk.tool .line .px { margin-right: 6px; }
+  .phase-sep .px { margin-right: -2px; }
+
+  /* the status line and input, like Claude Code's: a glyph that turns, a verb, then an orange > */
+  .statusline .spin { width: 16px; text-align: center; }
+  .statusline .verb { color: var(--accent); }
+  .inputrow { border-radius: 12px; padding: 8px 12px; background: var(--panel); }
+  .inputrow span { color: var(--accent); font-weight: 700; }
+  .inputrow:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .dock-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; margin-top: 6px; color: var(--faint); font-size: 12px; }
+
+  /* the permission prompt says, in words, what kind of thing it is asking to do */
+  .prompt { border-radius: 12px; }
+  .prompt .title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .prompt .kind { font-size: 11px; font-weight: 600; padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .prompt .kind.k-shell { color: var(--accent); } .prompt .kind.k-files { color: var(--yellow); }
+  .prompt .kind.k-browser { color: var(--cyan); } .prompt .kind.k-desktop { color: var(--red); }
+
+  /* the cat (ui/mascot.js): one fixed element, moved by transform to whatever needs you */
+  #cat { position: fixed; left: 0; top: 0; width: 56px; height: 69px; z-index: 30; pointer-events: none; will-change: transform; }
+  #cat[hidden] { display: none !important; }
+  #cat:not([data-placed="1"]) { visibility: hidden; }
+  @media (prefers-reduced-motion: no-preference) { #cat[data-placed="1"] { transition: transform .9s cubic-bezier(.22, .8, .3, 1); } }
+  #cat .cat-wrap { position: absolute; inset: 0; transform-origin: 50% 100%; }
+  #cat .cat-body { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); pointer-events: auto; }
+  #cat.flip .cat-body { transform: translateX(-50%) scaleX(-1); }
+  #cat .cat-wrap.hopping { animation: cat-hop .74s infinite; }
+  @keyframes cat-hop {
+    0% { transform: translateY(0); animation-timing-function: cubic-bezier(.2, .7, .4, 1); }
+    45% { transform: translateY(-30px); animation-timing-function: cubic-bezier(.6, 0, .9, .5); }
+    90%, 100% { transform: translateY(0); }
+  }
+  #cat .cat-shade { display: none; position: absolute; left: 50%; bottom: 2px; margin-left: -13px; opacity: .75; }
+  #cat[data-mood="attention"] .cat-shade { display: block; }
+  #cat[data-mood="attention"] .cat-shade { animation: shade-hop .74s infinite; }
+  @keyframes shade-hop { 0%, 90%, 100% { transform: scaleX(1); opacity: .75; } 45% { transform: scaleX(.6); opacity: .35; } }
+  #cat .cat-wrap.slump { filter: grayscale(.75) brightness(.9); transform: translateY(3px) scaleY(.94); }
+  #cat .cat-wrap.asleep { filter: brightness(.72) saturate(.8); }
+  #cat .cat-zzz { display: none; position: absolute; right: -2px; top: -4px; font: 700 12px var(--mono); color: var(--dim); }
+  #cat[data-mood="sleep"] .cat-zzz { display: block; }
+  #cat .cat-zzz span { display: inline-block; margin-left: 2px; animation: zzz 2s ease-in-out infinite; }
+  #cat .cat-zzz span + span { animation-delay: .6s; }
+  @keyframes zzz { 0%, 100% { opacity: .2; transform: translateY(2px); } 50% { opacity: 1; transform: translateY(-4px); } }
+  #cat .cat-bubble { position: absolute; right: 62px; bottom: 40px; width: max-content; max-width: 230px; padding: 4px 10px; border-radius: 10px 10px 2px 10px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--accent); font: 12px/1.35 var(--mono); white-space: normal; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); animation: blk-in .2s ease-out; }
+  #cat[data-anchor="welcome"] .cat-bubble { right: auto; left: 62px; border-radius: 10px 10px 10px 2px; }
+  #cat .cat-heart { position: absolute; left: 20px; top: 4px; animation: heart-up 1.2s ease-out forwards; }
+  @keyframes heart-up { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-38px); } }
+  @media (max-width: 560px) { #cat .cat-bubble { max-width: 160px; } }
+
+  /* "can't reach agent-loop": Chrome's offline dinosaur, on a light card in either theme (its sprites are grey on white) */
+  #offline { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15, 14, 13, .72); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); animation: blk-in .25s ease-out; }
+  #offline[hidden] { display: none; }
+  .off-card { width: min(680px, 100%); padding: 18px 16px 16px; border-radius: 16px; background: #f7f7f7; color: #353535; text-align: center; font-family: var(--sans); box-shadow: 0 20px 60px rgba(0, 0, 0, .45); }
+  #dino { display: block; margin: 0 auto 10px; image-rendering: pixelated; touch-action: manipulation; }
+  .off-card h2 { margin: 4px 0 6px; font: 600 18px/1.3 var(--sans); }
+  .off-card p { margin: 6px auto; max-width: 520px; color: #5f6368; font: 13px/1.5 var(--sans); }
+  .off-card .off-fine { color: #80868b; font-size: 12px; }
+  .off-actions { display: flex; gap: 10px; justify-content: center; margin: 12px 0 4px; flex-wrap: wrap; }
+  .off-actions button { padding: 7px 16px; border-radius: 999px; border: 1px solid #c9c9c9; background: #fff; color: #353535; font: 500 13px var(--sans); cursor: pointer; }
+  .off-actions #off-retry { background: #cc7c52; border-color: #cc7c52; color: #fff; }
+
+  /* help, options and credits */
+  .modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, .5); }
+  .modal[hidden] { display: none; }
+  .modal .sheet { width: min(660px, 100%); max-height: 88vh; overflow: auto; padding: 18px 22px 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0, 0, 0, .4); animation: sheet-in .22s cubic-bezier(.16, 1, .3, 1); }
+  .modal h2 { margin: 0 0 4px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .modal h3 { margin: 16px 0 6px; font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  .modal .x { margin-left: auto; }
+  .keys { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; color: var(--dim); }
+  .opts label { display: flex; align-items: center; gap: 8px; padding: 3px 0; color: var(--text); }
+  .opts select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font: inherit; }
+  .modal .fine { color: var(--faint); font-size: 12px; margin-top: 4px; }
+  .modal ul { margin: 4px 0; padding-left: 18px; color: var(--dim); }
+
+  @media (max-width: 560px) {
+    header { padding: 8px 12px; gap: 8px; }
+    #transcript, #welcome { padding-left: 14px; padding-right: 14px; }
+    #dock { padding-left: 12px; padding-right: 12px; }
+  }
+
   /* ---------- motion: smooth without being distracting. New blocks and the permission sheet ease
      in instead of popping; interactive elements transition instead of snapping; switching themes
      cross-fades the colors instead of flashing. All of it collapses to nothing for anyone who's
@@ -325,11 +452,14 @@
   <span id="status">connecting…</span>
   <button id="view-toggle" type="button" title="Show the run as a tree of who did what, instead of the transcript">tree</button>
   <button id="humor-toggle" type="button" title="How much the agents joke around (this page only)" hidden></button>
+  <button id="sound-toggle" type="button" data-mode="off" title="Sound: off. Click to turn on blips, then music (all generated here, nothing downloaded)" hidden>♪ off</button>
   <button id="theme-toggle" type="button" title="Switch look">💬</button>
+  <button id="help-btn" type="button" title="Shortcuts, options and credits (?)" aria-haspopup="dialog">?</button>
 </header>
 <nav id="stepper"></nav>
 <div class="body">
   <div id="scroll">
+    <section id="welcome" aria-label="Welcome"></section>
     <main id="transcript"></main>
     <button id="jump">↓ new activity</button>
   </div>
@@ -351,7 +481,32 @@
 </div>
 <div id="dock"><div class="inner" id="dock-inner"></div></div>
 
+<div id="help" class="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <h2 id="help-title"><span id="help-ico"></span>Shortcuts, options and credits <button type="button" class="smallbtn x" id="help-close" title="Close (Esc)">close</button></h2>
+    <h3>When a permission prompt is open</h3>
+    <div class="keys"><span><kbd>y</kbd> <kbd>Enter</kbd></span><span>yes</span><span><kbd>n</kbd> <kbd>Esc</kbd></span><span>no, and tell the agent what to do instead</span><span><kbd>1</kbd>–<kbd>3</kbd> <kbd>↑</kbd> <kbd>↓</kbd></span><span>pick an option</span></div>
+    <h3>Anywhere</h3>
+    <div class="keys"><span><kbd>t</kbd></span><span>switch between the transcript and the tree of who did what</span><span><kbd>m</kbd></span><span>sound: off, blips, music</span><span><kbd>?</kbd></span><span>this window</span></div>
+    <h3>Options</h3>
+    <div class="opts">
+      <label><input type="checkbox" id="opt-cat" /> the cat</label>
+      <label><input type="checkbox" id="opt-cursors" /> pixel mouse cursors</label>
+      <label>sound <select id="opt-sound"><option value="off">off</option><option value="sfx">blips</option><option value="music">blips + music</option></select></label>
+      <div class="fine">Sound is made in your browser (nothing is downloaded) and is off until you turn it on. These settings are remembered in this browser only.</div>
+    </div>
+    <h3>What the cat does</h3>
+    <ul><li>sways by the input box while nothing is happening, dances while an agent works</li><li>runs to a waiting permission prompt, sits on its edge and hops until you answer; it nudges after 20 s, 1 min and 3 min</li><li>stars when a run succeeds, slumps when it fails, naps after 90 s of quiet</li><li>click it. It does nothing useful, but it is friendly</li></ul>
+    <h3>Credits</h3>
+    <ul id="help-credits"></ul>
+  </div>
+</div>
 <script src="/persona.js"></script>
+<script src="/sprite-data.js"></script>
+<script src="/sprites.js"></script>
+<script src="/sound.js"></script>
+<script src="/mascot.js"></script>
+<script src="/offline.js"></script>
 <script>
 const PHASES = ["planner", "test-designer", "builder", "verifier", "gatekeeper"];
 // The voice (src/persona.ts, docs/PERSONA.md). Idle lines and persona names come from the server's
@@ -372,6 +527,37 @@ function idleLine() {
 }
 function personaName(key) { const p = PERSONA.personas[key]; return p && Object.prototype.hasOwnProperty.call(PERSONA.personas, key) ? p : null; }
 const $ = (id) => document.getElementById(id);
+// The pixel set, sound, cat and offline game are extras: if one is missing or throws, the page works without it.
+const AL = window.AL || {};
+const safe = (fn) => { try { return fn(); } catch (e) { console.warn("[ui]", e); } };
+const ico = (name, small) => safe(() => (AL.sprites ? AL.sprites.icon(name, small) : "")) || "";
+const TOOL_ICON = { Bash: "gear", Read: "planner", Write: "quill", Edit: "feather", NotebookEdit: "feather", Grep: "magnifier", Glob: "compass" };
+function toolIcon(name) {
+  if (/^mcp__browser__/.test(name)) return ico("verifier", true);
+  if (/^mcp__desktop__/.test(name)) return ico("fist", true);
+  return Object.prototype.hasOwnProperty.call(TOOL_ICON, name) ? ico(TOOL_ICON[name], true) : "";
+}
+/** What a permission prompt is about, in words. From the tool's name only, never from its arguments. */
+function promptKind(name) {
+  if (/^mcp__desktop__/.test(name)) return ["controls a desktop window", "k-desktop"];
+  if (/^mcp__browser__/.test(name)) return ["controls the browser", "k-browser"];
+  if (name === "Write" || name === "Edit" || name === "NotebookEdit") return ["changes files", "k-files"];
+  if (name === "Bash") return ["runs a shell command", "k-shell"];
+  return null;
+}
+// Claude Code's turning glyph and a verb per agent: display only, chosen by phase and elapsed time.
+const SPIN = ["✻", "✽", "✶", "✳", "✢", "✳", "✶", "✽"];
+const VERBS = {
+  planner: ["Sketching", "Scheming", "Mapping it out", "Plotting"],
+  "test-designer": ["Inventing failures", "Poking holes", "Doubting", "Weighing"],
+  builder: ["Hammering", "Assembling", "Wiring", "Tinkering"],
+  verifier: ["Squinting", "Double-checking", "Interrogating", "Testing"],
+  gatekeeper: ["Judging", "Inspecting", "Frowning", "Stamping"],
+};
+function workVerb() {
+  const list = Object.prototype.hasOwnProperty.call(VERBS, state.phase) ? VERBS[state.phase] : ["Working"];
+  return list[Math.floor((Date.now() - (state.startedAt || Date.now())) / 7000) % list.length];
+}
 const scrollBox = $("scroll"), transcript = $("transcript"), dockInner = $("dock-inner");
 const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 
@@ -471,7 +657,7 @@ function renderStepper() {
     const waitingHere = state.pending.filter((x) => x.phase === p).length;
     const flag = waitingHere ? '<span class="wait-badge" title="' + waitingHere + " approval" + (waitingHere > 1 ? "s" : "") + ' waiting">' + (waitingHere > 1 ? waitingHere : "!") + "</span>" : "";
     const who = personaName(p);
-    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"' + (who ? ' title="' + esc(who.name + " — " + who.tagline) + '"' : "") + (waitingHere ? ' data-waiting="1"' : "") + '><span class="icon">' + icon + "</span>" + p + reps + cost + flag + "</button>";
+    return '<button class="step" data-phase="' + p + '" data-state="' + st + '"' + (who ? ' title="' + esc(who.name + " — " + who.tagline) + '"' : "") + (waitingHere ? ' data-waiting="1"' : "") + '>' + ico(p) + '<span class="icon">' + icon + "</span>" + p + reps + cost + flag + "</button>";
   }).join("");
 }
 $("stepper").addEventListener("click", (e) => {
@@ -608,6 +794,10 @@ function promptBody(ev) {
   if (dk) return desktopPrompt(dk[1], i);
   return [ev.toolName, esc(JSON.stringify(i, null, 2))];
 }
+function kindChip(name) {
+  const k = promptKind(name);
+  return k ? ' <span class="kind ' + k[1] + '">' + esc(k[0]) + "</span>" : "";
+}
 function renderDock() {
   const ev = state.pending[0];
   if (!ev && REPLAY) {
@@ -616,9 +806,9 @@ function renderDock() {
   }
   if (!ev) {
     const running = state.status === "running";
-    const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(Date.now() / 1000) % 10];
+    const spin = SPIN[Math.floor(Date.now() / 220) % SPIN.length];
     const status = running
-      ? '<span class="spin">' + spin + "</span> " + esc(state.phase || "starting") + " is working… <span class=\"muted\">(" + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
+      ? '<span class="spin">' + spin + '</span> <span class="verb">' + esc(workVerb()) + "…</span> <span class=\"muted\">(" + esc(state.phase || "starting") + " · " + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
       : state.status === "idle" ? '<span class="muted">' + esc(idleLine()) + "</span>"
       : "Run " + esc(state.status) + "." + (state.reportPath ? ' <span class="muted">Saved report: ' + esc(state.reportPath) + "</span>" : "");
     // Only the status text changes each tick; the input is built once so typing never loses focus.
@@ -626,7 +816,8 @@ function renderDock() {
     dockInner.dataset.mode = "idle";
     dockInner.innerHTML =
       '<div class="statusline">' + status + "</div>" +
-      '<form class="inputrow" id="decide"><span>&gt;</span><input id="decision-input" type="text" autocomplete="off" placeholder="Record a decision the Overseer must treat as settled (Enter)" /></form>';
+      '<form class="inputrow" id="decide"><span>&gt;</span><input id="decision-input" type="text" autocomplete="off" placeholder="Record a decision the Overseer must treat as settled (Enter)" /></form>' +
+      '<div class="dock-hint"><span>a decision typed here is the only kind the Overseer trusts</span><span><kbd>?</kbd> shortcuts · <kbd>t</kbd> tree · <kbd>m</kbd> sound</span></div>';
     const f = $("decide"), inp = $("decision-input");
     f.onsubmit = (e) => {
       e.preventDefault(); const text = inp.value.trim();
@@ -656,8 +847,8 @@ function renderDock() {
   dockInner.innerHTML =
     '<div class="prompt" id="prompt" data-request="' + esc(ev.requestId) + '">' +
     '<span class="count">' + esc(countLabel) + "</span>" +
-    '<div class="title">' + esc(title) + '</div><div class="body">' + body + "</div>" +
-    '<div class="why">' + esc(ev.phase) + " wants to run this" + (ev.rule ? "" : /^mcp__desktop__/.test(ev.toolName) ? " · desktop input: asked every time, one action at a time" : " · chained/complex command: will ask every time") + "</div>" +
+    '<div class="title">' + ico("approval") + "<span>" + esc(title) + '</span></div><div class="body">' + body + "</div>" +
+    '<div class="why">' + esc(ev.phase) + " wants to run this" + kindChip(ev.toolName) + (ev.rule ? "" : /^mcp__desktop__/.test(ev.toolName) ? " · desktop input: asked every time, one action at a time" : " · chained/complex command: will ask every time") + "</div>" +
     '<div class="q">Do you want to proceed?</div>' +
     opts.map(([k, label], i) => '<button class="opt' + (i === state.sel ? " sel" : "") + '" data-choice="' + k + '"><span class="k">' + (i + 1) + ".</span> " + label + "</button>").join("") +
     '<form class="feedback" id="fb"><input type="text" id="fb-text" placeholder="What should it do instead? (Enter to send, Esc to cancel)" /><button class="smallbtn">Send</button></form>' +
@@ -675,9 +866,11 @@ function send(ev, decision, reason, remember) {
   state.ws.send(JSON.stringify({ type: "decision", requestId: ev.requestId, decision, reason, remember: !!remember }));
   state.pending = state.pending.filter((p) => p.requestId !== ev.requestId);
   state.sel = 0; renderDock(); renderHeader();
+  safe(() => { AL.sound && AL.sound.sfx(decision === "allow" ? "allow" : "deny"); AL.mascot && AL.mascot.touch(); });
+  syncExtras();
 }
 document.addEventListener("keydown", (e) => {
-  if (!state.pending.length) return;
+  if (!state.pending.length || modalOpen() || e.defaultPrevented) return;
   const fbOpen = $("fb") && $("fb").classList.contains("open");
   if (fbOpen) { if (e.key === "Escape") { $("fb").classList.remove("open"); } return; }
   if (e.target.tagName === "INPUT") return;
@@ -706,6 +899,7 @@ function render(ev) {
   switch (ev.type) {
     case "run-start":
       Object.assign(state, { task: ev.task, workDir: ev.workDir || "", status: "running", startedAt: Date.parse(ev.ts), endedAt: null });
+      { const cw = $("w-cwd"); if (cw && ev.workDir) cw.textContent = "working in " + ev.workDir; }
       blk("text md", "<strong>Task:</strong> " + md(ev.task));
       break;
     case "run-end":
@@ -718,7 +912,7 @@ function render(ev) {
     case "phase-start": {
       state.phaseState[ev.phase] = "active";
       const d = document.createElement("div"); d.className = "phase-sep"; d.dataset.phase = ev.phase;
-      d.innerHTML = "<b>" + esc(ev.phase) + "</b>" + (ev.attempt > 1 ? " · attempt " + ev.attempt : "");
+      d.innerHTML = ico(ev.phase) + "<b>" + esc(ev.phase) + "</b>" + (ev.attempt > 1 ? " · attempt " + ev.attempt : "");
       add(d);
       break;
     }
@@ -749,7 +943,7 @@ function render(ev) {
     case "tool-call": {
       state.toolCount++;
       const [name, args] = toolLabel(ev.toolName, ev.toolInput);
-      const el = blk("tool", '<div class="line"><span class="name">' + esc(name) + '</span><span class="args">(' + esc(args) + ")</span></div>");
+      const el = blk("tool", '<div class="line">' + toolIcon(ev.toolName) + '<span class="name">' + esc(name) + '</span><span class="args">(' + esc(args) + ")</span></div>");
       state.tools.set(ev.toolUseId, el);
       if (ev.toolName === "Write" || ev.toolName === "Edit" || ev.toolName === "NotebookEdit") {
         // A file is "changed" once the write has happened: a refused one (the human said no) isn't, so wait for the result.
@@ -854,37 +1048,63 @@ function render(ev) {
   }
   renderStepper(); renderHeader();
   if (!state.pending.length) renderDock();
+  safe(() => fx(ev));
+  syncExtras();
+}
+// What the cat and the sound do about an event. Only for live events, never while a run is being replayed.
+function fx(ev) {
+  if (!state.live || REPLAY) return;
+  const snd = (n) => AL.sound && AL.sound.sfx(n);
+  switch (ev.type) {
+    case "approval-request": snd("prompt"); break;
+    case "phase-end": { const v = ev.verdict; if (v && v.headline !== "Skipped") snd(v.outcome === "pass" ? "pass" : "fail"); break; }
+    case "run-end": snd(ev.status === "done" ? "win" : "fail"); break;
+    case "overseer-decision": AL.mascot && AL.mascot.react("charge", 1400); break;
+  }
 }
 
 // ---------- connection
+let attempts = 0, offlineNow = false, socket = null, retryTimer = null;
 function connect() {
   if (!token) {
     $("status").textContent = "no token — open the full URL agent-loop printed (it ends in #token=…)";
     $("status").className = "down";
     return;
   }
+  if (socket && socket.readyState <= 1) return; // already open or opening: never two sockets at once
+  clearTimeout(retryTimer);
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?token=" + encodeURIComponent(token));
+  socket = ws;
   ws.onopen = () => {
     // The server replays the whole run to every new connection -- clear only once one is actually
     // open, so a server that's gone never leaves you staring at an empty page.
     resetForReplay();
     $("status").textContent = "live"; $("status").className = "live"; state.ws = ws;
+    attempts = 0; offlineNow = false;
+    safe(() => AL.offline && AL.offline.found());
+    syncExtras();
   };
   ws.onclose = () => {
     if (state.ws === ws) state.ws = null;
+    if (socket === ws) socket = null;
     if (["done", "failed", "stopped"].includes(state.status)) {
       $("status").textContent = "run over · live server stopped"; $("status").className = "down";
+      safe(() => AL.offline && AL.offline.found());
       return; // nothing left to reconnect to; the transcript stays as it is
     }
+    attempts++; offlineNow = true;
     $("status").textContent = "disconnected — retrying…"; $("status").className = "down";
-    setTimeout(connect, 1500);
+    safe(() => AL.offline && AL.offline.lost(attempts));
+    syncExtras();
+    retryTimer = setTimeout(connect, 1500);
   };
   ws.onmessage = (msg) => {
     const ev = JSON.parse(msg.data);
-    if (ev.type === "replay-complete") { state.live = true; scrollBox.scrollTop = scrollBox.scrollHeight; renderDock(); return; }
+    if (ev.type === "replay-complete") { state.live = true; scrollBox.scrollTop = scrollBox.scrollHeight; renderDock(); syncExtras(); return; }
     render(ev);
   };
 }
+safe(() => { if (AL.offline) AL.offline.onRetry = () => { clearTimeout(retryTimer); connect(); }; });
 /** The server replays the whole run on every (re)connect, so start from a clean slate each time. */
 function resetForReplay() {
   transcript.innerHTML = ""; state.tools.clear(); state.files.clear(); state.pendingFiles.clear();
@@ -982,6 +1202,115 @@ if (allowedLevels.length > 1) {
 }
 applyHumor(humor);
 
+// ---------- v3 extras: welcome card, help and options, sound, cursors, favicon, the cat
+const flag = (k, dflt) => { try { const v = localStorage.getItem(k); return v === null ? dflt : v; } catch { return dflt; } };
+function renderWelcome() {
+  const flow = PHASES.map((p) => "<span>" + ico(p) + p + "</span>").join("");
+  $("welcome").innerHTML = '<div class="wc"><span class="wc-tag">✻ agent-loop</span><div id="w-cat-spot"></div><div class="wc-main">' +
+    "<h2>" + (REPLAY ? "A saved run" : "Welcome") + "</h2>" +
+    '<div class="sub">' + (REPLAY ? "Read-only. Everything the run did, in order." : "Five agents, one Overseer, and you holding the approvals.") + "</div>" +
+    '<div class="flow">' + flow + "</div><ul>" +
+    "<li><kbd>y</kbd> / <kbd>n</kbd> answer a permission prompt; nothing risky runs without one</li>" +
+    "<li>click an agent above to jump to its part; <kbd>t</kbd> shows who did what as a tree</li>" +
+    "<li>type a decision at the bottom: it is the only kind the Overseer trusts</li>" +
+    "<li><kbd>?</kbd> for shortcuts, sound and the cat's options</li></ul>" +
+    '<div class="cwd" id="w-cwd"></div></div></div>';
+}
+renderWelcome();
+
+// help, options and credits
+const helpEl = $("help");
+let helpReturn = null;
+const modalOpen = () => !helpEl.hidden;
+function syncOptions() {
+  const cat = $("opt-cat"), cur = $("opt-cursors");
+  cat.checked = !!(AL.mascot && AL.mascot.enabled); cat.disabled = !(AL.sprites && AL.sprites.has("cat.idle") && AL.mascot && AL.mascot.setEnabled);
+  cur.checked = document.documentElement.dataset.cursors === "on"; cur.disabled = !(AL.sprites && AL.sprites.hasCursors);
+  $("opt-sound").disabled = !AL.sound; renderSound();
+}
+function openHelp() { helpReturn = document.activeElement; helpEl.hidden = false; syncOptions(); $("help-close").focus(); }
+function closeHelp() { helpEl.hidden = true; if (helpReturn && helpReturn.focus) helpReturn.focus(); }
+function trapTab(e) {
+  const f = [...helpEl.querySelectorAll("button, input, select")].filter((x) => !x.disabled);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+$("help-btn").onclick = () => (modalOpen() ? closeHelp() : openHelp());
+$("help-close").onclick = closeHelp;
+helpEl.addEventListener("click", (e) => { if (e.target === helpEl) closeHelp(); });
+$("help-ico").innerHTML = ico("persona");
+$("help-credits").innerHTML = (((AL.sprites && AL.sprites.credits) || []).map((c) => "<li><b>" + esc(c.what) + "</b>: " + esc(c.who) + "</li>").join("") || "<li>No sprites are loaded.</li>") +
+  "<li><b>sound</b>: generated in your browser; no audio files. Details in docs/ASSETS.md</li>";
+
+// pixel cursors
+function applyCursors(on) {
+  document.documentElement.dataset.cursors = on ? "on" : "off";
+  try { localStorage.setItem("agent-loop-cursors", on ? "on" : "off"); } catch {}
+  $("opt-cursors").checked = on;
+}
+applyCursors(!!(AL.sprites && AL.sprites.hasCursors) && flag("agent-loop-cursors", "on") === "on");
+$("opt-cursors").onchange = (e) => applyCursors(e.target.checked);
+$("opt-cat").onchange = (e) => { safe(() => AL.mascot.setEnabled(e.target.checked)); syncExtras(); };
+
+// sound: off until you turn it on
+function renderSound() {
+  const snd = AL.sound, btn = $("sound-toggle");
+  if (!snd) return;
+  btn.hidden = false;
+  const m = snd.mode, label = m === "off" ? "off" : m === "sfx" ? "blips" : "music";
+  btn.dataset.mode = m; btn.textContent = "♪ " + label;
+  btn.title = "Sound: " + (m === "off" ? "off" : m === "sfx" ? "blips" : "blips + music") + (snd.waiting ? " (starts at your next click or key press)" : "") + ". Click to change (m)";
+  $("opt-sound").value = m;
+}
+function cycleSound() {
+  safe(() => { AL.sound.cycle(); setTimeout(() => AL.sound.sfx("click"), 120); renderSound(); syncExtras(); });
+}
+safe(() => { if (AL.sound) { AL.sound.restore(); $("sound-toggle").onclick = cycleSound; $("opt-sound").onchange = (e) => { AL.sound.setMode(e.target.value); renderSound(); syncExtras(); }; renderSound(); } });
+function soundMood() { return state.pending.length ? "attention" : state.status === "running" ? "working" : state.status === "done" ? "done" : state.status === "failed" || state.status === "stopped" ? "failed" : "idle"; }
+
+// the tab: an icon for what is happening, and a title that nags a little when you are on another tab
+const faviconEl = $("favicon");
+let faviconKey = "";
+function updateFavicon() {
+  const key = state.pending.length ? "approval" : state.status === "running" ? "running" : state.status === "done" ? "heart" : (state.status === "failed" || state.status === "stopped") ? "flame" : "";
+  if (key === faviconKey) return;
+  faviconKey = key;
+  const item = key && AL.sprites && AL.sprites.data.icons && AL.sprites.data.icons.items[key];
+  faviconEl.type = item ? "image/png" : "";
+  faviconEl.href = item ? item.src : "data:,";
+}
+let titleFlip = false;
+setInterval(() => {
+  if (!document.hidden || !state.pending.length) return;
+  titleFlip = !titleFlip;
+  document.title = "(" + state.pending.length + ") " + (titleFlip ? "🐱 needs you" : "approval needed") + " · agent-loop";
+}, 1000);
+document.addEventListener("visibilitychange", () => renderHeader());
+
+/** The page's state, handed to the cat and the sound in one place. */
+function syncExtras() {
+  safe(() => AL.mascot && AL.mascot.sync({ status: state.status, pending: state.pending.length, say: state.pending[0] ? state.pending[0].phase + " needs you" : "", offline: offlineNow }));
+  safe(() => AL.sound && AL.sound.setMood(soundMood()));
+  safe(updateFavicon);
+}
+// the turning glyph in the status line (not for anyone who has asked for less motion)
+if (!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) {
+  setInterval(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) sp.textContent = SPIN[Math.floor(Date.now() / 220) % SPIN.length]; }, 220);
+}
+
+// shortcuts that work anywhere you are not typing
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target, typing = t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
+  if (modalOpen()) { if (e.key === "Escape") { e.preventDefault(); closeHelp(); } else if (e.key === "Tab") trapTab(e); return; }
+  if (typing || (AL.offline && AL.offline.isShown())) return;
+  if (e.key === "?") { e.preventDefault(); openHelp(); }
+  else if (e.key === "t") applyView(view === "tree" ? "transcript" : "tree");
+  else if (e.key === "m" && AL.sound) cycleSound();
+});
+
 renderStepper(); renderHeader();
 if (REPLAY) {
   $("status").textContent = "saved report";
@@ -989,9 +1318,11 @@ if (REPLAY) {
   state.live = true;
   tickClock(); // a finished run shows how long it took straight away, not after the first tick
   renderDock();
+  syncExtras();
 } else {
   renderDock();
   connect();
+  syncExtras();
 }
 </script>
 </body>

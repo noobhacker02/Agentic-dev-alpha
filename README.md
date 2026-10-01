@@ -125,6 +125,8 @@ machine's directory layout.
 | `src/data-dir.ts` | Resolves where the audit database lives — always outside `--dir` |
 | `src/server.ts` | HTTP + WebSocket server: broadcasts events, receives decisions |
 | `ui/index.html` | The live timeline + Approve/Reject UI (vanilla JS, no build step) |
+| `ui/sprites.js`, `ui/mascot.js`, `ui/offline.js`, `ui/sound.js` | The page's extras, each optional (the page works without any): the pixel set as CSS, the cat that runs to whatever needs you and hops until you answer, the offline dinosaur, and sound generated in the browser — see [`docs/UI.md`](docs/UI.md), [`docs/ASSETS.md`](docs/ASSETS.md) |
+| `ui/assets/`, `src/sprites.ts`, `scripts/build-sprites.py`, `scripts/check-sprites.mjs` | The sprites (74 small PNGs, under 60 KB) and their manifest, the validator, how they reach the live page and saved reports as inline data, and the script that cut them from the supplied sheets |
 | `src/cli.ts` | `agent-loop run "<task>"` and `agent-loop insights` entry points |
 | `src/text-safety.ts` | Strips terminal control/escape bytes before untrusted text reaches a real terminal — shared by `terminal.ts` and `cli.ts`'s `insights` report |
 | `test/approval-server.mjs` | No-LLM test of the approval server's access control (token, Origin, Host) and pending-approval replay |
@@ -150,6 +152,8 @@ machine's directory layout.
 | `test/persona-sim.mjs` | Deterministic event streams with the shape of real runs (a 6-minute typical run, a 36-minute run with three vetoes, a speed-approver, a failure, a 2:40 a.m. start), for judging the voice on something real |
 | `test/persona.mjs`, `test/ui-persona.mjs` | The catalog lint (and a control that it can fail), levels, determinism, hostile text in every event field, the import graph, the terminal, `/persona.js`, saved reports, the CLI, and in a real Chromium: the toggle, the ceiling, an approval prompt with no jokes in it, inert hostile notes |
 | `test/ui-desktop.mjs` | The real web UI: the desktop panel and every approval prompt (the click marker, typed text with visible control bytes), hostile titles inert |
+| `test/sprites.mjs` | The shipped sprite set is sound; 11 kinds of wrong sprite are each reported; a `../` path in the manifest is never read; one bad entry drops only itself; an unreadable manifest yields an empty set; the server serves the same script a report inlines |
+| `test/ui-mascot.mjs`, `test/ui-offline.mjs`, `test/ui-sound.mjs` | In a real Chromium, measured: where the cat stands in each state (feet on the prompt's edge, clear of every button), that it hops, naps and can be switched off; cursors and icons really applied; prompt labels; help-window keys never answer a prompt; the offline dialog against a real server that goes away and comes back (one socket, the game, Retry now); sound silent by default with no audio engine, never autoplaying, rate-limited, audible and not clipping on the real output; and every extra missing without breaking the page |
 
 ## Requirements
 
@@ -290,8 +294,16 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 ## Feature walkthroughs
 
 Captioned screen recordings of each feature, from real runs of the real UI and the real native driver (nothing
-calls a model, so they cost nothing to remake: `npm run record:videos`, `npm run record:desktop-video`). The
+calls a model, so they cost nothing to remake: `npm run record:videos`, `npm run record:desktop-video`, `npm run record:ui-videos`). The
 GIFs are short previews; click the title for the full video (GitHub plays `.mp4` files in its own file viewer).
+
+**The new look, and a cat that runs to whatever needs you** (51 s, with sound): [`ui-v3-tour.mp4`](docs/media/ui-v3-tour.mp4) · [docs](docs/UI.md) · [art and licences](docs/ASSETS.md)
+
+![The new UI and the cat](docs/media/previews/ui-v3-tour.gif)
+
+**When the page loses its server: Chrome's dinosaur, and a reconnect that needs no clicking** (36 s, with sound): [`offline-dino.mp4`](docs/media/offline-dino.mp4) · [docs](docs/UI.md)
+
+![The offline dinosaur](docs/media/previews/offline-dino.gif)
 
 **The run as a tree: who did what, and why it was redone** (59 s): [`lineage-tree.mp4`](docs/media/lineage-tree.mp4) · [docs](docs/LINEAGE.md)
 
@@ -343,6 +355,11 @@ npm run test:terminal          # no LLM calls — the terminal transcript + prom
 npm run test:bash              # no LLM calls — which shell commands are read-only / get which "don't ask again" rule
 npm run test:rules             # no LLM calls — "don't ask again" never stretches past what you saw
 npm run test:report            # no LLM calls — the saved report.html opens from disk, inert against injected HTML
+npm run test:sprites           # no LLM calls — the pixel set validates; every kind of wrong sprite is reported
+npm run test:ui-mascot         # no LLM calls — real Chromium: the cat runs to a waiting prompt and hops, cursors, icons, reduced motion
+npm run test:ui-offline        # no LLM calls — real Chromium: the offline dialog and the dinosaur, against a server that goes away and returns
+npm run test:ui-sound          # no LLM calls — real Chromium: sound off by default, never autoplays, measured on the real output
+npm run check:sprites          # after swapping a sprite under ui/assets/: checks it against manifest.json
 node test/e2e/record-run.mjs --out <dir> [--browser] [--smart] -- "<task>"   # real API calls — records a whole run as video
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?

@@ -6,3 +6,5 @@ dist/
 *.db-shm
 runs/
 .env
+__pycache__/
+*.pyc

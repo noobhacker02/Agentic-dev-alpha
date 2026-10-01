@@ -2,7 +2,7 @@
 // opened straight from disk with no server. No API calls:   npm run build && npm run test:report
 import assert from "node:assert";
 import { chromium } from "playwright-core";
-import { mkdtempSync, copyFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, copyFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRunReport } from "../dist/report.js";
@@ -14,12 +14,16 @@ copyFileSync("docs/screenshots/browser-agent/01-open-fill-click-screenshot.png",
 copyFileSync("docs/screenshots/desktop/01-window-capture.png", join(dir, "win.png"));
 const ts = () => new Date().toISOString();
 const r = "run-1";
+const DOLLARS = "echo $'a' $& $` $$ $1 done";
 const nasty = '</script><script>window.__pwned = 1</script><img src=x onerror="window.__pwned=2">';
 const events = [
   { type: "run-start", runId: r, task: "Build a todo app " + nasty, workDir: "/w", ts: ts() },
   { type: "phase-start", runId: r, phase: "builder", attempt: 1, ts: ts() },
   { type: "tool-call", runId: r, phase: "builder", toolUseId: "t1", toolName: "Bash", toolInput: { command: "echo " + nasty }, ts: ts() },
   { type: "tool-result", runId: r, phase: "builder", toolUseId: "t1", toolName: "", isError: false, summary: nasty, ts: ts() },
+  // String.replace expands $' $& $` $$ in a replacement *string*; shell commands are full of them.
+  { type: "tool-call", runId: r, phase: "builder", toolUseId: "t2", toolName: "Bash", toolInput: { command: DOLLARS }, ts: ts() },
+  { type: "tool-result", runId: r, phase: "builder", toolUseId: "t2", toolName: "", isError: false, summary: "out: " + DOLLARS, ts: ts() },
   { type: "browser-snapshot", runId: r, browserSessionId: "b", url: "http://127.0.0.1:8080/", title: "Todo", screenshotPath: "/somewhere/else/shot.png", ts: ts() },
   { type: "desktop-session-started", runId: r, desktopSessionId: "d", target: { processName: "python3.12", appName: "Tk", pid: 4242, windowId: "9", title: "My App " + nasty }, driverVersion: "0.30.4", ts: ts() },
   { type: "desktop-snapshot", runId: r, desktopSessionId: "d", snapshotId: "dshot-1", title: "My App", width: 420, height: 260, screenshotPath: "/somewhere/else/win.png", ts: ts() },
@@ -35,12 +39,21 @@ const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
 const sockets = [];
 page.on("websocket", (w) => sockets.push(w.url()));
+const requests = [];
+page.on("request", (q) => requests.push(q.url()));
 await page.goto("file://" + path);
 await page.waitForSelector(".blk.run-end");
 assert.strictEqual(await page.locator("#status").innerText(), "saved report");
 assert.strictEqual(await page.locator("#run-state").innerText(), "done");
 assert.strictEqual(await page.locator("#cost").innerText(), "0.50");
 assert.deepStrictEqual(sockets, [], "a saved report never opens a WebSocket");
+assert.ok((await page.locator("#transcript").innerText()).includes("echo " + DOLLARS.slice(5)), "a command containing $' $& $` $$ survives into the report exactly");
+assert.ok((await page.locator("#transcript").innerText()).includes("out: " + DOLLARS), "…and so does its output");
+console.log("[ok] dollar-sign patterns in event text ($' $& $` $$) reach the report intact");
+assert.deepStrictEqual(requests.filter((u) => !u.startsWith("file:") && !u.startsWith("data:")), [], "a saved report makes no network request at all");
+assert.ok(!/<script src=/.test(readFileSync(path, "utf8")), "every script is inline, so the file works on its own");
+assert.ok(await page.evaluate(() => !!(window.__SPRITES__ && window.__SPRITES__.cat && window.__SPRITES__.cat.idle && AL.mascot && AL.sound && AL.offline)), "the sprites and the page's modules are inline in the report");
+console.log("[ok] a saved report is one self-contained file: no network request, no external script, sprites and modules inline");
 console.log("[ok] report opens from disk, renders the run (status, cost) and opens no socket");
 assert.strictEqual(await page.evaluate(() => window.__pwned), undefined, "event text must not be able to run script in the report");
 assert.ok((await page.locator("#transcript").innerText()).includes("</script>"), "the text shows up as text");

@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { EventBus } from "./bus.js";
 import type { AgentEvent } from "./types.js";
 import { uiData, type HumorLevel } from "./persona.js";
+import { spritesScript } from "./sprites.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const UI_DIR = join(__dirname, "..", "ui");
@@ -18,6 +19,8 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".json": "application/json",
   ".webm": "video/webm",
 };
 
@@ -76,6 +79,7 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     return given.length === want.length && timingSafeEqual(given, want);
   };
 
+  let spriteScript: string | undefined; // built once per server: the art does not change while it runs
   const server = createServer(async (req, res) => {
     if (!hostOk(req)) {
       res.writeHead(403).end("forbidden host");
@@ -96,6 +100,13 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
       // Catalog text only (idle lines, persona names); nothing from any run, so it needs no token.
       res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
       res.end(`window.__PERSONA__ = ${JSON.stringify(uiData(opts.humor ?? "dark")).replace(/</g, "\\u003c")};`);
+      return;
+    }
+    if (urlPath === "/sprite-data.js") {
+      // Art only (the cat, cursors, icons, dino as data URIs); nothing from any run, so it needs no token.
+      spriteScript ??= spritesScript();
+      res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
+      res.end(spriteScript);
       return;
     }
     if (urlPath.startsWith("/artifacts/")) {

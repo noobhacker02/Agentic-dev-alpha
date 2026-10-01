@@ -25,7 +25,7 @@
     "test:ui": "node --experimental-sqlite --no-warnings test/ui-render.mjs",
     "test:terminal": "node test/terminal.mjs",
     "test:insights": "node --experimental-sqlite --no-warnings test/insights-cli.mjs",
-    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:persona && npm run -s test:lineage && npm run -s test:report && npm run -s test:browser-tools && npm run -s test:browser-cu && npm run -s test:ui && npm run -s test:ui-persona && npm run -s test:ui-lineage && npm run -s test:ui-desktop && npm run -s test:desktop-tools && npm run -s test:desktop-adapter && npm run -s test:desktop-cli && npm run -s test:desktop-pipeline && npm run -s test:insights",
+    "test": "npm run -s test:plumbing && npm run -s test:server && npm run -s test:scope && npm run -s test:data-dir && npm run -s test:safety && npm run -s test:bash && npm run -s test:rules && npm run -s test:terminal && npm run -s test:persona && npm run -s test:lineage && npm run -s test:report && npm run -s test:sprites && npm run -s test:browser-tools && npm run -s test:browser-cu && npm run -s test:ui && npm run -s test:ui-persona && npm run -s test:ui-lineage && npm run -s test:ui-mascot && npm run -s test:ui-offline && npm run -s test:ui-sound && npm run -s test:ui-desktop && npm run -s test:desktop-tools && npm run -s test:desktop-adapter && npm run -s test:desktop-cli && npm run -s test:desktop-pipeline && npm run -s test:insights",
     "test:report": "node test/report.mjs",
     "test:rules": "node test/approval-rules.mjs",
     "test:bash": "node test/bash-analysis.mjs",
@@ -44,7 +44,14 @@
     "record:previews": "bash test/e2e/make-previews.sh",
     "test:persona": "node --experimental-sqlite --no-warnings test/persona.mjs",
     "test:ui-persona": "node --experimental-sqlite --no-warnings test/ui-persona.mjs",
-    "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs"
+    "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs",
+    "test:sprites": "node --experimental-sqlite --no-warnings test/sprites.mjs",
+    "test:ui-mascot": "node --experimental-sqlite --no-warnings test/ui-mascot.mjs",
+    "test:ui-offline": "node --experimental-sqlite --no-warnings test/ui-offline.mjs",
+    "test:ui-sound": "node --experimental-sqlite --no-warnings test/ui-sound.mjs",
+    "check:sprites": "node scripts/check-sprites.mjs",
+    "record:ui-videos": "node --experimental-sqlite --no-warnings test/e2e/record-ui-v3.mjs all docs/media",
+    "shots:ui": "node --experimental-sqlite --no-warnings test/e2e/screenshots-ui-v3.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.280",

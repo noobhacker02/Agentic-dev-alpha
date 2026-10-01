@@ -215,6 +215,68 @@ Everything about it, including the rules and how they are tested, is in [`PERSON
 
 ![The voice in the transcript](screenshots/persona/01-voice-in-the-transcript.png)
 
+## The look, the cat, the dinosaur and the sound
+
+The page was reworked to be friendlier and closer to Claude Code. Everything below is additive: no existing id or class
+changed meaning, and the earlier UI suites pass unchanged.
+
+![The welcome card, with the cat on it](screenshots/ui-v3/01-welcome.png)
+
+- **A welcome card** (before the first run, and at the top of every transcript): the five agents with their icons, the four
+  things worth knowing, and the working directory once a run starts. A saved report says "A saved run, read-only".
+- **Claude Code's status line**: a turning `✻` and a verb for the agent that is working ("Hammering…", "Squinting…") with the
+  phase, time and cost beside it; below the orange `>` input, a hint line with the shortcuts.
+- **Pixel icons**: one per agent on the phase stepper, one per tool in the transcript (`Bash` a gear, `Write` a quill, `Grep` a
+  magnifier, browser tools an eye, desktop tools a fist), and a lock on every permission prompt.
+- **A permission prompt that says what it is asking, in words**: a chip reading *runs a shell command*, *changes files*,
+  *controls the browser* or *controls a desktop window*. It comes from the tool's name, never from its arguments, and a tool
+  the page does not know gets no chip rather than a guess.
+- **`?` opens help**: the shortcuts, the options (the cat, pixel cursors, sound), what the cat does, and the credits. While it
+  is open, `y`, `n`, `1`–`3`, the arrows and Esc cannot answer a prompt behind it (tested). `t` flips to the tree, `m` cycles sound.
+- **The tab** shows a lock while you are needed, a bolt while it works, a heart when it is done; its title counts what is
+  waiting and, from another tab, alternates with "needs you".
+- It fits a 390 px phone with no sideways scroll (measured in the dark look; the light look shares the layout but is not
+  separately measured at that width). The light look's bold text, invisible before (white on white), is fixed.
+
+### The cat
+
+![The cat on a waiting prompt](screenshots/ui-v3/02-needs-you.png)
+
+It lives by the input box and **runs to whatever needs you**. When a permission prompt is waiting, it walks to the prompt,
+stands with its feet on the prompt's top edge, **hops until you answer**, and says who needs you ("builder needs you"); after
+20 s, a minute and three minutes it nudges. Answer, and it goes home. It dances while an agent works, throws stars when a run
+is done, slumps when one fails, and naps after 90 s of quiet. Click it for a heart.
+
+It never covers a button (it overlaps a prompt by at most 10 px), it honours reduced motion (it still goes to the prompt and
+says so, without sliding or hopping), and it can be switched off in the help window. Positions, the hop, the nap and the
+off-switch are all measured in `test/ui-mascot.mjs`.
+
+### Offline: the dinosaur
+
+![The offline dialog](screenshots/ui-v3/04-offline-dino.png)
+
+If the page loses its server mid-run it no longer just freezes: after a moment a dialog says "Can't reach agent-loop", counts
+the attempts, offers **Retry now**, and lets you play Chrome's dinosaur (Space or ↑ jump, ↓ duck, tap to jump) until it
+reconnects, at which point the dialog leaves by itself and the run is replayed. It never appears for a finished run or a saved
+report (`test/ui-offline.mjs`).
+
+### Sound
+
+Off by default and, when off, **no audio engine is even created**. `♪` in the header (or `m`) cycles *off → blips → music*:
+blips for a prompt arriving, an answer, a phase passing or failing, the run ending; music that follows the run (sparse when
+idle, busier while an agent works, thinned out while something waits on you, stopping 9 s after the run ends). It is all
+generated in the browser, nothing is downloaded, and a remembered setting waits for your first click rather than playing on load.
+Details, and how it was measured, in [`ASSETS.md`](ASSETS.md).
+
+### Pixel cursors and where all this art comes from
+
+The page's mouse cursor is a pixel set (arrow, pointing hand, text, grab, magnifier on screenshots…), switchable in the help
+window. The cat, cursors, icons and dinosaur are sprites supplied for this project; **the cat's and cursors' licence status is
+unknown and the others have not been checked**. That, how to swap any sprite, and `npm run check:sprites` are in
+[`ASSETS.md`](ASSETS.md). Read it before publishing.
+
+![Light look](screenshots/ui-v3/06-light.png)
+
 ## Desktop window
 
 With `--desktop-target`, the side panel also shows the one window the run may use: its process and pid,
@@ -240,7 +302,7 @@ rendered as inert text everywhere they appear (tested with markup in each).
 ## Checking it yourself
 
 ```bash
-npm run build && npm test            # 22 suites, no API key; includes real-Chromium UI tests
+npm run build && npm test            # 26 suites, no API key; includes real-Chromium UI tests
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
                                      # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm
@@ -261,7 +323,19 @@ window under the virtual display used by the real-driver tests, filmed with ffmp
 if the chosen window did not get exactly what was sent or the terminal-named window received anything), and
 `npm run record:previews` (the GIFs). They need a full ffmpeg.
 
+Two more cover the redesign, **with sound**: `npm run record:ui-videos` records [`ui-v3-tour.mp4`](media/ui-v3-tour.mp4) (the cat
+running to a waiting prompt, the sound toggle, help, the light look) and [`offline-dino.mp4`](media/offline-dino.mp4) (the server
+goes away mid-run, a bot plays the dinosaur, the dialog leaves when the server returns). A headless browser is muted, so the
+soundtrack is *rendered offline by the page's own synthesiser* (`AL.sound.render`) from a timeline of when each thing happened,
+then muxed in with ffmpeg: the same notes the page plays live, not a stock track. The tour's approvals go through the real
+approval round trip (a real pending approval answered by a real click).
+
 ## Still not done
+
+- The cat, the dinosaur, the cursors and the sound are tested in Chromium only, and measured (positions, rates, levels), not
+  judged: whether the cat is charming or the music pleasant is for a person. The tab title's "needs you" flashing while the tab
+  is hidden is not tested at all (a headless browser has no background tab).
+- The sprite art's licence status is unknown or unchecked ([`ASSETS.md`](ASSETS.md)); check before publishing.
 
 - A rejected call can't be edited and re-run in place, the way Claude Code lets you amend a
   command. Your only options are yes, or no plus a reason.
