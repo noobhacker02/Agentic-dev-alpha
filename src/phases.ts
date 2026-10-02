@@ -168,6 +168,8 @@ export interface RunPhaseOptions {
   /** Present only when --desktop-target named a window; the same session serves every phase. Only
    * DESKTOP_ENABLED_PHASES actually get its tools registered. */
   desktop?: DesktopSession;
+  /** Aborting it stops this model session at once (the run was stopped: cost cap, Ctrl-C, the page's Stop button). */
+  abortController?: AbortController;
 }
 
 export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
@@ -232,6 +234,7 @@ ${MAX_ACTIONS_PER_SESSION} input actions in a run.`;
       model: opts.model,
       effort: opts.effort,
       env: minimalEnv(),
+      ...(opts.abortController ? { abortController: opts.abortController } : {}),
       hooks: {
         PreToolUse: [{ hooks: [safetyHook, pathScopeHook, sensitiveFileHook, approvalHook], timeout: 3600 }],
       },

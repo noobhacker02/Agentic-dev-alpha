@@ -138,6 +138,9 @@ machine's directory layout.
 | `test/validate-dev-workflow.mjs` | The project's actual meta-goal: does `dev-workflow` trigger and get followed on an ordinary request? |
 | `test/validate-decisions-log.mjs` | Does a genuinely ambiguous task get asked about once, and never re-asked once logged? |
 | `test/insights-cli.mjs` | No-LLM test that `agent-loop insights` strips terminal control bytes from a stored rule before printing it |
+| `src/run-control.ts` | The one switch that ends a run early (cost cap, Ctrl-C, SIGTERM, the page's Stop button): aborts the model sessions, refuses waiting approvals, saves the run as `stopped` |
+| `src/doctor.ts` | `agent-loop doctor`: environment checks with injectable probes; tells apart no display / a dead display / a locked session / a missing, wrong or silent desktop driver |
+| `ui/plain.js` | Plain mode: the one switch every cartoon (cat, pixel icons and cursors, dinosaur game, sound) obeys |
 | `src/roast.ts`, `src/habits.ts`, `src/roast-api.ts` | What `insights` says about you: the numbers-only `Habits`, the catalogue and grade, and the optional model call |
 | `test/roast.mjs` | The roast, offline and with a fake model: lint, determinism, canaries, validation, CLI |
 | `src/browser-tools.ts` | The 15 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
@@ -200,7 +203,8 @@ is inert elsewhere.
 ```bash
 npm install
 npm run build
-node dist/cli.js run "<task description>" [--dir <workDir>] [--browser] [--no-approval] [--strict-approval]
+node dist/cli.js run "<task description>" [--dir <workDir>] [--browser] [--no-approval] [--strict-approval] [--max-cost <usd>] [--plain]
+node dist/cli.js doctor [--desktop]      # what is missing or broken on this machine, before a run finds out
 ```
 
 You can drive a run from the terminal, the browser, or both. Whichever answers an approval first wins.
@@ -216,6 +220,16 @@ You can drive a run from the terminal, the browser, or both. Whichever answers a
 Shell commands that only read inside `--dir` (`ls`, `cat`, `grep`, `git status`, `curl` to localhost…) don't
 ask, the same way `Read`/`Grep` never did. Pass `--strict-approval` to be asked about every shell command
 anyway. `--no-approval` skips approvals entirely; only the safety net still applies.
+
+**Ending a run early.** `--max-cost <usd>` stops the run once that much has been spent (checked after each phase attempt and
+Overseer call, so one long step can pass it). Ctrl-C, SIGTERM and the page's **stop run** button (two clicks) do the same: the model
+sessions are aborted at once, anything waiting for your approval is refused, the run is saved as `stopped` with the reason, and
+`report.html` is still written. A second Ctrl-C quits immediately. (Before this, Ctrl-C killed the process and left the run
+"running" in the audit database for good.)
+
+**Turning the cartoons off.** `--plain` (or `$AGENT_LOOP_PLAIN=1`, `?plain=1` on the page's address, the **cartoons** button in the
+header, or the `?` window) starts the page with no cat, pixel icons, pixel cursors, dinosaur game or sound, and a saved report
+follows it. It is remembered per browser, and the page works the same either way.
 
 **[docs/UI.md](docs/UI.md)** has the before/after: real runs went from 53 approval clicks to 13 for the same
 task, with screenshots, videos, and exactly which rules can and can't become "don't ask again".
@@ -238,6 +252,18 @@ works from numbers only — a task, command, rule or path is never read into it 
 habit. `--roast offline` (default) is built in and free; `--roast api` has a Claude model write fresh lines from those
 numbers (about 3 cents), with every line checked and the built-in set as the fallback; `--humor off` turns it off.
 See [`docs/PERSONA.md`](docs/PERSONA.md#insights-how-it-talks-about-you).
+
+### `agent-loop doctor`
+
+```bash
+node dist/cli.js doctor [--dir <workDir>] [--data-dir <path>] [--desktop]
+```
+
+Checks, in plain words and before a run finds out the hard way: Node and `node:sqlite`, whether the audit folder is writable,
+whether an API credential is set (never printed), Chromium, ffmpeg, and for desktop control the four failures a generic "could not
+start" lumps together: **no display**, a display variable that **points at nothing**, a **locked** session, and a driver that is
+**missing, the wrong version, or not answering**. Desktop problems are warnings unless you pass `--desktop`; the command exits 1
+only when something blocking is found. A desktop target that fails to start prints the same diagnosis.
 
 ### `agent-loop lineage`
 

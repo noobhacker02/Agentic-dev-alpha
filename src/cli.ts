@@ -11,6 +11,8 @@ import { PHASES } from "./types.js";
 import { stripTerminalControlBytes } from "./text-safety.js";
 import { resolveDesktopTarget, type ResolvedDesktop } from "./desktop-tools.js";
 import { classifyDeniedTarget, deniedTargetMessage } from "./desktop-policy.js";
+import { RunControl } from "./run-control.js";
+import { diagnoseDesktop, doctorExitCode, realProbes, renderDoctor, runDoctor } from "./doctor.js";
 import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText } from "./lineage.js";
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
 import { roast, roastWithModel, type Habits } from "./roast.js";
@@ -18,7 +20,7 @@ import { roast, roastWithModel, type Habits } from "./roast.js";
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
 // must never consume the next token just because that token doesn't start with "--".
-const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval"]);
+const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval", "plain", "desktop"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -52,6 +54,17 @@ function parseNonNegativeInt(raw: string | boolean | undefined, flagName: string
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
     console.error(`Error: --${flagName} must be a non-negative integer, got "${raw}".`);
+    process.exit(1);
+  }
+  return n;
+}
+
+/** --max-cost <usd>: a positive number, or the CLI exits with a clear error. */
+function parseMaxCost(raw: string | boolean | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const n = typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`Error: --max-cost needs a positive amount in US dollars, e.g. --max-cost 5 (got ${typeof raw === "string" ? `"${raw}"` : "nothing"}).`);
     process.exit(1);
   }
   return n;
@@ -172,6 +185,15 @@ async function main() {
     return;
   }
 
+  if (cmd === "doctor") {
+    const args = parseArgs(argv.slice(1));
+    const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
+    const dataDirOverride = typeof args["data-dir"] === "string" ? args["data-dir"] : process.env.AGENT_LOOP_DATA_DIR;
+    const checks = await runDoctor(realProbes(), { dataDir: resolveDataDir(workDir, dataDirOverride), desktop: args.desktop === true });
+    console.log(`agent-loop doctor\n\n${stripTerminalControlBytes(renderDoctor(checks))}`);
+    process.exit(doctorExitCode(checks));
+  }
+
   if (cmd === "lineage") {
     const args = parseArgs(argv.slice(1));
     const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
@@ -206,8 +228,9 @@ async function main() {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
 Usage:
-  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark]
+  agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark] [--plain] [--max-cost <usd>]
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
+  agent-loop doctor [--dir <workDir>] [--data-dir <path>] [--desktop]
   agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
@@ -227,10 +250,23 @@ Usage:
                    refused for terminals, shells, IDEs, launchers, browsers, remote-desktop and
                    password-manager windows. Needs the optional @trycua/cua-driver package.
 
+  --max-cost       Stop the run (saved as "stopped", report still written) once this many US dollars have been
+                   spent. Checked after each phase attempt and Overseer call, so a single long step can pass it.
+                   Ctrl-C and the page's Stop button end a run the same way; a second Ctrl-C quits at once.
+
+  --plain          Start the page with every cartoon off: the cat, pixel icons and cursors, the dinosaur
+                   game and sound (or $AGENT_LOOP_PLAIN=1). The page's "cartoons" button, the ? window
+                   and ?plain=1 on its address do the same in the browser. Nothing else changes.
+
   --humor          How much the agents joke around: off, dry, or dark (default, or $AGENT_LOOP_HUMOR).
                    Display only: it never reaches a model and never appears inside an approval prompt.
                    The web page can turn it down; the terminal shows it only on a TTY unless this is
                    given explicitly. See docs/PERSONA.md.
+
+  doctor           What is missing or broken on this machine, in plain words, before a run finds out: Node and
+                   node:sqlite, the audit folder, credentials, Chromium, ffmpeg, and for --desktop-target the
+                   display (none / set but dead), a locked screen, and the driver (missing / wrong version / not
+                   answering). Desktop problems only block with --desktop. Exits 1 only when something blocking is found.
 
   lineage          The tree of a recorded run: every phase attempt, who handed what to whom, repairs as
                    branches, which agent wrote which files (only writes that succeeded), cost and prompts per
@@ -259,6 +295,8 @@ Usage:
   }
 
   const humor = readHumor(args);
+  // --plain (or $AGENT_LOOP_PLAIN=1): the page starts with every cartoon off (and so does the saved report). A browser can still choose otherwise.
+  const plain = args.plain === true || /^(1|on|true|yes)$/i.test(process.env.AGENT_LOOP_PLAIN ?? "");
 
   // Desktop control is checked before anything else starts -- no approval UI, no store, no driver --
   // for everything that can be decided from the command line alone.
@@ -292,13 +330,32 @@ Usage:
   const maxTotalRepairs = parseNonNegativeInt(args["max-repairs"], "max-repairs", PHASES.length * 4);
   const browser = !!args.browser;
   const browserArtifactDir = join(dataDir, "browser-artifacts");
+  const maxCost = parseMaxCost(args["max-cost"]);
 
   const store = new Store(join(dataDir, "agent-loop.db"));
   const bus = new EventBus(store);
 
+  // One switch ends the run early: the cost cap, Ctrl-C, SIGTERM, or the Stop button on the page. The pipeline does the rest
+  // (stops the model sessions, refuses waiting approvals, records "stopped" with the reason, still writes the report).
+  const control = new RunControl();
+  let signalExit: number | undefined;
+  let interrupts = 0;
+  const onSignal = (name: "SIGINT" | "SIGTERM") => {
+    const code = name === "SIGINT" ? 130 : 143;
+    if (++interrupts > 1) {
+      console.error("\nInterrupted again: quitting now. The run is left unfinished in the audit database.");
+      process.exit(code);
+    }
+    signalExit = code;
+    console.error(`\n${name === "SIGINT" ? "Ctrl-C" : "Terminated"}: stopping the run. It will be saved as stopped; interrupt again to quit at once.`);
+    control.stop(name === "SIGINT" ? "you pressed Ctrl-C" : "the process was terminated");
+  };
+  process.on("SIGINT", () => onSignal("SIGINT"));
+  process.on("SIGTERM", () => onSignal("SIGTERM"));
+
   let url: string, close: () => Promise<void>;
   try {
-    ({ url, close } = await startServer(bus, port, { artifactRoot: browser || desktopTarget !== undefined ? browserArtifactDir : undefined, humor: humor.level }));
+    ({ url, close } = await startServer(bus, port, { artifactRoot: browser || desktopTarget !== undefined ? browserArtifactDir : undefined, humor: humor.level, plain, onStop: () => control.stop("you pressed Stop on the page") }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(
@@ -317,6 +374,7 @@ Usage:
   console.log(
     `Approvals: ${!requireApproval ? "OFF" : interactive ? "ON — answer here (1/2/3) or in the web UI" : "ON — answer in the web UI"}`
   );
+  if (maxCost !== undefined) console.log(`Cost cap: $${maxCost.toFixed(2)} (checked after each phase attempt and Overseer call, so one long step can pass it)`);
   console.log(`Browser tools: ${browser ? "ON — builder/verifier get real Chromium (localhost only)" : "OFF"}`);
 
   // The approval UI is up, so a human can be reached; now load the driver and pin down the one window.
@@ -330,6 +388,11 @@ Usage:
     } catch (err) {
       await driver?.close().catch(() => {});
       console.error(`Error: desktop target not available. ${stripTerminalControlBytes(err instanceof Error ? err.message : String(err))}`);
+      // Say which kind of problem it is (no display, a locked screen, a driver that is missing or silent): the cause decides the fix.
+      try {
+        const found = (await diagnoseDesktop(realProbes())).filter((c) => c.level === "fail" || c.level === "warn");
+        for (const c of found) console.error(stripTerminalControlBytes(`  ${c.title}: ${c.detail}${c.fix ? ` → ${c.fix}` : ""}`));
+      } catch { /* the diagnosis is a courtesy */ }
       store.close();
       await close();
       process.exit(1);
@@ -347,11 +410,12 @@ Usage:
   let costUsd = 0;
   bus.on("event", (e) => {
     if (e.type === "usage") costUsd += e.costUsd;
+    if (maxCost !== undefined && costUsd >= maxCost) control.stop(`the cost cap of $${maxCost.toFixed(2)} was reached ($${costUsd.toFixed(2)} spent)`);
   });
   const startedAt = Date.now();
 
   const run = await runPipeline(
-    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir, desktop },
+    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir, desktop, control },
     bus,
     store
   );
@@ -373,7 +437,7 @@ Usage:
     writeFileSync(join(dir, "lineage.md"), renderLineageMarkdown(lineage));
     writeFileSync(join(dir, "lineage.json"), JSON.stringify(lineage, null, 2));
     console.log(`Lineage: file://${join(dir, "lineage.md")}`);
-    const report = writeRunReport(dir, bus.allEvents(), humor.level);
+    const report = writeRunReport(dir, bus.allEvents(), humor.level, plain);
     console.log(`Report: file://${report}`);
     await new Promise((r) => setTimeout(r, 300)); // let open pages receive the last events
   } catch (err) {
@@ -382,7 +446,7 @@ Usage:
   lineageTracker.detach();
   store.close();
   await close();
-  process.exit(run.status === "done" ? 0 : 1);
+  process.exit(signalExit ?? (run.status === "done" ? 0 : 1));
 }
 
 main().catch((err) => {

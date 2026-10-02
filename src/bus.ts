@@ -33,7 +33,7 @@ const HISTORY_LIMIT = 5000;
  * front blindly lost `run-start` and `phase-start` after about 2,500 tool calls.
  */
 export const STRUCTURAL_EVENTS: ReadonlySet<string> = new Set([
-  "run-start", "run-end", "phase-start", "phase-end", "overseer-decision", "usage",
+  "run-start", "run-end", "stop-requested", "phase-start", "phase-end", "overseer-decision", "usage",
   "approval-resolved", "trusted-decision-recorded", "decisions-log-updated", "report-saved",
   "browser-session-started", "browser-session-ended", "desktop-session-started", "desktop-session-ended", "lineage-updated",
 ]);
@@ -139,6 +139,13 @@ export class EventBus extends EventEmitter {
     });
     this.emitEvent(event);
     return { requestId, wait };
+  }
+
+  /** Refuses every approval still waiting (the run is being stopped), so no prompt is left open on a run that is over. */
+  denyAllPending(reason: string): number {
+    const ids = [...this.pending.keys()];
+    for (const id of ids) this.resolveApproval(id, { decision: "deny", reason });
+    return ids.length;
   }
 
   resolveApproval(requestId: string, decision: ApprovalDecision): boolean {

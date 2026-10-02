@@ -17,7 +17,7 @@ const inlineSafe = (js: string) => js.replace(/<\/script/gi, "<\\/script");
  * (window.__REPLAY__), next to that run's screenshots and video, which it references by relative
  * path -- open it straight from disk, no server, no token.
  */
-export function writeRunReport(dir: string, events: AgentEvent[], humor: HumorLevel = "dark"): string {
+export function writeRunReport(dir: string, events: AgentEvent[], humor: HumorLevel = "dark", plain = false): string {
   mkdirSync(dir, { recursive: true });
   const html = readFileSync(UI_FILE, "utf8");
   // "<" escaped so no event text can close the <script> element early.
@@ -30,6 +30,7 @@ export function writeRunReport(dir: string, events: AgentEvent[], humor: HumorLe
   // so each one goes inline: persona text, the sprites, and the page's own modules.
   out = out.replace(/<script src="\/([\w-]+)\.js"><\/script>/g, (tag, name: string) => {
     if (name === "persona") return `<script>window.__PERSONA__ = ${persona};</script>`;
+    if (name === "plain") return `<script>window.__PLAIN_DEFAULT__ = ${plain ? "true" : "false"};\n${inlineSafe(readFileSync(join(UI_DIR, "plain.js"), "utf8"))}</script>`;
     if (name === "sprite-data") return `<script>${spritesScript()}</script>`;
     try {
       return `<script>${inlineSafe(readFileSync(join(UI_DIR, `${name}.js`), "utf8"))}</script>`;

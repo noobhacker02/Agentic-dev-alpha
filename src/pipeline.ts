@@ -52,6 +52,25 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
   bus.emitEvent({ type: "run-start", runId: run.id, task: config.task, workDir: config.workDir, ts: new Date().toISOString() });
 
   let finalStatus: RunRecord["status"] = "done";
+  // Stopping early (cost cap, Ctrl-C, the page's Stop button): say so once, and refuse whatever is waiting for an answer so no
+  // prompt stays open on a run that is ending. The model sessions get the same signal and stop at once.
+  const control = config.control;
+  const announceStop = () => {
+    bus.emitEvent({ type: "stop-requested", runId: run.id, reason: control?.reason ?? "the run was stopped", ts: new Date().toISOString() });
+    bus.denyAllPending("the run was stopped");
+  };
+  control?.signal.addEventListener("abort", announceStop, { once: true });
+  if (control?.stopped) announceStop();
+  const haltForStop = (phase: PhaseName) => {
+    finalStatus = "stopped";
+    bus.emitEvent({
+      type: "overseer-decision",
+      runId: run.id,
+      phase,
+      decision: { action: "stop", reasoning: `Stopped: ${control?.reason ?? "the run was stopped"}.` },
+      ts: new Date().toISOString(),
+    });
+  };
   let lastSeenDecisionsLog: string | undefined;
   let totalRepairs = 0;
   const attemptCounts: Partial<Record<PhaseName, number>> = {};
@@ -82,6 +101,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
     let runPhases: PhaseName[] = [...PHASES];
 
     while (phaseIdx < runPhases.length) {
+      if (control?.stopped) { haltForStop(runPhases[phaseIdx]); break; }
       const phase = runPhases[phaseIdx];
       const attempt = (attemptCounts[phase] ?? 0) + 1;
       attemptCounts[phase] = attempt;
@@ -110,20 +130,25 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           strictApproval: config.strictApproval,
           browser: browserOpt,
           desktop: desktopSession,
+          abortController: control?.controller,
         });
       } catch (err) {
-        verdict = {
-          completed: false,
-          outcome: "inconclusive",
-          headline: `${phase} threw an unhandled error`,
-          details: err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
-          concerns: [],
-          blockingFindings: ["Phase execution raised an exception rather than reporting a verdict."],
-        };
+        verdict = control?.stopped
+          ? { completed: false, outcome: "inconclusive", headline: `${phase} was stopped before it finished`, details: control.reason ?? "", concerns: [], blockingFindings: [] }
+          : {
+              completed: false,
+              outcome: "inconclusive",
+              headline: `${phase} threw an unhandled error`,
+              details: err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
+              concerns: [],
+              blockingFindings: ["Phase execution raised an exception rather than reporting a verdict."],
+            };
       }
 
       store.finishPhase(record.id, verdict);
       bus.emitEvent({ type: "phase-end", runId: run.id, phase, attempt, verdict, ts: new Date().toISOString() });
+
+      if (control?.stopped) { haltForStop(phase); break; }
 
       const decisionsLog = readDecisionsLog(config.workDir);
       if (decisionsLog && decisionsLog !== lastSeenDecisionsLog) {
@@ -145,8 +170,10 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
           trustedDecisions: store.getTrustedDecisions(run.id),
           onUsage: (u) =>
             bus.emitEvent({ type: "usage", runId: run.id, phase, role: "overseer", ...u, ts: new Date().toISOString() }),
+          abortController: control?.controller,
         });
       } catch (err) {
+        if (control?.stopped) { haltForStop(phase); break; }
         // An Overseer API failure must not leave the run stuck "running" forever in the DB (found
         // by test/stress/pipeline_logic.sh case C) -- treat it as a terminal failure of this run,
         // not an exception that skips store.finishRun entirely.
@@ -249,6 +276,7 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
       ts: new Date().toISOString(),
     });
   } finally {
+    control?.signal.removeEventListener("abort", announceStop);
     // Always close a live browser session, even after an unhandled pipeline error above -- an
     // unclosed Chromium process and temp profile leaking past the run is exactly what
     // BrowserSessionManager's own contract rules out (see src/browser-tools.ts).

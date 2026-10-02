@@ -330,6 +330,33 @@ soundtrack is *rendered offline by the page's own synthesiser* (`AL.sound.render
 then muxed in with ffmpeg: the same notes the page plays live, not a stock track. The tour's approvals go through the real
 approval round trip (a real pending approval answered by a real click).
 
+### Plain mode: every cartoon off, with one switch
+
+For anyone who wants the page without the art: **plain mode** turns off the cat, every pixel icon, the pixel cursors, the dinosaur
+game, sound and the turning glyph at once. Set it with the **cartoons: on/off** button in the header, the checkbox at the top of the `?`
+window, `?plain=1` / `?plain=0` on the page's address, or `agent-loop run --plain` (`$AGENT_LOOP_PLAIN=1`). It is remembered per
+browser; a browser that has chosen keeps its choice over the server's default; a saved report written with `--plain` opens plain.
+Everything else is unchanged: prompts still show exactly what would run and are answered the same way, and the offline dialog still
+says "Can't reach agent-loop" and offers Retry, just without the game. Your own settings for the cat, cursors and sound are left alone
+and come back when plain mode ends. `ui/plain.js` decides first, before any of those scripts load, and each of them asks it.
+
+![The same page in plain mode](screenshots/ui-v3/plain-mode.png)
+
+## Stopping a run, and watching one
+
+- **stop run** (header, while a run is going): the first click arms it (it says "really stop?" for 4 s), the second asks the server.
+  The run then says "■ Stop requested · <why>" in the transcript, the model sessions are aborted, anything waiting for your answer is
+  refused, and the run ends as *stopped* with its report. The same note appears when the stop came from Ctrl-C or `--max-cost`.
+- **"still running · 31s"** appears on a tool call that has been quiet for 30 s (a hung command otherwise looks like a calm spinner). The
+  clock starts when you approve, never runs while a prompt waits on you, and never appears on a call you refused. If the run ends on a
+  call that never answered, it says "no result · the run ended", in a saved report too.
+- **Elapsed times are right even when the page's clock is wrong**: event timestamps are the server's, and a browser on another machine
+  (a forwarded port, a phone) can be minutes off. The page estimates the difference from live events (tested at 7 minutes either way;
+  not tried across two real machines).
+- **Notifications (opt-in)**: in the `?` window, "tell me with a browser notification when a prompt is waiting and this tab is in the
+  background". Off by default; the browser asks permission; the notification says only "<agent> needs you", never the command; a tab
+  opened while a prompt is already waiting does not announce the old prompt.
+
 ## Still not done
 
 - The cat, the dinosaur, the cursors and the sound are tested in Chromium only, and measured (positions, rates, levels), not

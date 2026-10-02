@@ -26,6 +26,18 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Fixed
+- **Ctrl-C left a run "running" in the audit database forever, and wrote no report** (found by the reference-project audit,
+  `docs/REFERENCE-AUDIT.md`, and reproduced against the previous commit: SIGINT killed the process, the run stayed `running`, no
+  `report.html`, browser and desktop sessions unclosed). Ctrl-C, SIGTERM, the page's Stop button and `--max-cost` now end a run through one
+  switch (`src/run-control.ts`): the model sessions are aborted at once (`abortController` into `runPhase` and the Overseer call),
+  every approval still waiting is refused (before, an approval waiting when a query was aborted stayed in the bus, and a tab
+  opened later would have been shown a dead prompt), the run is saved as `stopped` with the reason, and the report is still written. A
+  second Ctrl-C quits immediately. Exit codes 130 / 143.
+- **A browser whose clock differs from the server's showed wrong elapsed times** (a forwarded port, a phone): the page compared the
+  server's event timestamps with its own clock. It now estimates the difference from live events and uses it for the elapsed time, the
+  status line and the new "still running" label (`test/ui-stop.mjs`, 7 minutes ahead and behind; simulated, not tried across two machines).
+- **In plain mode the turning glyph still turned**: the dock drew it separately from the interval that stopped it. Found by a test
+  written to kill a surviving mutant, along with three guards that nothing exercised (below).
 - **Opening a long run froze the page for tens of seconds** (found by auditing the replay path, then measured: 6,000 events took
   29.6 s to replay, and the cost grew faster than the event count). The page re-rendered the stepper, header, dock and extras
   after every replayed event. Replay now draws the transcript once and the chrome once at `replay-complete`: the same 6,000 events
@@ -48,6 +60,32 @@ All notable changes to this project are documented here. Format follows
   a telescope) — they are now paired by position and checked by colour.
 
 ### Added
+- **Ending a run early, properly** (`src/run-control.ts`). `--max-cost <usd>` stops the run once that much is spent (checked after each
+  phase attempt and Overseer call, so one long step can pass it; the Overseer is not paid to judge a run that is over). Ctrl-C, SIGTERM
+  and a **stop run** button on the page (two clicks, the first arms it for 4 s; the page asks over the same token-checked socket as
+  approvals) do the same. The run says "Stop requested, and why" in the transcript, is saved as `stopped`, and its report is written.
+  `test/stop.mjs` (mid-phase, before it began, as a phase ends, no stop, the socket message and who may send it, the cost cap at three
+  points and bad values, SIGINT and SIGTERM end to end, a second Ctrl-C when a call will not stop), `test/ui-stop.mjs` (real Chromium).
+  `npm run test:real-model-stop` (opt-in, a few cents) runs it against the real SDK.
+- **`agent-loop doctor`** (`src/doctor.ts`): Node and `node:sqlite`, the audit folder, credentials (the value is never printed), Chromium,
+  ffmpeg, and for desktop control the four failures that used to look the same ("could not load" / "did not answer"): **no display**,
+  a display variable that **points at nothing** (a real X11 socket is probed), a **locked** session, and a driver that is **missing,
+  the wrong version or silent**. Desktop problems block only with `doctor --desktop`. A desktop target that fails to start now prints
+  the same diagnosis. `test/doctor.mjs`.
+- **Plain mode: one switch that turns every cartoon off** (`ui/plain.js`; docs/UI.md). The cat, every pixel icon, the pixel cursors, the
+  dinosaur game, sound and the turning glyph, from the header's **cartoons** button, the `?` window, `?plain=1`, or `agent-loop run --plain`
+  (`$AGENT_LOOP_PLAIN=1`); remembered per browser; a saved report follows `--plain`. Everything else is unchanged (prompts, the offline
+  dialog's words and Retry), and your own cat, cursor and sound settings come back when it ends. `test/ui-plain.mjs` and
+  `test/ui-cartoon-stress.mjs` (80 flapping approvals, 60 clicks on the cat, 320x480 / 1920x300 viewports, resizes while it hops, markup
+  in run text, sound churn, four server restarts: nothing found). A canvas that cannot draw (`getContext` returning null) no longer takes
+  the offline dialog down. 29 deliberate breaks of the plain-mode code: 24 caught at first; the five that survived (the scripts'
+  own guards, and a spinner check that never had a spinner to look at) led to stronger tests, one of which found the glyph bug above.
+- **"still running · 31s" on a quiet tool call, and "no result · the run ended"** on a call that never answered (PokeHarness's
+  backstop-timer idea, adapted; the clock starts when you approve and never runs while a prompt waits on you). **Opt-in browser
+  notifications** when a prompt waits and the tab is in the background (the text is only "<agent> needs you", never the command).
+- **docs/REFERENCE-AUDIT.md: PokeHarness, Hermes and OpenClaw, idea by idea**: where each one lives in the code, which test would
+  fail without it, what was not built and why, what the audit found by running things, and the one decision that is yours (parallel
+  fan-out).
 - **`agent-loop insights` now talks to you about how you actually use the tool** (docs/PERSONA.md, `src/roast.ts`).
   After the numbers: up to three lines in the voice of a friend who has watched you do it, up to two tips, and a report-card
   grade. It reads what is in the audit database: approvals answered in under 1.5 s ("that is not a code review, that is a

@@ -51,6 +51,8 @@ export async function overseerDecide(opts: {
   model?: string;
   /** Called with this Overseer call's cost/turns/duration once its session ends. */
   onUsage?: (u: { costUsd: number; turns: number; durationMs: number }) => void;
+  /** Aborting it stops this model call at once (the run was stopped). */
+  abortController?: AbortController;
 }): Promise<OverseerDecision> {
   const outcome = opts.verdict.outcome;
   if (opts.attempt > opts.maxRetries) {
@@ -102,6 +104,7 @@ Decide: continue, repair, or stop.`;
       model: opts.model,
       effort: "high",
       env: minimalEnv(),
+      ...(opts.abortController ? { abortController: opts.abortController } : {}),
     },
   });
 

@@ -167,7 +167,8 @@
     /** Switch mode. Must be called from a click/key handler to start sound; "off" never needs one. */
     setMode(m) {
       if (!MODES.includes(m)) return mode;
-      if (m === "off") { mode = "off"; stopMusic(false); if (ctx) ctx.suspend().catch(() => {}); persist(m); return mode; }
+      if (AL.plain && m !== "off") return mode;      // plain mode: never starts, and the remembered choice is not touched
+      if (m === "off") { mode = "off"; stopMusic(false); if (ctx) ctx.suspend().catch(() => {}); if (!AL.plain) persist(m); return mode; }
       if (!ensureCtx()) { mode = "off"; return mode; }
       mode = m; persist(m);
       ctx.resume().catch(() => {});
@@ -194,6 +195,7 @@
     },
     /** Remember-and-wait: a saved mode other than "off" starts at the first click or key press, never on load. */
     restore() {
+      if (AL.plain) return;
       let saved = "off";
       try { saved = localStorage.getItem(KEY) || "off"; } catch {}
       if (!MODES.includes(saved) || saved === "off") return;
@@ -202,6 +204,10 @@
       unlockArmed = true;
       const go = () => { removeEventListener("pointerdown", go, true); removeEventListener("keydown", go, true); unlockArmed = false; if (mode !== "off") api.setMode(mode); };
       addEventListener("pointerdown", go, true); addEventListener("keydown", go, true);
+    },
+    /** Plain mode on: silent at once, without forgetting the remembered mode. Off again: the remembered mode returns (after a click, as on load). */
+    plain(on) {
+      if (on) { mode = "off"; stopMusic(false); if (ctx) ctx.suspend().catch(() => {}); } else api.restore();
     },
     /** True while a remembered mode is waiting for its first click or key press. */
     get waiting() { return unlockArmed; },

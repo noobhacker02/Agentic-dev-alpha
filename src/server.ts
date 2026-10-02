@@ -40,6 +40,8 @@ function parseTarget(target: string | undefined): URL | null {
 }
 
 export interface ServerOptions {
+  /** Called when the page's Stop button is pressed by a connection that passed the host, origin and token checks. */
+  onStop?: () => void;
   /** Per-run secret the UI must present to open the WebSocket. Generated when omitted. */
   token?: string;
   /** Base directory for browser-tool artifacts (screenshots, traces), served read-only at
@@ -49,6 +51,8 @@ export interface ServerOptions {
   artifactRoot?: string;
   /** The most the run's commentary may say (--humor). The UI can turn it down, never up. Default "dark". */
   humor?: HumorLevel;
+  /** Start the page in plain mode (--plain): no cat, pixel icons, cursors, dino game or sound. A browser that has chosen otherwise keeps its choice. */
+  plain?: boolean;
 }
 
 /**
@@ -100,6 +104,17 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
       // Catalog text only (idle lines, persona names); nothing from any run, so it needs no token.
       res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
       res.end(`window.__PERSONA__ = ${JSON.stringify(uiData(opts.humor ?? "dark")).replace(/</g, "\\u003c")};`);
+      return;
+    }
+    if (urlPath === "/plain.js") {
+      // The page's own switch for the cartoons (ui/plain.js), with the server's default for a browser that has not chosen.
+      try {
+        const body = await readFile(join(UI_DIR, "plain.js"), "utf8");
+        res.writeHead(200, { "content-type": MIME[".js"], "cache-control": "no-store" });
+        res.end(`window.__PLAIN_DEFAULT__ = ${opts.plain ? "true" : "false"};\n${body}`);
+      } catch {
+        res.writeHead(404).end("not found");
+      }
       return;
     }
     if (urlPath === "/sprite-data.js") {
@@ -164,6 +179,9 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
             reason: typeof msg.reason === "string" ? msg.reason.slice(0, 2000) : undefined,
             remember: msg.remember === true,
           });
+        } else if (msg.type === "stop-run") {
+          // Same trust as an approval: only a connection that already passed verifyClient can say this.
+          opts.onStop?.();
         } else if (
           msg.type === "record-decision" &&
           typeof msg.runId === "string" &&

@@ -26,7 +26,7 @@
       '<div class="off-actions"><button type="button" id="off-retry" tabindex="-1">Retry now</button><button type="button" id="off-play" tabindex="-1">Play while you wait</button></div>' +
       '<p class="off-fine">Space or ↑ jump · ↓ duck · tap to jump</p></div>';
     document.body.appendChild(root);
-    canvas = root.querySelector("#dino"); g2 = canvas.getContext("2d"); attemptEl = root.querySelector("#off-attempt");
+    canvas = root.querySelector("#dino"); try { g2 = canvas.getContext("2d"); } catch { g2 = null; } attemptEl = root.querySelector("#off-attempt");
     root.querySelector("#off-retry").onclick = () => { if (api.onRetry) api.onRetry(); };
     root.querySelector("#off-play").onclick = () => { press(); };
     canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); press(); });
@@ -123,7 +123,7 @@
     if (game.y === 0) { game.vy = JUMP_V; AL.sound && AL.sound.sfx("jump"); }
   }
   function onKey(e) {
-    if (!shown) return;
+    if (!shown || !game) return;           // no game, no reason to take the space bar and arrow keys
     const down = e.type === "keydown";
     if (e.code === "Space" || e.code === "ArrowUp") { if (down) { e.preventDefault(); if (!e.repeat) press(); } }
     else if (e.code === "ArrowDown") { e.preventDefault(); if (game) game.duck = down; }
@@ -135,9 +135,14 @@
     if (shown) return;
     if (!root) build();
     shown = true; root.hidden = false;
-    game = newGame(); game.raf = requestAnimationFrame(frame);
+    startGame();
     root.focus({ preventScroll: true });
   }
+  /** The dialog works without the game: in plain mode, or if the canvas cannot draw. */
+  const gameWanted = () => !AL.plain && !!g2;
+  function startGame() { if (gameWanted() && !game) { game = newGame(); game.raf = requestAnimationFrame(frame); } }
+  function stopGame() { if (game) { cancelAnimationFrame(game.raf); game = null; } }
+  if (AL.onPlain) AL.onPlain(() => { if (!shown) return; if (gameWanted()) startGame(); else stopGame(); });
   /** The connection dropped (attempt = how many retries so far). The screen waits a moment so a blip never shows it. */
   api.lost = function (attempt) {
     api.attempt = attempt;
@@ -150,7 +155,7 @@
     clearTimeout(showTimer); showTimer = null; api.attempt = 0;
     if (!shown) return;
     shown = false; root.hidden = true;
-    if (game) { cancelAnimationFrame(game.raf); game = null; }
+    stopGame();
   };
   window.addEventListener("resize", () => { if (shown && game) { const keep = game; Object.assign(keep, size()); } });
 })();

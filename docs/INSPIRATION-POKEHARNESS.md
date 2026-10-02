@@ -94,6 +94,11 @@ are. The hook/regex latch, the PTY forensics, and the entire Tiled/Pixi sprite p
 specific to scraping an opaque terminal or rendering pixel-art sprites, neither of which applies to a
 structured-event web dashboard.
 
+## What came of it
+
+[`REFERENCE-AUDIT.md`](REFERENCE-AUDIT.md) goes back through this document and the two research notes idea by idea: where each
+one lives in the code, which test would fail without it, what was not built and why, and what the audit found by running things.
+
 ## Forking it
 
 Actually forking the repo on GitHub (rather than this read-only local clone used for review) was

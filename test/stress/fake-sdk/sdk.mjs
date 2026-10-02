@@ -20,7 +20,7 @@ export function query({ prompt, options }) {
   calls++;
   const sc = process.env.FAKE_SCENARIO;
   const isOverseer = /Overseer of agent-loop/.test(options.systemPrompt);
-  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, prompt, mcp: Object.keys(options.mcpServers ?? {}) }) + "\n");
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, abortable: !!options.abortController, prompt, mcp: Object.keys(options.mcpServers ?? {}) }) + "\n");
   if (calls > 60) { console.error("FAKE: >60 LLM calls, aborting (infinite loop)"); process.exit(99); }
   const phase = (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
   let text;
@@ -78,6 +78,18 @@ export function query({ prompt, options }) {
   // contributes $0 -- pipeline_logic.sh's cost check counts result markers, not call-log lines, so
   // it stays correct for that scenario without special-casing it.
   return (async function* () {
+    // FAKE_DELAY_MS keeps a run alive long enough for a test to look at its server while it is running.
+    // It honours options.abortController the way the real SDK does: an abort ends the call with an AbortError, at once.
+    const ac = options.abortController;
+    const abortError = () => Object.assign(new Error("Claude Code process aborted by user"), { name: "AbortError" });
+    if (ac?.signal.aborted) throw abortError();
+    if (process.env.FAKE_DELAY_MS) {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, Number(process.env.FAKE_DELAY_MS));
+        // FAKE_IGNORE_ABORT: a call that does not stop when asked (the situation where a second Ctrl-C matters).
+        if (!process.env.FAKE_IGNORE_ABORT) ac?.signal.addEventListener("abort", () => { clearTimeout(t); reject(abortError()); }, { once: true });
+      });
+    }
     yield { type: "assistant", message: { content: [{ type: "text", text }] } };
     if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, result: true }) + "\n");
     yield { type: "result", total_cost_usd: 0.01, num_turns: 1, duration_ms: 10 };

@@ -95,6 +95,8 @@ export interface TrustedDecision {
 export type AgentEvent =
   | { type: "run-start"; runId: string; task: string; workDir?: string; ts: string }
   | { type: "run-end"; runId: string; status: RunRecord["status"]; ts: string }
+  /** Something asked the run to stop (cost cap, Ctrl-C, the Stop button). The reason is written by agent-loop, never by a model. */
+  | { type: "stop-requested"; runId: string; reason: string; ts: string }
   | { type: "phase-start"; runId: string; phase: PhaseName; attempt: number; ts: string }
   | { type: "phase-end"; runId: string; phase: PhaseName; attempt: number; verdict: PhaseVerdict; ts: string }
   | { type: "overseer-decision"; runId: string; phase: PhaseName; decision: OverseerDecision; ts: string }
@@ -306,4 +308,6 @@ export interface PipelineConfig {
    * run exists, so a refused target fails at startup; the pipeline starts the session once the run
    * has an id, and closes it when the run ends. */
   desktop?: import("./desktop-tools.js").ResolvedDesktop;
+  /** Ends the run early (cost cap, Ctrl-C, the page's Stop button). The run is then recorded as "stopped". */
+  control?: import("./run-control.js").RunControl;
 }

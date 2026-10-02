@@ -8,10 +8,10 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 
 | Where it runs | What | Cost |
 |---|---|---|
-| `npm test` (and CI) | 26 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
+| `npm test` (and CI) | 34 suites: stores, hooks, approval server, terminal, web UI in real Chromium, browser tools in real Chromium, desktop controls against a fake driver | none |
 | `bash test/stress/pipeline_logic.sh` (and CI) | 11 pipeline edge cases with the scripted fake SDK | none |
 | `npm run test:desktop-real` (and CI, `REQUIRE_DESKTOP_REAL=1`) | The real native driver, real X11 input, real window manager, real windows, under Xvfb | none |
-| `npm run test:real-model-browser`, `npm run test:real-model-desktop` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window | a few cents each (Haiku) |
+| `npm run test:real-model-browser`, `npm run test:real-model-desktop`, `test:real-model-stop`, `test:real-model-roast` | The **real SDK and a real model** dispatching browser / desktop tool calls through the real hooks into a real Chromium / real window | a few cents each (Haiku) |
 | `test/browser-approval.mjs`, `test/validate-*.mjs`, `test/e2e/record-run.mjs`, `test/stress/real_runs.sh` | Whole pipeline runs with a real model | about $1 a run; manual |
 
 ## Flow by flow
@@ -25,6 +25,11 @@ Chromium, the real native desktop driver and a real window, the real Claude Agen
 | Terminal approval prompt, saved report, `insights` | `terminal.mjs`, `report.mjs`, `insights-cli.mjs` | real |
 | Browser tools, handler level: refs, `click_at`, tabs, hover/select/scroll, every leak channel (link, redirect, fetch, WebSocket, WebRTC, service worker, popup flood) | `browser-tools.mjs`, `browser-computer-use.mjs`, with a counted non-allowed host and a no-defence control run | real Chromium |
 | **Browser tools driven by a real model through the real SDK** | `browser-real-sdk.mjs`: the model opens a page, inspects, clicks real buttons (the app's own server counts them); the page's link and its injected "visit this host" order reach nothing (control: the listener does see a direct request) | real SDK, real model, real Chromium |
+| Ending a run early: cost cap, Ctrl-C, SIGTERM, the page's Stop button; a second Ctrl-C | `stop.mjs` (stand-in SDK that honours an abort; the previous commit's Ctrl-C bug reproduced first), `ui-stop.mjs` (real Chromium) | stand-in SDK in CI; **real SDK: `stop-real.mjs`, opt-in, a few cents** |
+| `agent-loop doctor`, and the cause printed when a desktop target cannot start | `doctor.mjs` (every branch through injected probes; a real X11 socket; the CLI) | real probes, fake machine states |
+| `insights` talking about your habits (`--roast offline|api`) | `roast.mjs` (catalogue lint, canaries, fake model, CLI); `roast-real.mjs` opt-in | fake SDK in CI; one real Haiku call opt-in |
+| Plain mode (every cartoon off), live switch, remembered, server default, saved report | `ui-plain.mjs`, `ui-cartoon-stress.mjs` | real Chromium |
+| Long runs: replay speed, history that keeps its structure | `ui-replay.mjs`, `bus-history.mjs` | real Chromium |
 | Desktop tools, handler level: target resolution, denylist, key and text rules, single-use captures, identity checks, caps, timeouts | `desktop-tools.mjs`, `desktop-adapter.mjs`, `desktop-cli.mjs`, `desktop-pipeline.mjs` | fake driver, stand-in SDK |
 | Desktop against a real window: input lands, refusals deliver nothing, moved/resized/impostor/decoy/overlap/minimised, no window manager, real accessibility tree | `desktop-real*.mjs` (5 files) with an app that logs everything it receives | real driver, real window |
 | Desktop CLI end to end (flag, startup line, session start/end, insights) | `desktop-cli.mjs` (refusals), `desktop-real-cli.mjs` (success path, real window, fake model) | real driver, fake model |

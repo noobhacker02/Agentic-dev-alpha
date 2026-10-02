@@ -20,7 +20,8 @@
   AL.mascot = api;
   if (!S || !S.has("cat.idle") || !S.has("cat.dance") || !S.has("cat.hop")) { api.sync = api.touch = api.speak = api.react = api.setEnabled = () => {}; api.state = () => ({ enabled: false, mood: "idle", anchor: "home", x: 0, y: 0, hidden: true }); return; }
 
-  const pref = () => { try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
+  // Plain mode (ui/plain.js) wins over the cat's own setting, which is left alone so it is back as it was when plain mode ends.
+  const pref = () => { if (AL.plain) return false; try { return localStorage.getItem(KEY) !== "off"; } catch { return true; } };
   let el, body, bubble, wrap, layout = null;
   let mood = "idle", lastSay = "", lastActivity = Date.now(), attentionSince = 0, nudged = 0;
   let travelTimer = null, bubbleTimer = null, flash = null, enabled = false, queued = false;
@@ -148,7 +149,7 @@
     if (el) { el.hidden = !on; if (on) { el.dataset.placed = ""; place(true); apply(); } }
     api.enabled = on;
   }
-  api.setEnabled = (on) => { try { localStorage.setItem(KEY, on ? "on" : "off"); } catch {} enable(on); };
+  api.setEnabled = (on) => { try { localStorage.setItem(KEY, on ? "on" : "off"); } catch {} enable(on && !AL.plain); };
   api.sync = sync; api.touch = touch; api.speak = (t, ms) => enabled && say(t, ms); api.react = react;
   api.state = () => ({ enabled, mood, anchor: api.anchor, x: api.x, y: api.y, hidden: !!(el && el.hidden) });
 
@@ -171,4 +172,5 @@
   const watchDock = () => { const dock = document.getElementById("dock"); if (dock && window.ResizeObserver) new ResizeObserver(schedule).observe(dock); };
   if (document.readyState !== "loading") watchDock(); else document.addEventListener("DOMContentLoaded", watchDock);
   if (document.readyState !== "loading") enable(pref()); else document.addEventListener("DOMContentLoaded", () => enable(pref()));
+  if (AL.onPlain) AL.onPlain(() => enable(pref()));
 })();

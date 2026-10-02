@@ -102,6 +102,11 @@ running in parallel), the swarm pattern — a bounded set of isolated children r
 results back to one coordinator, never to each other — is the model worth adopting, not a shared
 "decisions/discoveries" file multiple phases write into at once.
 
+## What came of it
+
+Written before any of it was built; [`REFERENCE-AUDIT.md`](REFERENCE-AUDIT.md) is the later check of what was borrowed, what was built
+(the desktop controls, in `docs/DESKTOP-AGENT.md`), what was not (parallel fan-out) and what was found by running things.
+
 ## Verdict
 
 Neither project needs to be forked or depended on. The concrete, reusable findings are architectural,

@@ -135,6 +135,13 @@
   #tree table { border-collapse: collapse; width: 100%; } #tree td, #tree th { text-align: left; padding: 3px 14px 3px 0; vertical-align: top; }
   #tree th { color: var(--dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
   #view-toggle { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; }
+  #stop-btn { background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; font: inherit; color: var(--text); }
+  #stop-btn[hidden] { display: none; }
+  #stop-btn.armed { color: var(--red); border-color: var(--red); }
+  #stop-btn:disabled { opacity: .6; cursor: default; }
+  .still { font-size: 11px; color: var(--yellow); margin-left: 8px; }
+  .still.ended { color: var(--dim); }
+  .blk.stopnote { color: var(--red); }
 
   /* transcript blocks */
   .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; animation: blk-in .2s ease-out; }
@@ -290,6 +297,10 @@
   html[data-cursors="on"] :is(button:disabled) { cursor: var(--cur-not-allowed, not-allowed); }
   html[data-cursors="on"] :is(#browser-panel a img, .desk-shot img) { cursor: var(--cur-zoom-in, zoom-in); }
   html[data-cursors="on"] :is(.blk.thinking) { cursor: var(--cur-pointer, pointer); }
+  /* Plain mode (ui/plain.js): every cartoon off. The scripts also stop their work; this is what keeps the page clean at once and
+     if a script is slow to react. The offline dialog keeps its words and its Retry button. */
+  html[data-plain="on"] :is(.px, #cat, #w-cat-spot, #sound-toggle, #offline #dino, #offline #off-play, #offline .off-fine) { display: none !important; }
+  html[data-plain="on"] .opts-cartoon { opacity: .5; }
 
   /* header: wraps instead of overflowing; one family of small pill buttons */
   header { flex-wrap: wrap; row-gap: 6px; }
@@ -450,8 +461,10 @@
   <span class="stat">⏱ <b id="elapsed">0s</b></span>
   <span class="stat">$ <b id="cost">0.00</b></span>
   <span id="status">connecting…</span>
+  <button id="stop-btn" type="button" hidden title="Stop the run. It is saved as stopped and its report is still written. Click twice to confirm.">stop run</button>
   <button id="view-toggle" type="button" title="Show the run as a tree of who did what, instead of the transcript">tree</button>
   <button id="humor-toggle" type="button" title="How much the agents joke around (this page only)" hidden></button>
+  <button id="plain-toggle" type="button" title="Turn the cartoons off (the cat, pixel icons and cursors, the dinosaur game, sound) or back on">cartoons: on</button>
   <button id="sound-toggle" type="button" data-mode="off" title="Sound: off. Click to turn on blips, then music (all generated here, nothing downloaded)" hidden>♪ off</button>
   <button id="theme-toggle" type="button" title="Switch look">💬</button>
   <button id="help-btn" type="button" title="Shortcuts, options and credits (?)" aria-haspopup="dialog">?</button>
@@ -490,10 +503,15 @@
     <div class="keys"><span><kbd>t</kbd></span><span>switch between the transcript and the tree of who did what</span><span><kbd>m</kbd></span><span>sound: off, blips, music</span><span><kbd>?</kbd></span><span>this window</span></div>
     <h3>Options</h3>
     <div class="opts">
+      <label><input type="checkbox" id="opt-plain" /> <b>plain mode</b>: turns every cartoon off at once (the cat, pixel icons, cursors, the dinosaur game, sound)</label>
+      <label><input type="checkbox" id="opt-notify" /> tell me with a browser notification when a prompt is waiting and this tab is in the background</label>
+      <div class="fine" id="notify-fine"></div>
+      <div class="opts-cartoon">
       <label><input type="checkbox" id="opt-cat" /> the cat</label>
       <label><input type="checkbox" id="opt-cursors" /> pixel mouse cursors</label>
       <label>sound <select id="opt-sound"><option value="off">off</option><option value="sfx">blips</option><option value="music">blips + music</option></select></label>
-      <div class="fine">Sound is made in your browser (nothing is downloaded) and is off until you turn it on. These settings are remembered in this browser only.</div>
+      </div>
+      <div class="fine">Sound is made in your browser (nothing is downloaded) and is off until you turn it on. These settings are remembered in this browser only. Plain mode can also be set with <code>?plain=1</code> on the page's address, or <code>agent-loop run --plain</code>.</div>
     </div>
     <h3>What the cat does</h3>
     <ul><li>sways by the input box while nothing is happening, dances while an agent works</li><li>runs to a waiting permission prompt, sits on its edge and hops until you answer; it nudges after 20 s, 1 min and 3 min</li><li>stars when a run succeeds, slumps when it fails, naps after 90 s of quiet</li><li>click it. It does nothing useful, but it is friendly</li></ul>
@@ -502,6 +520,7 @@
   </div>
 </div>
 <script src="/persona.js"></script>
+<script src="/plain.js"></script>
 <script src="/sprite-data.js"></script>
 <script src="/sprites.js"></script>
 <script src="/sound.js"></script>
@@ -547,6 +566,8 @@ function promptKind(name) {
 }
 // Claude Code's turning glyph and a verb per agent: display only, chosen by phase and elapsed time.
 const SPIN = ["✻", "✽", "✶", "✳", "✢", "✳", "✶", "✽"];
+// the turning glyph; plain mode (ui/plain.js) keeps it on the first frame
+const spinGlyph = () => (AL.plain ? SPIN[0] : SPIN[Math.floor(Date.now() / 220) % SPIN.length]);
 const VERBS = {
   planner: ["Sketching", "Scheming", "Mapping it out", "Plotting"],
   "test-designer": ["Inventing failures", "Poking holes", "Doubting", "Weighing"],
@@ -565,7 +586,7 @@ const state = {
   runId: null, phase: null, task: "", status: "idle", startedAt: null, endedAt: null, cost: 0,
   phaseState: {}, phaseCost: {}, repairs: {}, tools: new Map(), pending: [], sel: 0,
   asked: 0, approved: 0, rejected: 0, auto: 0, toolCount: 0, rules: [], files: new Map(), pendingFiles: new Map(), decisions: [],
-  live: false, ws: null, lineage: null,
+  live: false, ws: null, lineage: null, stopping: false, toolT0: new Map(),
 };
 
 // ---------- helpers
@@ -578,6 +599,16 @@ function md(s) {
     .replace(/^#{1,6} (.*)$/gm, "<strong>$1</strong>")
     .replace(/^(\s*)[-*] /gm, "$1• ");
 }
+// Event timestamps are the server's clock; elapsed times are measured against this page's. When the page is on another machine (a
+// forwarded port, a phone) the two can disagree by minutes. Every live event arrives a moment after it was stamped, so the smallest
+// (page now - stamp) seen so far is the clock difference plus the quickest delivery: close enough, and never wrong by more than that.
+let skewMs = 0, skewSeen = false;
+function noteSkew(ts) {
+  const t = Date.parse(ts); if (!Number.isFinite(t)) return;
+  const d = Date.now() - t;
+  if (!skewSeen || d < skewMs) { skewMs = d; skewSeen = true; }
+}
+const serverNow = () => Date.now() - (skewSeen ? skewMs : 0);
 function fmtTime(ms) { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
 function short(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 function rel(p) { const d = (state.workDir || ""); p = String(p ?? ""); return d && p.startsWith(d + "/") ? p.slice(d.length + 1) : p; }
@@ -690,10 +721,56 @@ function renderHeader() {
   $("files").innerHTML = files.length ? files.map(([f, k]) => '<div class="' + (k === "Write" ? "w" : "e") + '" title="' + esc(f) + '">' + (k === "Write" ? "+ " : "~ ") + esc(rel(f)) + "</div>").join("") : '<span class="muted">none yet</span>';
   $("decisions").innerHTML = state.decisions.length ? state.decisions.map((d) => "<div>" + (d.trusted ? "✓ " : "? ") + esc(short(d.text, 140)) + "</div>").join("") : '<span class="muted">none yet</span>';
   document.title = (state.pending.length ? "(" + state.pending.length + ") approval needed · " : "") + "agent-loop";
+  renderStop();
+}
+
+// stop the run: two clicks (the first arms it for 4 s), then the server is asked; the run is saved as stopped and its report written
+const stopBtn = $("stop-btn");
+let stopArm = null;
+function renderStop() {
+  const show = !REPLAY && state.status === "running";
+  stopBtn.hidden = !show;
+  if (!show && stopArm) { clearTimeout(stopArm); stopArm = null; }
+  stopBtn.disabled = state.stopping;
+  stopBtn.textContent = state.stopping ? "stopping…" : stopArm ? "really stop?" : "stop run";
+  stopBtn.classList.toggle("armed", !!stopArm && !state.stopping);
+}
+stopBtn.onclick = () => {
+  if (state.stopping) return;
+  if (!stopArm) { stopArm = setTimeout(() => { stopArm = null; renderStop(); }, 4000); renderStop(); return; }
+  clearTimeout(stopArm); stopArm = null;
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) { state.ws.send(JSON.stringify({ type: "stop-run" })); state.stopping = true; }
+  renderStop();
+};
+
+// a tool call that has been running a while says so (a hung command otherwise looks like a calm spinner), and when the run
+// ends with a call that never answered, that call says so too
+const STUCK_MS = 30_000;
+function updateStuck() {
+  if (REPLAY || state.status !== "running") return;
+  const now = serverNow();
+  for (const [id, t0] of state.toolT0) {
+    const el = state.tools.get(id); if (!el) continue;
+    const waiting = state.pending.some((p) => p.toolUseId === id);
+    let s = el.querySelector(".still");
+    if (waiting || now - t0 < STUCK_MS) { if (s) s.remove(); continue; }
+    if (!s) { s = document.createElement("span"); s.className = "still"; el.querySelector(".line").appendChild(s); }
+    s.textContent = "still running · " + fmtTime(now - t0);
+  }
+}
+function markUnfinishedTools() {
+  for (const [id, el] of state.tools) {
+    if (el.classList.contains("ok") || el.classList.contains("err") || el.classList.contains("denied")) continue;
+    el.querySelector(".still")?.remove();
+    const s = document.createElement("span"); s.className = "still ended"; s.textContent = "no result · the run ended";
+    el.querySelector(".line")?.appendChild(s);
+  }
+  state.toolT0.clear();
 }
 function tickClock() {
+  safe(updateStuck);
   if (!state.startedAt) return;
-  $("elapsed").textContent = fmtTime((state.endedAt || Date.now()) - state.startedAt);
+  $("elapsed").textContent = fmtTime((state.endedAt || serverNow()) - state.startedAt);
   if (!state.pending.length) renderDock();
 }
 setInterval(tickClock, 1000);
@@ -818,9 +895,9 @@ function renderDock() {
   }
   if (!ev) {
     const running = state.status === "running";
-    const spin = SPIN[Math.floor(Date.now() / 220) % SPIN.length];
+    const spin = spinGlyph();
     const status = running
-      ? '<span class="spin">' + spin + '</span> <span class="verb">' + esc(workVerb()) + "…</span> <span class=\"muted\">(" + esc(state.phase || "starting") + " · " + fmtTime(Date.now() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
+      ? '<span class="spin">' + spin + '</span> <span class="verb">' + esc(workVerb()) + "…</span> <span class=\"muted\">(" + esc(state.phase || "starting") + " · " + fmtTime(serverNow() - state.startedAt) + " · $" + state.cost.toFixed(2) + ")</span>"
       : state.status === "idle" ? '<span class="muted">' + esc(idleLine()) + "</span>"
       : "Run " + esc(state.status) + "." + (state.reportPath ? ' <span class="muted">Saved report: ' + esc(state.reportPath) + "</span>" : "");
     // Only the status text changes each tick; the input is built once so typing never loses focus.
@@ -906,6 +983,7 @@ function tagTool(id, cls, text) {
 }
 
 function render(ev) {
+  if (!replaying && !REPLAY && ev.ts) noteSkew(ev.ts);   // only live events say anything about the clocks
   if (ev.runId) state.runId = ev.runId;
   if (ev.phase) state.phase = ev.phase;
   switch (ev.type) {
@@ -914,8 +992,13 @@ function render(ev) {
       { const cw = $("w-cwd"); if (cw && ev.workDir) cw.textContent = "working in " + ev.workDir; }
       blk("text md", "<strong>Task:</strong> " + md(ev.task));
       break;
+    case "stop-requested":
+      state.stopping = true;
+      blk("stopnote", '<span class="hint">■ Stop requested</span> <span class="muted">· ' + esc(ev.reason) + "</span>");
+      break;
     case "run-end":
-      state.status = ev.status; state.endedAt = Date.parse(ev.ts);
+      state.status = ev.status; state.endedAt = Date.parse(ev.ts); state.stopping = false;
+      markUnfinishedTools();
       tickClock();
       blk("run-end " + ev.status,
         "<strong>Run " + esc(ev.status) + "</strong> · " + fmtTime(state.endedAt - state.startedAt) + " · $" + state.cost.toFixed(2) +
@@ -957,6 +1040,7 @@ function render(ev) {
       const [name, args] = toolLabel(ev.toolName, ev.toolInput);
       const el = blk("tool", '<div class="line">' + toolIcon(ev.toolName) + '<span class="name">' + esc(name) + '</span><span class="args">(' + esc(args) + ")</span></div>");
       state.tools.set(ev.toolUseId, el);
+      state.toolT0.set(ev.toolUseId, Date.parse(ev.ts) || serverNow());
       if (ev.toolName === "Write" || ev.toolName === "Edit" || ev.toolName === "NotebookEdit") {
         // A file is "changed" once the write has happened: a refused one (the human said no) isn't, so wait for the result.
         const f = ev.toolInput?.file_path ?? ev.toolInput?.notebook_path;
@@ -967,8 +1051,9 @@ function render(ev) {
     case "tool-result": {
       const pf = state.pendingFiles.get(ev.toolUseId);
       if (pf) { state.pendingFiles.delete(ev.toolUseId); if (!ev.isError && !state.files.has(pf[0])) state.files.set(pf[0], pf[1]); }
+      state.toolT0.delete(ev.toolUseId);
       const t = toolBlock(ev.toolUseId);
-      if (t) { t.insertAdjacentHTML("beforeend", outputHtml(ev.summary, ev.isError)); t.classList.add(ev.isError ? "err" : "ok"); if (nearBottom()) scrollBox.scrollTop = scrollBox.scrollHeight; }
+      if (t) { t.querySelector(".still")?.remove(); t.insertAdjacentHTML("beforeend", outputHtml(ev.summary, ev.isError)); t.classList.add(ev.isError ? "err" : "ok"); if (nearBottom()) scrollBox.scrollTop = scrollBox.scrollHeight; }
       else blk("tool " + (ev.isError ? "err" : "ok"), outputHtml(ev.summary, ev.isError));
       break;
     }
@@ -984,6 +1069,7 @@ function render(ev) {
     case "approval-request":
       if (state.pending.some((p) => p.requestId === ev.requestId)) break;
       state.asked++; state.pending.push(ev); tagTool(ev.toolUseId, "wait", "awaiting approval");
+      notifyApproval(ev);
       renderDock();
       break;
     case "approval-resolved":
@@ -991,7 +1077,8 @@ function render(ev) {
       if (ev.decision === "allow") state.approved++; else state.rejected++;
       if (ev.rememberedRule && !state.rules.includes(ev.rememberedRule)) state.rules.push(ev.rememberedRule);
       tagTool(ev.toolUseId, ev.decision === "allow" ? "ok" : "no", ev.decision === "allow" ? (ev.rememberedRule ? "approved · rule saved" : "approved") : "rejected" + (ev.reason ? ": " + short(ev.reason, 60) : ""));
-      if (ev.decision === "deny") toolBlock(ev.toolUseId)?.classList.add("denied");
+      if (ev.decision === "deny") { toolBlock(ev.toolUseId)?.classList.add("denied"); state.toolT0.delete(ev.toolUseId); }
+      else if (state.toolT0.has(ev.toolUseId)) state.toolT0.set(ev.toolUseId, Date.parse(ev.ts) || serverNow()); // it starts running once you say yes
       renderDock();
       break;
     case "approval-auto-allowed":
@@ -1238,10 +1325,17 @@ const helpEl = $("help");
 let helpReturn = null;
 const modalOpen = () => !helpEl.hidden;
 function syncOptions() {
-  const cat = $("opt-cat"), cur = $("opt-cursors");
-  cat.checked = !!(AL.mascot && AL.mascot.enabled); cat.disabled = !(AL.sprites && AL.sprites.has("cat.idle") && AL.mascot && AL.mascot.setEnabled);
-  cur.checked = document.documentElement.dataset.cursors === "on"; cur.disabled = !(AL.sprites && AL.sprites.hasCursors);
-  $("opt-sound").disabled = !AL.sound; renderSound();
+  const cat = $("opt-cat"), cur = $("opt-cursors"), plain = !!AL.plain;
+  $("opt-plain").checked = plain;
+  // while plain mode is on the individual options are shown as they will be when it ends, and can't be changed
+  cat.checked = plain ? flag("agent-loop-cat", "on") !== "off" : !!(AL.mascot && AL.mascot.enabled);
+  cat.disabled = plain || !(AL.sprites && AL.sprites.has("cat.idle") && AL.mascot && AL.mascot.setEnabled);
+  cur.checked = plain ? flag("agent-loop-cursors", "on") === "on" : document.documentElement.dataset.cursors === "on";
+  cur.disabled = plain || !(AL.sprites && AL.sprites.hasCursors);
+  $("opt-sound").disabled = plain || !AL.sound; renderSound();
+  $("opt-notify").checked = notifyOn(); $("opt-notify").disabled = !("Notification" in window);
+  $("plain-toggle").textContent = plain ? "cartoons: off" : "cartoons: on";
+  $("plain-toggle").setAttribute("aria-pressed", plain ? "true" : "false");
 }
 function openHelp() { helpReturn = document.activeElement; helpEl.hidden = false; syncOptions(); $("help-close").focus(); }
 function closeHelp() { helpEl.hidden = true; if (helpReturn && helpReturn.focus) helpReturn.focus(); }
@@ -1259,14 +1353,47 @@ $("help-ico").innerHTML = ico("persona");
 $("help-credits").innerHTML = (((AL.sprites && AL.sprites.credits) || []).map((c) => "<li><b>" + esc(c.what) + "</b>: " + esc(c.who) + "</li>").join("") || "<li>No sprites are loaded.</li>") +
   "<li><b>sound</b>: generated in your browser; no audio files. Details in docs/ASSETS.md</li>";
 
+// browser notification when a prompt waits and the tab is in the background (opt-in; the text is only the agent's name)
+const notifyOn = () => flag("agent-loop-notify", "off") === "on" && "Notification" in window && Notification.permission === "granted";
+function notifyApproval(ev) {
+  if (!document.hidden || replaying || REPLAY || !notifyOn()) return;
+  safe(() => {
+    const who = String(ev.phase || "an agent").replace(/[^\w-]/g, "");
+    const n = new Notification(who + " needs you", { body: "A permission prompt is waiting in agent-loop.", tag: "agent-loop-approval" });
+    n.onclick = () => { window.focus(); n.close(); };
+  });
+}
+$("opt-notify").onchange = async (e) => {
+  const save = (on) => { try { localStorage.setItem("agent-loop-notify", on ? "on" : "off"); } catch {} };
+  if (!e.target.checked) { save(false); $("notify-fine").textContent = ""; return; }
+  let perm = "denied";
+  try { perm = "Notification" in window ? (Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission) : "denied"; } catch {}
+  e.target.checked = perm === "granted"; save(perm === "granted");
+  $("notify-fine").textContent = perm === "granted" ? "" : "The browser did not allow notifications for this page.";
+};
+
 // pixel cursors
-function applyCursors(on) {
+function applyCursors(on, remember = true) {
   document.documentElement.dataset.cursors = on ? "on" : "off";
-  try { localStorage.setItem("agent-loop-cursors", on ? "on" : "off"); } catch {}
+  if (remember) { try { localStorage.setItem("agent-loop-cursors", on ? "on" : "off"); } catch {} }
   $("opt-cursors").checked = on;
 }
-applyCursors(!!(AL.sprites && AL.sprites.hasCursors) && flag("agent-loop-cursors", "on") === "on");
+const cursorsWanted = () => !AL.plain && !!(AL.sprites && AL.sprites.hasCursors) && flag("agent-loop-cursors", "on") === "on";
+applyCursors(cursorsWanted(), false);
 $("opt-cursors").onchange = (e) => applyCursors(e.target.checked);
+
+// plain mode: one switch (ui/plain.js). The cat, the sound and the offline game listen for it themselves; this does the rest of the page.
+function applyPlain() {
+  applyCursors(cursorsWanted(), false);
+  safe(() => AL.sound && AL.sound.plain(AL.plain));
+  faviconKey = "~"; safe(updateFavicon);
+  safe(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) sp.textContent = spinGlyph(); });
+  syncOptions();
+  syncExtras();
+}
+$("plain-toggle").onclick = () => AL.setPlain && AL.setPlain(!AL.plain);
+$("opt-plain").onchange = (e) => AL.setPlain && AL.setPlain(e.target.checked);
+safe(() => { if (AL.onPlain) AL.onPlain(applyPlain); });
 $("opt-cat").onchange = (e) => { safe(() => AL.mascot.setEnabled(e.target.checked)); syncExtras(); };
 
 // sound: off until you turn it on
@@ -1289,7 +1416,7 @@ function soundMood() { return state.pending.length ? "attention" : state.status 
 const faviconEl = $("favicon");
 let faviconKey = "";
 function updateFavicon() {
-  const key = state.pending.length ? "approval" : state.status === "running" ? "running" : state.status === "done" ? "heart" : (state.status === "failed" || state.status === "stopped") ? "flame" : "";
+  const key = AL.plain ? "" : state.pending.length ? "approval" : state.status === "running" ? "running" : state.status === "done" ? "heart" : (state.status === "failed" || state.status === "stopped") ? "flame" : "";
   if (key === faviconKey) return;
   faviconKey = key;
   const item = key && AL.sprites && AL.sprites.data.icons && AL.sprites.data.icons.items[key];
@@ -1300,7 +1427,7 @@ let titleFlip = false;
 setInterval(() => {
   if (!document.hidden || !state.pending.length) return;
   titleFlip = !titleFlip;
-  document.title = "(" + state.pending.length + ") " + (titleFlip ? "🐱 needs you" : "approval needed") + " · agent-loop";
+  document.title = "(" + state.pending.length + ") " + (titleFlip && !AL.plain ? "🐱 needs you" : "approval needed") + " · agent-loop";
 }, 1000);
 document.addEventListener("visibilitychange", () => renderHeader());
 
@@ -1312,7 +1439,7 @@ function syncExtras() {
 }
 // the turning glyph in the status line (not for anyone who has asked for less motion)
 if (!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) {
-  setInterval(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) sp.textContent = SPIN[Math.floor(Date.now() / 220) % SPIN.length]; }, 220);
+  setInterval(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) sp.textContent = spinGlyph(); }, 220);
 }
 
 // shortcuts that work anywhere you are not typing
@@ -1323,9 +1450,10 @@ document.addEventListener("keydown", (e) => {
   if (typing || (AL.offline && AL.offline.isShown())) return;
   if (e.key === "?") { e.preventDefault(); openHelp(); }
   else if (e.key === "t") applyView(view === "tree" ? "transcript" : "tree");
-  else if (e.key === "m" && AL.sound) cycleSound();
+  else if (e.key === "m" && AL.sound && !AL.plain) cycleSound();
 });
 
+safe(syncOptions);
 renderStepper(); renderHeader();
 if (REPLAY) {
   $("status").textContent = "saved report";

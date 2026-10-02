@@ -265,12 +265,36 @@ Known and accepted, documented in `docs/BROWSER-AGENT.md` §7:
 - A Playwright quirk drops a blocked socket's `close` event in one popup sequence. The socket still
   ends CLOSED and never connects.
 
+## Round: auditing the three reference projects, and the UI v3 cartoons (2026-10-01)
+
+Full write-up and the idea-by-idea table: [`REFERENCE-AUDIT.md`](REFERENCE-AUDIT.md). Each row below was found by running something.
+
+| # | Finding | How it was found | Resolution | Test |
+|---|---|---|---|---|
+| A1 | **Ctrl-C left the run "running" in the audit database forever, wrote no report, left sessions open** | Sent SIGINT to a real process (fake model that takes a few seconds) on the previous commit: killed by the signal, status `running`, no report | `RunControl`: Ctrl-C, SIGTERM, the page's Stop button and `--max-cost` abort the model sessions, refuse waiting approvals and save the run as `stopped` with its report; a second Ctrl-C quits at once | `test/stop.mjs`, `test/ui-stop.mjs`; real SDK: `test/stop-real.mjs` (opt-in) |
+| A2 | An approval waiting when its query was aborted stayed in the bus, so a later tab was shown a dead prompt | Reading `raceWithAbort`, then a late tab in the stop test | Stopping refuses every waiting approval and the replay no longer lists it | `test/stop.mjs` (found by reading, covered by test, not reproduced on old code) |
+| A3 | Opening a long run froze the page (6,000 events: 29.6 s) | Timed a replay of growing runs | Draw the chrome once per replay: 2.2 s | `test/ui-replay.mjs` |
+| A4 | A run longer than the bus history lost `run-start` and the first `phase-start`s (so a reload, and the saved report, showed no task) | Pushed 2,000 tool events past a history limit of 100 | Trim tool chatter first, keep structural events | `test/bus-history.mjs` |
+| A5 | `agent-loop insights` crashed on one corrupt event row, could print a negative total, printed an unfiltered phase name | A test that planted a bad row | Tolerant reads, clamped costs, stripped control bytes | `test/roast.mjs`, `test/insights-cli.mjs` |
+| A6 | A browser whose clock differs from the server's would show false "still running" labels and wrong elapsed times | Simulated the page's clock 7 minutes ahead and behind | The page estimates the clock difference from live events | `test/ui-stop.mjs` (simulated; not tried across two machines) |
+| A7 | Plain mode: the turning glyph still turned | A mutation matrix over the plain-mode code left a spinner mutant alive; the test written to kill it failed on the real code | One `spinGlyph()` used by both the dock and the interval, refreshed on toggle | `test/ui-plain.mjs` |
+| A8 | Plain mode: five mutants survived (the scripts' own guards, the spinner) | 29 deliberate breaks of the new code, 24 caught first time | Tests that call the lower layer directly; a control that shows the glyph turning when plain is off | `test/ui-plain.mjs` (all five now killed) |
+| A9 | A canvas whose `getContext` returns null took the offline dialog down | Adversarial sweep of the cartoon code | Guard; the dialog works without the game | `test/ui-plain.mjs` |
+| A10 | `doctor` first reported "No display" as a blocking error to someone not using desktop control | Ran it on this machine | Desktop problems block only with `doctor --desktop` | `test/doctor.mjs` |
+| A11 | My own change made `agent-loop run` load the native desktop driver module at startup (`doctor.ts` imported its constants), even when a run was refused from its arguments | The existing module-resolution-trace test in the full suite | The driver module is loaded lazily by the probe | `test/desktop-cli.mjs` |
+
+Swept and found nothing: 80 approvals flapping while the cat chases the prompt, 60 clicks on the cat, 320x480 / 1920x300 / 600x900
+viewports (cat inside the window, over no answer button, no sideways scroll), resizes while it hops, markup in run text, 300 sound mode
+changes in a row, four server restarts in a row (`test/ui-cartoon-stress.mjs`, kept as a regression test).
+
 ## Not yet adversarially reviewed
 
-Nothing outstanding from this round. Every item opened in this document has a resolution above
-(either "fixed, tested, pushed" or "checked, confirmed no live attack surface") — treat this section
-as empty until the next round of adversarial review opens a new one, which is expected: "keep
-checking" means this list is a queue, not a one-time audit.
+Open after the last round (none of these is a known bug; they are things not yet checked):
+
+- Stopping with the real SDK has a test (`test/stop-real.mjs`) but it is opt-in; see the CHANGELOG for whether it has been run.
+- macOS and Windows desktop control; Linux/X11 is the only platform tested against a real driver.
+- The cat's and cursors' licences (unknown), the dinosaur's and Craftpix icons' (unchecked): `ASSETS.md`.
+- Parallel reviewers (OpenClaw's swarm idea) are deliberately not built; that is a spending decision for the project's owner.
 
 ## Verification discipline used throughout
 
