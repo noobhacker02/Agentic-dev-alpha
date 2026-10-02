@@ -53,9 +53,13 @@ All notable changes to this project are documented here. Format follows
 - **The dinosaur test could fail on a loaded machine** (one Linux CI run): it compared two canvas frames 250 ms apart. It now waits
   up to five seconds for the picture to change and compares where the grey pixels are, not how many there are. I could not reproduce
   the failure locally, so the cause (load on the runner) is likely, not confirmed.
-- **The real-permission notification test granted permission with no origin**, which macOS and Windows Chromium reported as
-  `denied`; it grants it for the page's own origin now, the documented form. (Never ran green on those systems before, because
-  earlier runs stopped before reaching it.)
+- **The real-permission notification test ran in the wrong browser on CI** (red on Linux, macOS and Windows; it had never run green there
+  because earlier runs stopped before reaching it). Playwright's default for a headless launch is Chromium's *headless shell*, which has
+  no notification permission of its own: the Permissions API said "granted" while `Notification.permission` said "denied". This
+  sandbox always passed the full Chromium, so it passed here; pointing the test at the shell reproduced CI's exact output. The section
+  now asks for a full Chromium (`harness({ fullChromium: true })`, `channel: "chromium"` when no path is given) and fails loudly, naming
+  both readings, if it is ever run in the shell. My first guess (the grant had no origin) was wrong; granting for the page's origin is
+  kept, being the documented form. Not verified on CI until it has run there.
 - **A test I pushed contradicted the server it ran against, and went red on all three systems** (`test/ui-stop.mjs`, the "page 7
   minutes ahead" case): it stamped events with a clock 7 minutes off while the test server truthfully reported its own, unskewed clock
   in `replay-complete`. A real server stamps events and reports its time from one clock; the test server now does too

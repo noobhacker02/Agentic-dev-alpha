@@ -26,6 +26,7 @@ export async function freePort() {
 
 /**
  * opts: viewport, historyLimit (the bus's replay history, to make trimming happen with few events), plain (the server's default, --plain), onStop (what the Stop button calls), abort (URL substrings the page may not load, to prove it survives without them),
+ *       fullChromium (a real Chromium instead of the default headless shell, for the browser's own notification permission),
  *       serverClock (what the server reports as its time to every page; defaults to the real clock), clock (install Playwright's fake clock before the page loads), reducedMotion, init (script to run first).
  * Returns { bus, srv, browser, ctx, page, ev, errors, restartServer, close }.
  */
@@ -35,7 +36,9 @@ export async function harness(opts = {}) {
   const bus = new EventBus(undefined, opts.historyLimit ? { historyLimit: opts.historyLimit } : {});
   const h = { bus, port, token, errors: [] };
   h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop, clock: opts.serverClock });
-  h.browser = await chromium.launch({ executablePath: chromePath() });
+  // fullChromium: a real Chromium, not the headless shell Playwright picks by default. The shell has no notification permission of its own
+  // (Permissions API says "granted" while Notification.permission says "denied"); anything about the real permission mechanics needs the real thing.
+  h.browser = await chromium.launch(opts.fullChromium && !chromePath() ? { channel: "chromium" } : { executablePath: chromePath() });
   h.ctx = await h.browser.newContext({ viewport: opts.viewport ?? { width: 1280, height: 800 }, reducedMotion: opts.reducedMotion ? "reduce" : "no-preference" });
   for (const part of opts.abort ?? []) await h.ctx.route((u) => u.pathname.includes(part), (r) => r.abort());
   h.page = await h.ctx.newPage();

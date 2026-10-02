@@ -272,7 +272,7 @@ ok("a page whose clock is 7 minutes ahead of or behind the server's still shows 
   const hideReal = (page, on) => page.evaluate((v) => { Object.defineProperty(document, "hidden", { configurable: true, get: () => v }); document.dispatchEvent(new Event("visibilitychange")); }, on);
 
   // permission granted by the browser
-  const g = await harness({ init: counting });
+  const g = await harness({ init: counting, fullChromium: true });
   await g.ctx.grantPermissions(["notifications"], { origin: `http://127.0.0.1:${g.port}` });   // for this origin, the documented form; with none, some platforms report "denied"
   await g.open(); g.startRun();
   const reported = await g.page.evaluate(async () => ({ constructor: Notification.permission, query: (await navigator.permissions.query({ name: "notifications" }).catch((e) => ({ state: "error: " + e.message }))).state }));
@@ -300,7 +300,7 @@ ok("a page whose clock is 7 minutes ahead of or behind the server's still shows 
   await g.close();
 
   // permission not yet answered (headless Chromium never answers, like a person who has not clicked Allow yet): ticked and waiting, nothing saved, nothing sent
-  const d = await harness({ init: counting });
+  const d = await harness({ init: counting, fullChromium: true });
   await d.open(); d.startRun();
   await d.page.keyboard.press("?");
   await d.page.locator("#opt-notify").click();
