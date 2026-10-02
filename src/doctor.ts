@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, mkdirSync, writeFileSync, rmSync, accessSync, statSync, constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { createConnection } from "node:net";
-import { join } from "node:path";
+import { join, delimiter } from "node:path";
 import { promisify } from "node:util";
 // NOTE: nothing here may import the desktop driver module at load time: cli.ts imports this file, and a run that is refused from its
 // arguments must never load the native driver (test/desktop-cli.mjs checks that with a module-resolution trace). The real probe loads it lazily.
@@ -136,8 +136,17 @@ export function realProbes(): Probes {
     nodeVersion: process.version,
     env: process.env,
     async hasSqlite() { try { await import("node:sqlite"); return true; } catch { return false; } },
+    // A search of PATH, not a `which`/`where` subprocess: a subprocess with a time limit reports "not installed" when the machine is merely slow
+    // (a loaded Windows CI runner did exactly that to `where node`), and doctor must never say that about something that is there.
     async which(cmd) {
-      try { const { stdout } = await execFileAsync(process.platform === "win32" ? "where" : "which", [cmd], { timeout: 3000 }); return stdout.split("\n")[0].trim() || undefined; } catch { return undefined; }
+      if (!cmd || /[\\/]/.test(cmd)) return undefined;
+      const dirs = (process.env.PATH ?? process.env.Path ?? "").split(delimiter).filter(Boolean);
+      const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean) : [""];
+      for (const dir of dirs) for (const ext of exts) {
+        const file = join(dir, cmd + ext);
+        try { accessSync(file, constants.X_OK); if (statSync(file).isFile()) return file; } catch { /* not here */ }
+      }
+      return undefined;
     },
     chromium() {
       if (process.env.AGENT_LOOP_CHROME_PATH && existsSync(process.env.AGENT_LOOP_CHROME_PATH)) return process.env.AGENT_LOOP_CHROME_PATH;

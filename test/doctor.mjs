@@ -120,6 +120,29 @@ const fails = (checks) => checks.filter((c) => c.level === "fail").map((c) => c.
   assert.strictEqual(await p.hasSqlite(), true);
   assert.ok(await p.which("node"), "which finds node");
   assert.strictEqual(await p.which("definitely-not-a-command-xyz"), undefined);
+  // A search of PATH, not a `which`/`where` subprocess with a time limit: that reported "not installed" when a loaded Windows CI runner was
+  // merely slow, and doctor must never say so about something that is there. A fake command in a temporary PATH directory is found; a directory
+  // with the name, a file that is not executable (POSIX), a path-like name and an empty PATH are not.
+  {
+    const bin = mkdtempSync(join(tmpdir(), "agent-loop-which-"));
+    const win = process.platform === "win32";
+    const fake = join(bin, "agent-loop-fake-tool" + (win ? ".cmd" : ""));
+    writeFileSync(fake, win ? "@echo off\r\n" : "#!/bin/sh\n", { mode: 0o755 });
+    mkdirSync(join(bin, "agent-loop-a-directory" + (win ? ".cmd" : "")));
+    if (!win) writeFileSync(join(bin, "agent-loop-not-executable"), "#!/bin/sh\n", { mode: 0o644 });
+    const saved = process.env.PATH;
+    try {
+      // PATH is only the fake directory: no `which`, no `where` can even be launched, so a probe that depends on one finds nothing. That is the
+      // difference between a search and a subprocess, and the reason a slow runner could make the subprocess say "not installed".
+      process.env.PATH = bin;
+      assert.strictEqual(await p.which("agent-loop-fake-tool"), fake, "a command in a PATH directory is found, by its full path, with no subprocess to launch");
+      assert.strictEqual(await p.which("agent-loop-a-directory"), undefined, "a directory with the name is not a command");
+      if (!win) assert.strictEqual(await p.which("agent-loop-not-executable"), undefined, "a file without the executable bit is not a command");
+      assert.strictEqual(await p.which("../agent-loop-fake-tool"), undefined, "a path-like name is refused, not searched");
+      process.env.PATH = "";
+      assert.strictEqual(await p.which("node"), undefined, "an empty PATH finds nothing");
+    } finally { process.env.PATH = saved; rmSync(bin, { recursive: true, force: true }); }
+  }
   const dir = mkdtempSync(join(tmpdir(), "agent-loop-doctor-"));
   assert.strictEqual(p.writable(join(dir, "a", "b")), true, "a folder that can be created is writable");
   writeFileSync(join(dir, "file"), "x");

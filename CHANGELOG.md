@@ -57,6 +57,13 @@ All notable changes to this project are documented here. Format follows
 - **The dinosaur test could fail on a loaded machine** (one Linux CI run): it compared two canvas frames 250 ms apart. It now waits
   up to five seconds for the picture to change and compares where the grey pixels are, not how many there are. I could not reproduce
   the failure locally, so the cause (load on the runner) is likely, not confirmed.
+- **`agent-loop doctor` could say a tool was not installed when the machine was merely slow** (found by the cross-platform check the moment it
+  was made blocking: `test:doctor` failed once on Windows, "which finds node", after passing on the same code minutes earlier). The
+  probe ran `which`/`where` as a subprocess with a 3-second limit and read a timeout as "not found"; with a 1 ms limit that gives a false
+  "not found" for node in 7 of 20 tries here. It searches `PATH` directly now (`PATHEXT` on Windows), with no subprocess and no limit to
+  hit. The test puts only a fake command's directory on `PATH`, where the old probe cannot even launch `which`: it fails against the old
+  probe and passes against the new one. The failure itself was seen once on CI and not reproduced there; the mechanism is shown, not the
+  occurrence.
 - **The real-permission notification test ran in the wrong browser on CI** (red on Linux, macOS and Windows; it had never run green there
   because earlier runs stopped before reaching it). Playwright's default for a headless launch is Chromium's *headless shell*, which has
   no notification permission of its own: the Permissions API said "granted" while `Notification.permission` said "denied". This
