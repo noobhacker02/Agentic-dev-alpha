@@ -194,6 +194,18 @@ export type AgentEvent =
       input: unknown;
       ts: string;
     }
+  /** Something a page did that the agent is told about: an uncaught exception, a console error or warning, a failed request, a dialog, a download.
+   * `text` is page-controlled and already cleaned and bounded; a URL in it never carries a query string or fragment. Capped per session. */
+  | {
+      type: "browser-notice";
+      runId: string;
+      browserSessionId: string;
+      tabId: string;
+      kind: "pageerror" | "console.error" | "console.warn" | "http" | "blocked" | "netfail" | "dialog" | "download" | "crash" | "redirect";
+      text: string;
+      count: number;
+      ts: string;
+    }
   | {
       type: "browser-action-completed";
       runId: string;

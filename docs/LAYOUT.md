@@ -33,7 +33,7 @@ Moved out of the README so the README can be read in one sitting. Nothing here c
 | `ui/plain.js` | Plain mode: the one switch every cartoon (cat, pixel icons and cursors, dinosaur game, sound) obeys |
 | `src/roast.ts`, `src/habits.ts`, `src/roast-api.ts` | What `insights` says about you: the numbers-only `Habits`, the catalogue and grade, and the optional model call |
 | `test/roast.mjs` | The roast, offline and with a fake model: lint, determinism, canaries, validation, CLI |
-| `src/browser-tools.ts` | The 15 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
+| `src/browser-tools.ts` | The 18 browser tools, the per-run session manager, and the local-only network boundary — see [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) |
 | `test/browser-tools.mjs` | Real-Chromium tests of the original browser tools: containment, the screenshot cap, `close()` never throwing |
 | `test/browser-computer-use.mjs` | Real-Chromium tests of refs, screenshot-bound `click_at`/`scroll_at`, tabs, hover/select/scroll, and every leak channel (WebSocket, WebRTC, service worker, popups) against a counted non-allowed host, with a no-defence control run |
 | `src/desktop-tools.ts`, `src/desktop-policy.ts`, `src/desktop-driver-cua.ts` | Desktop tools for exactly one human-chosen window: the five tools, the session that fences every action, the denylist and key/text rules, and the narrow adapter over the native driver — see [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md) |

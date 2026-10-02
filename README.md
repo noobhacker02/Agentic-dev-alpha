@@ -325,10 +325,10 @@ stored events. The page has the same tree behind the **tree** button, and every 
 
 ## Browser Agent
 
-Phases can drive a real, headless Chromium instance through 15 tools (`src/browser-tools.ts`), registered
+Phases can drive a real, headless Chromium instance through 18 tools (`src/browser-tools.ts`), registered
 as a real in-process MCP server via the SDK's own `createSdkMcpServer`/`tool()`:
 
-- **Navigate and read:** `open`, `inspect`, `wait`, `screenshot`.
+- **Navigate and read:** `open`, `inspect` (with a `query`), `text`, `notices`, `wait`, `screenshot`, `resize`. Every result ends with what the page did that you should know: an exception, a console error, a failed request, a dialog, a download.
 - **Act on an element:** `click`, `fill`, `press`, `hover`, `select_option`, `scroll`.
 - **Act on a point in a screenshot:** `click_at`, `scroll_at`.
 - **Tabs:** `list_tabs`, `switch_tab`, `close_tab`.

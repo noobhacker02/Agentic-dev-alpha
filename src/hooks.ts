@@ -1,4 +1,5 @@
-import { isAbsolute, resolve, sep } from "node:path";
+import { dirname, isAbsolute, parse, resolve, sep } from "node:path";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import type { HookCallback, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { analyzeBash } from "./bash-analysis.js";
 import type { EventBus } from "./bus.js";
@@ -128,11 +129,55 @@ const PATH_ARGS: Record<string, string[]> = {
   Grep: ["path"],
 };
 
+/**
+ * The physical location a path names: every symlink followed, and `..` applied to the real directory it follows (the operating system resolves
+ * `link/..` through the link, so collapsing it as text first, as `path.resolve` does, judges a different path from the one that will be opened).
+ * The part of a path that does not exist yet (a file about to be created) is kept as written. Anything unexpected (a symlink loop, a permission
+ * error) returns undefined, and callers treat that as "outside": a path that cannot be resolved is not one to trust.
+ * Found by adversary round 1 (A1): a symlink inside --dir pointing at the agent profile read straight through the old, text-only check.
+ */
+export function canonicalPath(input: string, baseDir: string, hops = 0): string | undefined {
+  if (hops > 40) return undefined; // a chain of links this long is a loop
+  const raw = isAbsolute(input) ? input : baseDir + sep + input;
+  const root = parse(raw).root;
+  let cur = root;
+  for (const comp of raw.slice(root.length).split(/[\\/]+/)) {
+    if (comp === "" || comp === ".") continue;
+    if (comp === "..") {
+      cur = dirname(cur);
+      continue;
+    }
+    const next = cur.endsWith(sep) ? cur + comp : cur + sep + comp;
+    try {
+      cur = realpathSync.native(next);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
+      // Either nothing is there (a file about to be created: keep it as written), or a symlink whose target does not exist yet. Writing through
+      // the second kind creates the file at the target, so follow it by hand.
+      let link: string | undefined;
+      try {
+        if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next);
+      } catch { /* not there at all */ }
+      if (link === undefined) {
+        cur = next;
+      } else {
+        const followed = canonicalPath(link, cur, hops + 1);
+        if (followed === undefined) return undefined;
+        cur = followed;
+      }
+    }
+  }
+  return cur;
+}
+
+const foldCase = (p: string): string => (process.platform === "win32" || process.platform === "darwin" ? p.toLowerCase() : p);
+
 function isInside(workDir: string, candidate: string): boolean {
-  const abs = isAbsolute(candidate) ? candidate : resolve(workDir, candidate);
-  const resolved = resolve(abs);
-  const root = resolve(workDir);
-  return resolved === root || resolved.startsWith(root + sep);
+  const root = canonicalPath(workDir, process.cwd());
+  const resolved = canonicalPath(candidate, workDir);
+  if (root === undefined || resolved === undefined) return false;
+  const r = foldCase(root), c = foldCase(resolved);
+  return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
 }
 
 /**
@@ -189,7 +234,9 @@ export function createSensitiveFileHook(): HookCallback {
     for (const arg of argNames) {
       const value = toolInput[arg];
       if (typeof value !== "string" || value === "") continue;
-      if (SENSITIVE_PATH_RE.test(value) || SENSITIVE_ABS_RE.test(resolve(value))) {
+      // The name as written, and the file it really is: a link called notes.txt that points at .env is the credential file.
+      const real = canonicalPath(value, process.cwd());
+      if (SENSITIVE_PATH_RE.test(value) || SENSITIVE_ABS_RE.test(resolve(value)) || (real !== undefined && (SENSITIVE_PATH_RE.test(real) || SENSITIVE_ABS_RE.test(real)))) {
         return {
           hookSpecificOutput: {
             hookEventName: pre.hook_event_name,

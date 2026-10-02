@@ -1,0 +1,22 @@
+{
+  "suites": {
+    "observability": {
+      "value": 0,
+      "max": 8,
+      "commit": "7138e1b",
+      "date": "2026-10-02"
+    },
+    "safety": {
+      "value": 26,
+      "max": 26,
+      "commit": "7138e1b",
+      "date": "2026-10-02"
+    },
+    "adversary-yield": {
+      "value": 20,
+      "max": null,
+      "commit": "7138e1b",
+      "date": "2026-10-02"
+    }
+  }
+}

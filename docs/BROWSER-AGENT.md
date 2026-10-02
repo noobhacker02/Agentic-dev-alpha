@@ -1,7 +1,7 @@
 # Browser agent
 
 `agent-loop run --browser` gives the `builder` and `verifier` phases a real headless Chromium,
-driven through 15 tools in `src/browser-tools.ts`. This page covers what the tools do, how a session
+driven through 18 tools in `src/browser-tools.ts`. This page covers what the tools do, how a session
 lives across phases, where artifacts go, and the local-only boundary, with the evidence for each part.
 
 Source comments cite this page by section number, so the numbering is kept stable.
@@ -19,7 +19,10 @@ prompt explains the workflow described below.
 | Tool | Input | What it does |
 |---|---|---|
 | `open` | `url` | Navigates the active tab. Only `http://localhost` / `http://127.0.0.1` URLs. |
-| `inspect` | — | URL, title, tab, visible text (3,000 chars), and up to 60 interactive elements, each with a ref |
+| `inspect` | optional `query` | URL, title, tab, visible text (3,000 chars), and up to 60 interactive elements, each with a ref. With `query`, only elements whose role, name or id contains it. Says so when the page has no visible text and no interactive elements. |
+| `text` | optional `ref`/`selector`, `offset`, `length` | The page's (or one element's) text in sections of up to 8,000 characters, with the total and the `offset` to call again with |
+| `notices` | optional `limit` | Everything the page did that the agent should know about, most recent last, with counts, and what was dropped |
+| `resize` | `width`, `height` | Viewport 320-3840 by 240-2160; refs and snapshotIds from before are refused |
 | `click` | `ref` or `selector` | Clicks that element |
 | `fill` | `ref` or `selector`, `value` | Fills a field |
 | `press` | `key`, optional `ref` or `selector` | Focuses the element if given, then presses the key |
@@ -127,22 +130,65 @@ the browser context, in layers. Each layer was added because a real exploit got 
 
 | Channel | Layer that stops it | How we know |
 |---|---|---|
-| Links, redirects, forms, `fetch`/XHR, images, beacons, prefetch, `EventSource`, popups | `context.route("**/*")` aborts every non-local request | Clicking a link reached a second server before this existed |
+| Links, forms, `fetch`/XHR, images, beacons, prefetch, `EventSource`, popups (the first URL of each request) | `context.route("**/*")` aborts every non-local request | Clicking a link reached a second server before this existed |
+| **Every hop of a redirect**, the browser's own background requests, tunnels, DNS | The network gate (`src/net-gate.ts`): all browser traffic goes through a proxy that refuses what is not on the list, resolves names itself and connects to the checked address | A 302 from an allowed page reached a decoy on `127.0.0.2` with the query string intact; `test/browser-redirect-gate.mjs` runs 16 ways of trying, and the mutation run kills 13 of 13 mutants |
 | WebSocket | `context.routeWebSocket` closes non-local sockets with code 1008 before they connect; local sockets aren't matched and behave natively | A page's `new WebSocket()` reached a non-allowed host with the route gate in place: `route()` never sees WebSockets |
 | WebRTC (STUN over UDP, TURN over TCP) | An init script removes `RTCPeerConnection` in every realm before page scripts run | STUN packets reached a non-allowed host (20 of them in one probe). Chromium's `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` did **not** stop them, even to a non-loopback address. The init script held in the main page, a fresh iframe read synchronously, `srcdoc`, `data:` and `blob:` iframes, and `window.open('')` popups |
 | Service workers | `serviceWorkers: "block"` | Playwright's docs say `route()` can't see requests a service worker answers, and recommend blocking them whenever interception matters |
 | Tabs and popups | All of the above, since every tab shares the one context | Tested per channel in a page-opened popup |
 | Runaway popups | At most 10 tabs; extra popups are closed as they arrive | A page opening 25 popups gets 10 |
 
-Tried and dropped: routing everything through a dead proxy as a backstop. Chromium sent loopback
-targets around the proxy anyway, so it couldn't be verified here, and an unverifiable defence
-doesn't ship.
+**The network gate (added after adversary round 1, finding A2).** The route handler is called once, for the first URL of a request. A server-side
+redirect (301, 302, 303, 307, 308) is followed inside the browser and the handler never sees the next hop, so an allowed local page could send the
+browser to any host, query string and cookies included. Reproduced: a decoy server on `127.0.0.2` received `/r301-exfil?data=secret` through one redirect
+while a direct `open` of the same host was refused. The fix is a layer underneath: the browser is launched with a small forward proxy
+(`src/net-gate.ts`) that **every** request has to go through, so each hop of a redirect is a new request that arrives there. It listens on `127.0.0.1`
+only and requires a random credential, forwards only to hosts on the allowed list (TEST mode: `localhost` and `127.0.0.1`), does the name lookup itself
+and connects to the address it checked and no other (so the browser's own resolver cannot be pointed elsewhere between the check and the connection),
+tunnels `CONNECT` and `ws://` upgrades the same way, and tells the agent what it refused. It also sees the browser's own background requests, which no
+page controls: this Chromium contacts `google.com` by itself at start-up, which the route handler never could have seen.
+
+An earlier note here said a dead proxy "couldn't be verified" because Chromium sent loopback targets around it. Playwright adds `<-loopback>` to the
+bypass list when a proxy is set (unless `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set), and this was checked: the gate saw requests to
+`127.0.0.1`. The redirect test (`test/browser-redirect-gate.mjs`) is the canary on every platform: if loopback ever bypasses the proxy, the decoy
+receives a request and the test fails. `route`, `routeWebSocket`, the WebRTC removal and blocked service workers all stay, as further layers.
 
 The test (`test/browser-computer-use.mjs`) points everything at a listener on `127.0.0.2`: loopback,
 so nothing leaves the machine, but not an allowed host. It counts every HTTP request, WebSocket
 upgrade and UDP packet that arrives. A control run in an undefended browser must register leaks
 first, or a zero would prove nothing. On macOS, where `127.0.0.2` isn't routed by default, the
 check says it's skipped instead of passing.
+
+## 4b. What the page did: notices
+
+Before this, a page with an uncaught exception, a `console.error` and a 404'd script looked healthy through `inspect`, dialogs were
+dismissed without a word and downloads discarded unseen (found by running the tools: [`REFERENCE-AUDIT.md`](REFERENCE-AUDIT.md)). Now each tab is
+watched, and **every tool result ends with a "Page notices" block listing what is new since the last result**:
+
+| Kind | From | Shown as |
+|---|---|---|
+| `pageerror` | an uncaught exception | its message |
+| `console.error`, `console.warn` | the page's console | the message. `console.log` and `info` are only counted. |
+| `http` | any response with status 400 or above, subresource or document | `404 GET host/path (script)` |
+| `blocked` | a request our own localhost-only rule stopped | `blocked by the localhost-only rule: host/path` |
+| `netfail` | a request that failed for another reason | the browser's error and `host/path` |
+| `dialog` | `alert`, `confirm`, `prompt`, `beforeunload` | kind and message; **dismissed** (a `confirm` reads `false` to the page), as Playwright already did silently |
+| `download` | a file the page tried to save | name and source; **cancelled, never saved** |
+| `crash` | the tab crashed | |
+
+How it stays safe and small:
+
+- **The text is the page's, so it is data.** Control bytes and invisible characters are stripped, each notice is cut to 200 characters, and
+  the block says the text is data, not instructions. A URL in a notice is `host/path`: never a query string or a fragment (they can hold tokens).
+- **Bounded, and it says when it dropped something.** At most 8 lines per result (the rest summarised as "+N more"), 200 notices kept, identical
+  messages collapse into one with a count (`x100`). When the buffer is full the least informative entry goes first (a one-off console line
+  before a repeated one, a warning before an exception), not simply the oldest. An oldest-first buffer threw away a message repeated 100 times
+  to keep 200 one-offs, which the test found.
+- **A burst is let to finish** (up to 300 ms, stopping at the first 60 ms lull, only when there is something to show) so the counts are the final ones.
+- The browser's own `favicon.ico` request is not news.
+- Each notice is also a `browser-notice` event (capped at 300 per session) for the page and, later, the watchdog.
+
+Measured by the benchmark: `observability` went from 0 of 8 to 8 of 8 ([`BENCHMARK.md`](BENCHMARK.md), [`IMPROVEMENTS.md`](IMPROVEMENTS.md) IMP-008).
 
 ## 5. Limits
 
@@ -152,13 +198,17 @@ check says it's skipped instead of passing.
 | Tabs per session | 10 | A renderer and a video per popup otherwise |
 | Refs per `inspect` | 60, plus a count of the rest | A page with thousands of links shouldn't flood the transcript |
 | `wait` | 30 s | |
+| Notices per result / kept / bus events | 8 / 200 / 300 | A noisy page cannot flood the transcript, the buffer or the event store |
+| Notice text | 200 characters | Page-controlled text stays short |
+| `text` section | 8,000 characters | Long pages are read in steps |
+| Viewport | 320-3840 by 240-2160 | |
 | `scroll` / `scroll_at` delta | ±20,000 px per call | |
 
 ## 6. Events
 
 Every tool emits `browser-action-started` and `browser-action-completed`, with a shared `actionId`,
 timing and the result text. `screenshot` also emits `browser-snapshot`; screenshots and videos emit
-`browser-artifact-created`. The session emits `browser-session-started` and `-ended`. The terminal
+`browser-artifact-created`. A page's problems emit `browser-notice` (section 4b). The session emits `browser-session-started` and `-ended`. The terminal
 and the web UI label each call by what it acted on: `browser.click(s2e5)`,
 `browser.click_at(120, 44 @ shot-3)`, `browser.switch_tab(t2)`.
 
@@ -172,4 +222,5 @@ and the web UI label each call by what it acted on: `browser.click(s2e5)`,
 - **DNS isn't covered, and hasn't been tested either way.** Nothing here stops a page from making
   Chromium resolve an arbitrary hostname (for example via `<link rel="dns-prefetch">`), which could
   leak a few bytes through DNS. The request that would follow the lookup is blocked.
+- **Dialogs are dismissed, not answered.** The agent is told what a dialog said, but cannot choose to accept it (a "Discard changes?" confirm always reads `false`). Letting it decide needs the page held open until it answers.
 - **Only the main frame is inspected.** Elements inside iframes don't get refs yet; use a selector.

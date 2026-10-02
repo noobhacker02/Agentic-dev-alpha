@@ -1,0 +1,211 @@
+# Improvements: why we made each one and how
+
+The changelog says *what* changed. This file says **why it was worth doing and how it was done**, with the evidence before and the
+number after, so that months later the reasoning is still readable. Every improvement gets an entry, newest last. `test/improvements-log.mjs`
+fails if an entry is missing a field, if its id repeats, if it names a benchmark suite that does not exist, or if "Measured" has
+no number and no stated reason it cannot have one.
+
+Entry template (copy it):
+
+```
+## IMP-NNN · YYYY-MM-DD (or "backfilled") · Short title
+- **Problem:** what was wrong, with the evidence (a command, a probe, a number).
+- **Why it matters:** the harm, in the user's terms.
+- **Change (how):** what was done, at the level of "which mechanism and where".
+- **Measured:** before -> after, from a benchmark suite or a test. Or "not measurable because ...".
+- **Cost / trade-off:** what it costs: complexity, time, tokens, a new way to fail.
+- **Suites:** benchmark suite ids it moves (comma separated), or `none`.
+- **Skill impact:** what the dev-workflow skill learned from it (rule, lesson, template), or `none`.
+- **Follow-ups:** what could still be improved, or `none`.
+```
+
+Skill-side changes are logged in `dev-workflow/references/improvement-log.md` in the Dev-Skill repo, in the same format. When one
+improvement teaches the other project something, it is logged in both and each entry names the other.
+
+Entries marked "backfilled" were written after the fact from the changelog, the stress reports and the test files; numbers in them
+come from those documents, not from a re-run.
+
+## IMP-001 · backfilled · Safety net: from 3 of 27 dangerous calls denied to all of them
+- **Problem:** the first adversarial stress test (docs/STRESS-TEST-REPORT.md) sent 27 dangerous calls through the hook chain; the
+  original deny list stopped 3. `rm -rf /*`, `rm -fr /`, `cd / && rm -rf *`, `$HOME` forms and encoded variants all went through.
+  `--no-approval` makes that list the only guard.
+- **Why it matters:** an unattended run with a model that goes wrong, or reads a hostile file, could delete the user's home directory.
+- **Change (how):** widened and restructured the deny rules in `src/hooks.ts`, judged compound commands per subcommand
+  (`src/bash-analysis.ts`), used the SDK `tools` option per phase instead of `allowedTools`, limited Read/Write/Edit to `--dir`, and
+  gave phases a minimal allow-listed environment (`src/env.ts`) so `env` has nothing to leak.
+- **Measured:** safety suite 3 of 27 denied -> 26 of 26 denied at 7138e1b; the 27th case (`env`) is mitigated by the minimal
+  environment rather than denied, and the suite lists it separately.
+- **Cost / trade-off:** more rules to maintain; a heuristic, not a parser, so new spellings can still slip; ordinary work must not be
+  denied, which `test:safety` also asserts.
+- **Suites:** safety
+- **Skill impact:** the dev-workflow scanner had the same weakness and got the same treatment (see the skill-side log, SKILL-001).
+- **Follow-ups:** the LIVE web mode needs the same adversarial treatment for URLs (S2, threat D2).
+
+## IMP-002 · backfilled · Ctrl-C and the Stop button leave a run in a known state
+- **Problem:** Ctrl-C left the run marked "running" forever; reproduced on the previous commit before fixing.
+- **Why it matters:** a stuck "running" run blocks trust in every other status, and a runaway real-model session keeps spending.
+- **Change (how):** `RunControl` aborts into the running phase and the Overseer call, a SIGINT/SIGTERM handler, a Stop button in the page,
+  and `--max-cost`; the result is a `stopped` status with a reason.
+- **Measured:** 1 of 1 Ctrl-C left the run "running" -> 0 of 1; `test/stop-e2e.mjs` sends the signal to a real process and asserts
+  `stopped`.
+- **Cost / trade-off:** every long call now needs an abort path; a stop is a request, so a tool already running finishes its step.
+- **Suites:** none
+- **Skill impact:** "ask how any long-running tool stops, then send the signal and look" (verification lesson).
+- **Follow-ups:** orphaned child processes after a real-SDK stop were checked once, not in CI.
+
+## IMP-003 · backfilled · The five-phase pipeline did not beat one plain session, and the README now says so
+- **Problem:** on the same task a plain single session and the full pipeline scored 4,037 and 4,039 of 4,040 at $0.08 and $1.41
+  (docs/IS-IT-USEFUL.md).
+- **Why it matters:** about 17.6 times the cost for a 2-point difference on that task; the multi-agent design had been assumed, not shown, to help.
+- **Change (how):** the README leads with the measurement; the hybrid design uses one Builder then one Verifier **per item** instead of
+  five phases per item, and a serial queue with a fresh context per item (spec: "Serial queue").
+- **Measured:** 4,039 vs 4,037 of 4,040, $1.41 vs $0.08 (one task, one run each, so an anecdote that raised the question).
+- **Cost / trade-off:** the experiment is one task; it is re-run properly in S7 (suite `pipeline-vs-plain`).
+- **Suites:** pipeline-vs-plain
+- **Skill impact:** "answer 'is it useful?' against the simplest baseline, with the measured price of every delight feature".
+- **Follow-ups:** repeat on several tasks with several runs each before drawing a conclusion.
+
+## IMP-004 · backfilled · `doctor` stops reading a timeout as "not installed"
+- **Problem:** `doctor` found commands by running `which`/`where` with a 3 s limit; under load on Windows CI the limit expired and the
+  command was reported missing.
+- **Why it matters:** a diagnostic that cries wolf trains people to ignore it.
+- **Change (how):** a PATH search with `accessSync`/`statSync` and `PATHEXT` on Windows (`src/doctor.ts`); the test now sets PATH to a
+  directory holding only the target, so an old probe that respects PATH would not pass for the wrong reason (the first version of the
+  test did not tell old from new).
+- **Measured:** `test:doctor` red on Windows CI -> green at e0764be with all 37 suites passing on macOS and Windows.
+- **Cost / trade-off:** reimplements a small part of `which`; shell aliases are not found (they never were).
+- **Suites:** none
+- **Skill impact:** "a timeout in a probe is an unknown, never absent" (verification-lessons.md).
+- **Follow-ups:** none
+
+## IMP-005 · backfilled · The cross-platform check blocks, with all 37 suites passing on macOS and Windows
+- **Problem:** the macOS/Windows job was allowed to fail (`continue-on-error`), so its badge would read "passing" with suites red.
+- **Why it matters:** a green badge that lies is worse than none.
+- **Change (how):** fixed what the first runs found (`posix.normalize`, `--import` file URLs, `pathToFileURL` for printed links,
+  `channel: "chromium"` for notification permission, a `serverTime` clock option for a skew test), then removed `continue-on-error`.
+- **Measured:** first runs 36 of 37 (macOS) and 34 of 37 (Windows) -> 37 of 37 on both at 13f6b1a.
+- **Cost / trade-off:** CI is slower and a flaky test now blocks the badge; one UI test flaked once on Linux and was made to wait up to 5 s.
+- **Suites:** none
+- **Skill impact:** "portability is testing: run it on the other systems and on a newer browser than yours".
+- **Follow-ups:** desktop control on macOS and Windows and the real-model runs are not in any CI.
+
+## IMP-006 · 2026-10-02 · A benchmark with recorded baselines, and a table that cannot drift from it
+- **Problem:** numbers in the docs (37/37 suites, 3/27 -> all) were typed by hand, and one was repeated after a change that had not
+  been re-run.
+- **Why it matters:** the user asked to always keep a benchmark and to know logically why each change was made; without a baseline
+  there is no "better".
+- **Change (how):** `bench/` runner with deterministic suites, `bench/baseline.json` (first value ever recorded, never overwritten
+  silently), `bench/latest.json`, a table in docs/BENCHMARK.md generated from them, and tests that fail if the table, the suites' checks
+  or this log drift. Planned suites appear in the table as "not built" with their stage, so the table is also the measurement to-do list.
+- **Measured:** 2 suites built and 9 planned at 7138e1b; first baselines observability 0 of 8, safety 26 of 26. The first scorer
+  reported 2 of 8 because the word "blank" matched the probe's own URL path (fixed with opaque paths and a control test that every check fails on
+  silence: 1 of 8), and adversary round 1 then showed the last point was the redirect probe matching the landing URL that `inspect` always prints
+  (corrected: 0 of 8, measured by scoring the old commit in a scratch worktree). Both were found by reading the tool output behind the number.
+- **Cost / trade-off:** one more thing to run; suites that drive a browser take about 5 s.
+- **Suites:** observability, safety
+- **Skill impact:** a benchmark's scorer needs its own control test (it must fail on silence), see the skill-side log SKILL-003.
+- **Follow-ups:** add suites as stages land; real-model arms are gated and bounded by usage.
+
+## IMP-007 · 2026-10-02 · A handoff document, a test that keeps it fresh, and hooks that save compaction summaries
+- **Problem:** the conversation was auto-compacted once and the summary alone carried the requirements, decisions and the reading
+  already done; nothing on disk said what was asked or where things were.
+- **Why it matters:** the user asked that nothing be forgotten across compaction ("we don't forget any context about any work").
+- **Change (how):** `docs/HANDOFF.md` (standing instructions, the user's requests in their words, decisions, locations, stage status,
+  next step, verified vs not, improvement backlog, gotchas, how to resume); `test/handoff.mjs` fails if it names a commit more than 8
+  behind HEAD or loses a section; a hook script in the skill repo saves the `PostCompact` summary to disk, re-injects the handoff
+  through `SessionStart` (source `compact`) and warns at `PreCompact` if the handoff is stale. The hook inputs and outputs were read
+  from the SDK's type definitions; `PreCompact` has no documented way to block or inject, so it can only warn.
+- **Measured:** 3 hook event types handled (`PreCompact`, `PostCompact`, `SessionStart`), each tested with the payload shape from the SDK
+  types; live firings observed so far: 1 (`SessionStart`, source `resume`, after a session-limit interruption, handoff injected) and 0 for
+  `PreCompact`/`PostCompact`, which stay unproven until a compaction happens; the handoff says so.
+- **Cost / trade-off:** a document to keep current (the test enforces it); a committed hook config runs a script on every checkout
+  that trusts it.
+- **Suites:** none
+- **Skill impact:** new dev-workflow rule and `references/handoff-template.md` (SKILL-004).
+- **Follow-ups:** after the first compaction, confirm a file landed in `docs/handoff/compactions/`; if not, fix the hook config.
+
+## IMP-008 · 2026-10-02 · The browser tools tell the agent what the page did (S1)
+- **Problem:** a page with an uncaught exception, a `console.error` and a 404'd script looked healthy through `inspect`; dialogs were dismissed
+  and downloads discarded without a word; a long job description was cut at 3,000 characters with no way to read the rest (found by running the
+  tools, [REFERENCE-AUDIT.md](REFERENCE-AUDIT.md)). Benchmark baseline: 0 of 8 page problems reported (1 of 8 under the first scorer, whose one point was a redirect reported only
+  because `inspect` prints the current URL; adversary round 1, A14).
+- **Why it matters:** an agent that says "the page works" about a broken page; the watchdog and the job flow both need these signals; a long
+  posting is the thing being applied to.
+- **Change (how):** each tab is watched for page errors, console errors and warnings, responses of 400 and above, requests the localhost-only
+  rule blocked, other failed requests, dialogs, downloads and crashes. Every tool result ends with the notices that are new since the last result
+  (at most 8, repeats collapsed with a count, ranked by kind and repeats), labelled as page data, with URLs cut to host and path. New tools `text`
+  (paged, with the total), `notices` and `resize`; `inspect` takes a `query` and calls out a blank page. Dialogs are dismissed and reported;
+  downloads are refused by the browser (`acceptDownloads: false`) and reported. Each notice is also a capped `browser-notice` event.
+- **Measured:** `observability` 0 of 8 -> 8 of 8. The new test (16 checks) passes 6 of 6 consecutive runs on the built code and kills 15 of 15
+  mutants (dialog listener, query-string stripping, favicon filter, repeat collapsing, eviction policy, burst settling, text cleaning, download
+  refusal, console.log noise, the data label, resize bounds, ref invalidation, query filter, blank note, event cap), each for the right reason.
+  Three things the test found in the first draft: oldest-first eviction threw away a message repeated 100 times to keep 200 one-offs; the
+  results of a burst carried half-finished counts until a short settle was added; and cancelling a download after it started lost the race to a
+  small file about 1 run in 6, so the browser now refuses downloads outright.
+- **Cost / trade-off:** up to 300 ms of extra latency on a call that has notices to report; at most 8 short lines of tokens per result; three
+  more tools (18 total); dialogs can be seen but not answered.
+- **Suites:** observability
+- **Skill impact:** Step 8 rule 16 (a bounded buffer must decide what to drop by how informative it is, not how old it is), rule 21 (a flaky
+  check is a real mechanism: the download race), SKILL-007.
+- **Follow-ups:** `inspect` still cannot see inside iframes or shadow DOM (adversary A10); the redirect hop is not yet reported as a notice
+  (A14); the gate does not see server-side redirects (A2).
+
+## IMP-009 · 2026-10-02 · Every hop of a redirect, and the browser's own traffic, goes through a network gate (adversary A2, critical)
+- **Problem:** the localhost-only boundary was a Playwright route handler, which is called once, for the first URL of a request. A server-side
+  redirect is followed inside the browser, so an allowed local page could send it to any host. Reproduced by a fresh-context adversary and again by
+  the new test: a decoy on `127.0.0.2` received `/r301-exfil?data=secret` through one 301, while a direct `open` of that host was refused. The shipped
+  docs called this boundary "already built and tested".
+- **Why it matters:** the whole safety story for a browser that will later be logged in to a real account rests on "it can only go where we allow".
+  An aggregator, or a hostile posting on one, redirects as a matter of course.
+- **Change (how):** `src/net-gate.ts`, a forward proxy the browser is launched through (loopback only, random credential, `CONNECT` and `ws://`
+  upgrades tunnelled, the name resolved by the gate and the connection made to the address it checked), enforcing the allowed list at every hop; the
+  gate tells the agent what it refused, using headers to tell a page-made request from the browser's own background traffic. `route`, `routeWebSocket`,
+  the WebRTC removal and blocked service workers stay as further layers. Redirects of the page itself are now reported (`redirect` notice, and `open`
+  says where it landed).
+- **Measured:** the decoy received 1 request through a single 301 before and 0 of 16 attempts after (301, 302, 303, 307, 308, a three-hop chain, meta
+  refresh, `Refresh` header, redirected image, script, POST with a 307, iframe, form post, popup, link, WebSocket); the browser's own background requests
+  to google.com are now refused too. The notice for a refused redirected fetch appeared in 4 of 8 runs under the first approach (events on the
+  request chain) and in 8 of 8 once the gate reported its own refusals. 13 of 13 mutants killed across `test/net-gate.mjs` (9 checks) and
+  `test/browser-redirect-gate.mjs`; the gate test was the first to say that the host rule and the address rule each have to hold alone.
+- **Cost / trade-off:** every request now takes a hop through a local Node process (not measured for latency); the gate is TEST mode's policy only until
+  S2 gives it an allowances list; the gate sees hosts, not paths, for https (a tunnel).
+- **Suites:** none
+- **Skill impact:** SKILL-007: a boundary enforced by a hook on the first request is not a boundary on a chain; test with the chain, with a decoy that
+  records what reaches it.
+- **Follow-ups:** the decoy tests skip where `127.0.0.2` is not routable (macOS default), so the macOS CI result will say skipped, not passed.
+
+## IMP-010 · 2026-10-02 · File tools can no longer walk out of --dir through a symlink (adversary A1, high)
+- **Problem:** the path-scope hook judged paths as text. A symlink inside `--dir` pointing at the agent profile read the cookie file straight through
+  it, `link/../x` was judged by its text while the operating system resolves it through the link, and a write through a dangling link created a file at
+  its target. A cloned repository can ship such a link.
+- **Why it matters:** the planned protections for the login profile, uploads and parallel write slices all lean on this hook.
+- **Change (how):** `canonicalPath` in `src/hooks.ts` follows every link, applies `..` to the real directory, follows a dangling link by hand, treats
+  anything it cannot resolve (a loop, a permission error) as outside, and caps a chain at 40; the sensitive-file hook judges what a link points at, so
+  a file called `notes.txt` linked to `.env` is the credential file it is.
+- **Measured:** 0 of 14 symlink and `..` attacks denied before, 14 of 14 after, with 8 controls (ordinary files, a new file, a relative path, a link that
+  stays inside `--dir`) still allowed; 6 of 7 mutants killed, the 7th (no cap on a chain) being equivalent here because the kernel stops at 40 links.
+  `Bash` is still not scoped by this hook: it was never, and containing it needs a sandbox, not a hook (adversary A1, A6).
+- **Cost / trade-off:** a few `realpath` calls per file-tool call; a path through an unreadable directory is now refused instead of allowed.
+- **Suites:** none
+- **Skill impact:** SKILL-007 (test containment with real links on a real disk, and never build a "`..` through a link" input with `path.join`, which
+  collapses it as text and tests nothing).
+- **Follow-ups:** a diff-scope audit after each builder (`git diff --name-only` inside the slice) is the only check that covers Bash; planned in S3a.
+
+## IMP-011 · 2026-10-02 · The benchmark can no longer be tampered with or fail open (adversary A13, A14)
+- **Problem:** a hand-lowered baseline made the table show a gain that never happened and the table test still passed; one corrupt `baseline.json`
+  made the runner silently erase and re-record every baseline; the freshness checks passed when the commit they name is missing from the clone (a
+  made-up hash, or a document 51 commits stale); the change column compared raw counts across different numbers of checks; and the only point in the
+  observability baseline was earned by accident (the redirect probe matched the landing URL that `inspect` always prints).
+- **Why it matters:** a benchmark is only worth anything if "better" cannot be manufactured.
+- **Change (how):** `bench/baseline-check.mjs` compares each suite's current baseline with the first committed one and requires a "Definition changes"
+  row that names the suite and says "baseline"; the runner stops (exit 2) on a baseline file that exists but does not parse; the change column compares
+  pass rates when the number of checks changed; freshness checks fail closed in CI when the commit is unknown (a note elsewhere); the redirect and
+  failed-request probes demand an explicit report and the silence control now covers the landing URL and four ports.
+- **Measured:** `test/bench-integrity.mjs`, 4 groups of checks with controls: a lowered baseline is caught 4 ways and a logged correction passes; a corrupt
+  file leaves the runner at exit 2 with the file untouched; "6 of 8 to 7 of 10" reads -5 points, not +1; an unknown commit fails under CI=1. The corrected
+  observability baseline is 0 of 8, measured by scoring commit `7138e1b` in a scratch worktree (it had been recorded as 1 of 8).
+- **Cost / trade-off:** a legitimate baseline change now needs a table row; the history check needs enough git history and says so when it has none.
+- **Suites:** observability
+- **Skill impact:** SKILL-007 (a baseline taken from an accidental pass is worse than none: measure the old code with the corrected scorer).
+- **Follow-ups:** the same checks for the skill-side benchmark (`tests/bench_skill_test.py`).
+

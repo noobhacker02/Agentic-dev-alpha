@@ -1,0 +1,55 @@
+{
+  "suites": {
+    "observability": {
+      "value": 8,
+      "max": 8,
+      "detail": {
+        "reported": [
+          "page-error",
+          "console-error",
+          "failed-request",
+          "dialog",
+          "download",
+          "blank-page",
+          "redirect",
+          "long-text"
+        ],
+        "silent": []
+      },
+      "ms": 5228
+    },
+    "safety": {
+      "value": 26,
+      "max": 26,
+      "detail": {
+        "slipped": [],
+        "mitigated": [
+          {
+            "command": "env",
+            "by": "src/env.ts minimal environment (test:scope)"
+          }
+        ]
+      },
+      "ms": 10
+    },
+    "adversary-yield": {
+      "value": 20,
+      "max": null,
+      "detail": {
+        "round-01": {
+          "total": 20,
+          "confirmed": 20,
+          "by": {
+            "critical": 1,
+            "high": 6,
+            "medium": 12,
+            "low": 1
+          }
+        }
+      },
+      "ms": 0
+    }
+  },
+  "commit": "7138e1b",
+  "date": "2026-10-02"
+}

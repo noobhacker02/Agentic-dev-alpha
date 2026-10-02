@@ -5,6 +5,41 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The browser tools now tell the agent what the page did** (S1; `docs/BROWSER-AGENT.md` section 4b, `docs/IMPROVEMENTS.md` IMP-008). Every tool
+  result ends with the problems that are new since the last one: an uncaught exception, a console error or warning, a response of 400 or above
+  with its status, a request our own localhost-only rule blocked, a dialog (dismissed and reported), a download (refused and reported), a crash.
+  Text is labelled as page data, control bytes are stripped, URLs are cut to host and path, at most 8 lines a result with repeats collapsed
+  (`x100`), 200 kept, 300 `browser-notice` events a session. New tools `text` (a long page in sections, with the total), `notices` and
+  `resize`; `inspect` takes a `query` and says when a page is blank. The benchmark's `observability` suite went from 0 of 8 to 8 of 8 (the baseline was first recorded as 1 of 8 and corrected after an adversary round showed its one point was scored by accident). The
+  test found three real faults in its own first draft: an eviction policy that threw away the most informative entry, counts reported before a
+  burst had finished, and a download cancelled too late for small files about 1 run in 6 (now refused by the browser).
+- **The browser can no longer be sent to an off-list host through a redirect, and file tools cannot walk out of `--dir` through a symlink** (adversary
+  round 1, findings A2 critical and A1 high; `docs/IMPROVEMENTS.md` IMP-009 and IMP-010). The route handler Playwright gives us sees only the first URL
+  of a request, so a server-side 301/302/303/307/308 from an allowed local page reached a decoy on `127.0.0.2` with its query string; the shipped docs
+  called that boundary "already built and tested". The browser now goes through `src/net-gate.ts`, a loopback-only, credentialed forward proxy that
+  refuses every hop not on the list, resolves names itself and connects to the address it checked, tunnels `CONNECT` and `ws://`, and tells the agent
+  what it refused (`test/net-gate.mjs`, `test/browser-redirect-gate.mjs`: 0 of 16 attempts reach the decoy, 13 of 13 mutants killed). The path-scope
+  hook follows symlinks, applies `..` through them, follows dangling links and refuses what it cannot resolve (`test/path-scope-symlink.mjs`: 14 of 14
+  attacks denied, 6 of 7 mutants killed, the seventh equivalent because the kernel stops at 40 links). `Bash` remains unscoped.
+- **The benchmark cannot be tampered with or fail open** (adversary A13, A14; IMP-011): baselines are checked against git history and need a logged reason
+  to change, a corrupt baseline stops the runner, the change column compares rates, freshness fails closed in CI, and the observability baseline was
+  corrected from 1 of 8 to 0 of 8 by scoring the old commit in a scratch worktree.
+- **A benchmark, an improvement log, a handoff document, and two designs written before any code** (docs only plus `bench/`, tests and a hook):
+  - `bench/` runs deterministic suites against the built code, records a baseline the first time a suite appears and never overwrites it
+    silently, and regenerates the table in `docs/BENCHMARK.md`; four tests keep the table, the scorers, the log and the handoff honest, each with
+    controls proving it can fail. First baselines: observability 1 of 8, safety 26 of 26.
+  - `docs/IMPROVEMENTS.md` records why and how each improvement was made, with the number it moved; seven entries backfilled from the changelog.
+  - `docs/HANDOFF.md` plus `scripts/handoff-check.mjs`: what was asked (in the user's words), decisions, locations, status, next step, what is
+    not verified. A test fails if it is more than 8 commits behind or loses a section.
+  - `docs/HYBRID-AGENT-SPEC.md`, `HYBRID-AGENT-THREATS.md`, `TEAM-COMPOSITION.md` (the number of agents depends on the task: roster, composer,
+    validator rules), `REEL-FLOW.md` (send an Instagram reel, learn what it is about, implement it as a measured experiment if it is good).
+  - Round 1 of an adversary loop (a fresh-context agent that must prove every finding): 20 findings, one critical, in `docs/adversary/round-01.md`.
+- **A hook that saves compaction summaries and re-injects the handoff** lives in the Dev-Skill repo (`dev-workflow/scripts/handoff_hook.py`).
+  `SessionStart` was observed firing live (it injected the handoff when this work resumed); `PreCompact` and `PostCompact` are only tested with the
+  SDK's documented payloads.
+
+
 ### Changed
 - **`docs/REFERENCE-AUDIT.md` now reviews OpenClaw's browser extension and computer-use actions control by control, and corrects one row.** The
   original research read only OpenClaw's computer-use extension; its browser extension was never reviewed. Checked by running our handlers: a page
