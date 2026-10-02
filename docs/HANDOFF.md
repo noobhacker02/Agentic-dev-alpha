@@ -6,8 +6,8 @@ single place that says what was asked, what was decided, where things are, what 
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
 Updated: 2026-10-02T18:12:38Z
-Covers agent-loop commit: 784f2be
-Covers Dev-Skill commit: 4855163
+Covers agent-loop commit: 818775c
+Covers Dev-Skill commit: 5778718
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
 else, this paragraph is wrong and should be corrected.
@@ -154,7 +154,10 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
-1. Commit and push both repos (agent-loop `main`, Dev-Skill `claude/dev-workflow-process-v4kafr`) once the full suite and CI are green; read CI on three systems.
+1. **Both repos are saved and pushed** (agent-loop `818775c` on `main`, Dev-Skill `5778718` on `claude/dev-workflow-process-v4kafr`). Not yet seen: the result of the full `npm test`
+   on that exact state (it was re-running in the background; its log is in the session scratchpad and may be gone, so just re-run it: `npm test`) and CI on three systems (read
+   the Actions runs for both pushes). The macOS and Windows runs matter most: the decoy tests skip there, the symlink test skips on Windows, and nobody has seen the new tests run on
+   those systems. Do not claim green until both are read.
 2. **S1b**, test first: a page with a main-frame field, an iframe form and a shadow-root field; `inspect` must list all three, say when it cannot read one, and
    `fill` on a field `inspect` cannot see must be refused. Mutation-check. Log it (IMP-012) with the number it moved.
 3. Run **adversary round 2** (a new fresh-context agent, titles of round 1's findings as the only history) against the *code* built so far (gate, hooks, notices,
