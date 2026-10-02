@@ -1,6 +1,7 @@
 // `agent-loop insights` talking about the person: src/roast.ts (the lines), Store.getHabits() (the numbers), the CLI
 // wiring, and the optional model mode with a fake SDK. No network, no API cost.
 //   npm run build && npm run test:roast
+import { fileURLToPath } from "node:url";
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
@@ -12,7 +13,7 @@ import {
   FINDINGS, PLACEHOLDERS, acceptModelLines, allowedNumbersFor, buildRoastPrompt, emptyHabits, fillRoast, gradeFor, lintLine, lintRoastCatalogue, roast, roastWithModel, varsFor,
 } from "../dist/roast.js";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const H = (over = {}) => ({ ...emptyHabits(), runs: 4, done: 3, failed: 1, ...over });
 const ok = (m) => console.log(`[ok] ${m}`);
 
@@ -98,6 +99,16 @@ for (const failed of [10, 8, 6, 4, 2, 1, 0]) {
   last = g;
 }
 assert.ok(order.indexOf(gradeFor(H({ runs: 10, done: 0, failed: 10 }))) < order.indexOf(gradeFor(H({ runs: 10, done: 10, failed: 0 }))), "ten failures out of ten must grade strictly worse than none");
+// outcomes decide the grade: a clean record with trivia against it stays in the A range; stopping runs is not punished; killing them is, a little
+const clean6 = H({ runs: 6, done: 6, failed: 0, deniedThenAllowed: 1, rulesNeverReused: 11, repairedRunsByPhase: { builder: 1 } });
+assert.ok(["A", "A-"].includes(gradeFor(clean6)), `six successes, one flip, eleven unused rules and one repair should still be an A-range grade, got ${gradeFor(clean6)}`);
+assert.strictEqual(gradeFor(H({ runs: 10, done: 5, failed: 0, stopped: 5 })), gradeFor(H({ runs: 10, done: 10, failed: 0, stopped: 0 })), "stopping runs does not lower the grade");
+assert.ok(order.indexOf(gradeFor(H({ runs: 10, done: 6, failed: 0, abandoned: 4 }))) < order.indexOf(gradeFor(H({ runs: 10, done: 10, failed: 0 }))), "runs killed without saying goodbye lower it a little");
+assert.ok(order.indexOf(gradeFor(H({ runs: 10, done: 2, failed: 8 }))) < order.indexOf(gradeFor(clean6)), "and failures lower it far more than any of that trivia");
+// the same point is not made twice
+const both = roast(H({ approvals: { asked: 30, approved: 30, denied: 0, auto: 0 }, quickYes: 25 }), "dark", 99);
+assert.ok(both.findings.includes("quick-yes") && !both.findings.includes("never-denies"), `quick yeses and "never says no" are one point: ${both.findings}`);
+assert.ok(roast(FIRES["never-denies"], "dark", 99).findings.includes("never-denies"), "…and 'never says no' still speaks when it is the only point");
 ok(`the grade follows the habits and never rises with more failures (best A, worst of the worst ${bad})`);
 
 // ---------------------------------------------------------------------------------------------- getHabits on a crafted database

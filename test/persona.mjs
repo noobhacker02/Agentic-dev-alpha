@@ -7,6 +7,7 @@
 // check can see a failure.
 //
 //   npm run build && npm run test:persona
+import { fileURLToPath } from "node:url";
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, mkdtempSync, mkdirSync } from "node:fs";
@@ -515,7 +516,7 @@ function fillable(template, text) {
 
 // ---------- 6. it can never reach a model: only display code imports the persona
 {
-  const src = new URL("../src/", import.meta.url).pathname;
+  const src = fileURLToPath(new URL("../src/", import.meta.url));
   const importers = readdirSync(src)
     .filter((f) => f.endsWith(".ts") && f !== "persona.ts")
     .filter((f) => /from\s+["']\.\/persona\.js["']/.test(readFileSync(join(src, f), "utf8")))
@@ -601,7 +602,7 @@ function fillable(template, text) {
 
 // ---------- 10. the command line
 {
-  const cli = new URL("../dist/cli.js", import.meta.url).pathname;
+  const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
   const run = (args, env = {}) => spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, ...args], { encoding: "utf8", timeout: 60_000, env: { ...process.env, ...env } });
   const ws = mkdtempSync(join(tmpdir(), "agent-loop-persona-cli-"));
   const bad = run(["run", "x", "--humor", "loud", "--dir", join(ws, "never-created")]);

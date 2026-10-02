@@ -14,6 +14,7 @@ import { EventBus } from "../dist/bus.js";
 import { Store } from "../dist/store.js";
 import { buildLineage, renderLineageText, renderLineageMarkdown, cleanText, LineageTracker, MAX_NODES, MAX_FILES_PER_NODE, MAX_FILES_TOTAL, MAX_DECISIONS } from "../dist/lineage.js";
 import { simulateRun, replay } from "./persona-sim.mjs";
+import { fileURLToPath } from "node:url";
 
 const T0 = Date.parse("2026-10-01T09:00:00Z");
 const RUN = "run-1";
@@ -376,8 +377,8 @@ const ids = (l) => l.nodes.map((n) => n.id);
 
 // ---------- 12. the command line: the artifacts a run leaves, and `agent-loop lineage`
 {
-  const cli = new URL("../dist/cli.js", import.meta.url).pathname;
-  const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).pathname;
+  const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+  const fakeSdk = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
   const root = mkdtempSync(join(tmpdir(), "agent-loop-lineage-cli-"));
   const data = join(root, "data");
   const sh = (args, env = {}) => spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", ...args], { encoding: "utf8", timeout: 120_000, env: { ...process.env, ...env } });

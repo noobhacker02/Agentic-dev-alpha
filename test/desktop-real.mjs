@@ -13,6 +13,7 @@ import { EventBus } from "../dist/bus.js";
 import { DesktopSession, __testDesktopHandlers } from "../dist/desktop-tools.js";
 import { openCuaDriver } from "../dist/desktop-driver-cua.js";
 import { findPythonWithTk, startApp, skipOrFail, until, sleep, pngSize, waitForWindowManager } from "./desktop-real-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
 if (!process.env.DISPLAY) skipOrFail("no DISPLAY; run this through test/desktop-real.sh");
 const python = findPythonWithTk();
@@ -71,7 +72,7 @@ try {
   console.log(`[ok] capture: a real ${width}x${height} PNG of just the target window (the screen is 1280x800); tree ${/unavailable or partial/.test(cap.text) ? "degraded and reported as such" : "present"}`);
   // SAVE_DESKTOP_DEMO=1 keeps real captures as demo media (docs/screenshots/desktop/). Nothing else is
   // in frame: the capture is the one window, and the test app shows only its own widgets and title.
-  const demoDir = new URL("../docs/screenshots/desktop/", import.meta.url).pathname;
+  const demoDir = fileURLToPath(new URL("../docs/screenshots/desktop/", import.meta.url));
   if (process.env.SAVE_DESKTOP_DEMO === "1") {
     mkdirSync(demoDir, { recursive: true });
     writeFileSync(join(demoDir, "01-window-capture.png"), png);

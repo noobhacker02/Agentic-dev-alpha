@@ -11,13 +11,14 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findPythonWithTk, startApp, skipOrFail, until } from "./desktop-real-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
 if (!process.env.DISPLAY) skipOrFail("no DISPLAY; run this through test/desktop-real.sh");
 const python = findPythonWithTk();
 if (!python) skipOrFail("no Python with tkinter found (apt install python3-tk)");
 
-const cli = new URL("../dist/cli.js", import.meta.url).pathname;
-const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).pathname;
+const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+const fakeSdk = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "agent-loop-desktop-cli-real-"));
 const title = `CLI Real Target ${process.pid}`;
 const app = startApp(python, { title });

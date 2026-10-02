@@ -11,6 +11,7 @@ import { mkdtempSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
+import { fileURLToPath } from "node:url";
 
 // The installed playwright-core version doesn't reliably match the pre-installed
 // browser's revision number, so chromium.launch()'s default download-path lookup
@@ -44,7 +45,7 @@ const child = spawn(
     "--max-retries",
     "0",
   ],
-  { cwd: new URL("..", import.meta.url).pathname, stdio: ["ignore", "pipe", "pipe"] }
+  { cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: ["ignore", "pipe", "pipe"] }
 );
 
 let childOutput = "";

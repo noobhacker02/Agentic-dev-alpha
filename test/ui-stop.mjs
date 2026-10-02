@@ -260,4 +260,57 @@ ok("a page whose clock is 7 minutes ahead of or behind the server's still shows 
   ok("notifications: off by default, opt-in from the help window, only for a background tab, only the agent's name (never the command), off again works, a refusal is explained, history never notifies, and no Notification support breaks nothing");
 }
 
+// ---------- 5b. the same, with the browser's REAL permission mechanics: only a wrapper counts what the real Notification constructor was asked
+// to make; permission state, requestPermission and the constructor are Chromium's own (the stub above proved the page's logic; this proves it
+// against the real thing, which is where a stand-in could have been wrong).
+{
+  const counting = `(() => { const Real = window.Notification; window.__made = []; window.__err = [];
+    window.Notification = class extends Real { constructor(t, o) { super(t, o); window.__made.push({ title: t, body: o && o.body, tag: o && o.tag }); this.addEventListener("error", () => window.__err.push("error")); } }; })();`;
+  const hideReal = (page, on) => page.evaluate((v) => { Object.defineProperty(document, "hidden", { configurable: true, get: () => v }); document.dispatchEvent(new Event("visibilitychange")); }, on);
+
+  // permission granted by the browser
+  const g = await harness({ init: counting });
+  await g.ctx.grantPermissions(["notifications"]);
+  await g.open(); g.startRun();
+  assert.strictEqual(await g.page.evaluate(() => Notification.permission), "granted", "the browser really reports granted");
+  await g.page.keyboard.press("?");
+  await g.page.locator("#opt-notify").check();
+  await g.page.waitForFunction(() => localStorage.getItem("agent-loop-notify") === "on");
+  await g.page.keyboard.press("Escape");
+  await hideReal(g.page, true);
+  tool(g, "r1"); g.ev({ type: "approval-request", phase: "builder", requestId: "r1", toolUseId: "r1", toolName: "Bash", toolInput: { command: "echo SECRET_COMMAND_TEXT" } });
+  await g.page.waitForFunction(() => window.__made.length === 1, undefined, { timeout: 4000 });
+  const made = await g.page.evaluate(() => window.__made);
+  assert.deepStrictEqual(made, [{ title: "builder needs you", body: "A permission prompt is waiting in agent-loop.", tag: "agent-loop-approval" }]);
+  await g.page.waitForTimeout(300);
+  assert.deepStrictEqual(await g.page.evaluate(() => window.__err), [], "the real constructor raised no error");
+  assert.ok(!JSON.stringify(made).includes("SECRET_COMMAND_TEXT"), "and nothing from the command is in it");
+  // the same prompt while the tab is visible makes none
+  await hideReal(g.page, false);
+  g.ev({ type: "approval-resolved", phase: "builder", requestId: "r1", toolUseId: "r1", decision: "allow" });
+  tool(g, "r2"); g.ev({ type: "approval-request", phase: "builder", requestId: "r2", toolUseId: "r2", toolName: "Bash", toolInput: { command: "ls" } });
+  await g.page.waitForFunction(() => state.pending.some((p) => p.requestId === "r2"));
+  await g.page.waitForTimeout(300);
+  assert.strictEqual((await g.page.evaluate(() => window.__made)).length, 1, "a visible tab is not notified");
+  assert.deepStrictEqual(g.errors, []);
+  await g.close();
+
+  // permission not yet answered (headless Chromium never answers, like a person who has not clicked Allow yet): ticked and waiting, nothing saved, nothing sent
+  const d = await harness({ init: counting });
+  await d.open(); d.startRun();
+  await d.page.keyboard.press("?");
+  await d.page.locator("#opt-notify").click();
+  await d.page.waitForTimeout(500);
+  assert.deepStrictEqual(await d.page.evaluate(() => ({ perm: Notification.permission, stored: localStorage.getItem("agent-loop-notify") })), { perm: "default", stored: null }, "while the browser's prompt is unanswered nothing is saved as 'on'");
+  await d.page.keyboard.press("Escape");
+  await hideReal(d.page, true);
+  tool(d, "p1"); d.ev({ type: "approval-request", phase: "builder", requestId: "p1", toolUseId: "p1", toolName: "Bash", toolInput: { command: "ls" } });
+  await d.page.waitForFunction(() => state.pending.length === 1);
+  await d.page.waitForTimeout(300);
+  assert.deepStrictEqual(await d.page.evaluate(() => window.__made), [], "no notification is made before permission is granted");
+  assert.deepStrictEqual(d.errors, []);
+  await d.close();
+  ok("notifications against the browser's real permission mechanics: granted → a real Notification is made for a background tab with only the agent's name and none for a visible tab; unanswered → nothing saved, nothing made");
+}
+
 console.log("\nALL STOP UI TESTS PASSED");

@@ -11,15 +11,16 @@ import { chromium } from "playwright-core";
 import { WebSocket } from "ws";
 import { Store } from "../dist/store.js";
 import { chromePath, freePort } from "./ui-extras-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ok = (m) => console.log(`[ok] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function start(env = {}) {
+async function start(env = {}, nodeArgs = []) {
   const base = mkdtempSync(join(tmpdir(), "agent-loop-stope2e-"));
   const port = await freePort();
-  const child = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", "--import", "./test/stress/fake-sdk/register.mjs", "dist/cli.js", "run", "do the thing", "--dir", join(base, "w"), "--data-dir", join(base, "d"), "--port", String(port), "--no-approval", "--humor", "off"],
+  const child = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", "--import", "./test/stress/fake-sdk/register.mjs", ...nodeArgs, "dist/cli.js", "run", "do the thing", "--dir", join(base, "w"), "--data-dir", join(base, "d"), "--port", String(port), "--no-approval", "--humor", "off"],
     { cwd: ROOT, env: { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_SCENARIO: "trivial-skip", FAKE_DELAY_MS: "30000", ...env } });
   const run = { base, port, child, out: "", err: "" };
   child.stdout.on("data", (d) => (run.out += d)); child.stderr.on("data", (d) => (run.err += d));
@@ -70,8 +71,8 @@ const finish = (run) => {
   ok(`Stop on the page of a real run: two clicks, the run ended in ${took} ms (not the 30 s call), saved as stopped with the reason, report written, exit 1`);
 }
 
-// ---------- 2. the races: a storm of stop messages, two tabs, a Ctrl-C at the same moment
-{
+// ---------- 2. the races: a storm of stop messages, three tabs, a Ctrl-C at the same moment (POSIX: a child cannot be sent SIGINT on Windows)
+if (process.platform !== "win32") {
   const run = await start();
   const sockets = await Promise.all([1, 2, 3].map(() => new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${run.port}/ws?token=${run.token}`, { headers: { host: `127.0.0.1:${run.port}`, origin: `http://127.0.0.1:${run.port}` } });
@@ -115,6 +116,31 @@ const finish = (run) => {
   assert.strictEqual(code, 0, run.err + run.out.slice(-300));
   assert.strictEqual(runs[0].status, "done", "and the run it was attached to finishes normally");
   ok("junk over the socket (invalid JSON, a 100 KB brace run, wrong types, null, a 5 MB frame): the server and the run are unaffected");
+}
+
+// ---------- 5. two real processes whose clocks are 7 minutes apart: the page's elapsed time is right, on first load and after a reload mid-run
+for (const skew of [-420000, 420000]) {
+  const run = await start({ FAKE_DELAY_MS: "40000", SKEW_MS: String(skew) }, ["--import", "./test/fixtures/skew-clock.mjs"]);
+  const browser = await chromium.launch({ executablePath: chromePath() });
+  const page = await (await browser.newContext()).newPage();
+  const elapsedSec = async () => { const t = await page.locator("#elapsed").innerText(); const m = /^(?:(\d+)m )?(\d+)s$/.exec(t); return m ? (+(m[1] || 0)) * 60 + +m[2] : NaN; };
+  await page.goto(run.url);
+  await page.waitForFunction(() => document.getElementById("status")?.textContent === "live");
+  await page.waitForFunction(() => !document.getElementById("stop-btn").hidden, undefined, { timeout: 10000 });
+  await sleep(3500);
+  const first = await elapsedSec();
+  assert.ok(first >= 2 && first <= 12, `server clock ${skew / 60000} min off, first load: elapsed reads ${first}s (should be a few seconds, not minutes)`);
+  // reload while the run is going and nothing new has happened (a long model call): only the replay tells the page about the clocks
+  await page.reload();
+  await page.waitForFunction(() => document.getElementById("status")?.textContent === "live");
+  await page.waitForFunction(() => document.getElementById("stop-btn") && !document.getElementById("stop-btn").hidden);
+  await sleep(1500);
+  const afterReload = await elapsedSec();
+  assert.ok(afterReload >= 4 && afterReload <= 16, `server clock ${skew / 60000} min off, right after a reload mid-run: elapsed reads ${afterReload}s (should be about ${first + 2}s)`);
+  run.child.kill("SIGINT");
+  await run.closed;
+  await browser.close();
+  ok(`server clock ${skew / 60000} min away from the browser's: elapsed time reads ${first}s on first load and ${afterReload}s after a reload mid-run`);
 }
 
 console.log("\nALL STOP END-TO-END TESTS PASSED");

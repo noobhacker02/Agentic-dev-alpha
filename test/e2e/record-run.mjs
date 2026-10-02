@@ -12,6 +12,7 @@ import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 const sep = argv.indexOf("--");
@@ -23,7 +24,7 @@ const workDir = resolve(opt("dir", join(out, "workdir")));
 const port = opt("port", "4700");
 mkdirSync(join(out, "shots"), { recursive: true });
 
-const root = new URL("../..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../..", import.meta.url));
 const nodeArgs = ["--experimental-sqlite", "--no-warnings"];
 if (process.env.COST_LOG) nodeArgs.push("--import", join(root, "test/stress/proxy-sdk/register.mjs"));
 const cliArgs = ["run", task, "--dir", workDir, "--port", port, ...(flag("browser") ? ["--browser"] : [])];

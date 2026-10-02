@@ -8,3 +8,4 @@ runs/
 .env
 __pycache__/
 *.pyc
+suite-*.log

@@ -8,8 +8,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diagnoseDesktop, doctorExitCode, realProbes, renderDoctor, runDoctor } from "../dist/doctor.js";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ok = (m) => console.log(`[ok] ${m}`);
 // A canary standing in for a credential; assembled at run time so no key-shaped literal sits in the source.
 const CANARY = ["canary", "credential", "value"].join("-");
@@ -126,7 +127,8 @@ const fails = (checks) => checks.filter((c) => c.level === "fail").map((c) => c.
   assert.deepStrictEqual(existsSync(join(dir, "a", "b", `.doctor-${process.pid}`)), false, "the probe cleans up after itself");
   assert.strictEqual(await p.x11Answers(":79"), false, "no socket, no answer");
   assert.strictEqual(await p.x11Answers("remote:0"), undefined, "a remote display cannot be checked cheaply");
-  // a real listener on a real X11 socket path: answers
+  // a real listener on a real X11 socket path: answers (X11 sockets are a Unix thing; Windows has no /tmp/.X11-unix)
+  if (process.platform !== "win32") {
   mkdirSync("/tmp/.X11-unix", { recursive: true });
   const sock = "/tmp/.X11-unix/X78";
   rmSync(sock, { force: true });
@@ -136,6 +138,7 @@ const fails = (checks) => checks.filter((c) => c.level === "fail").map((c) => c.
   assert.strictEqual(await p.x11Answers(":78.0"), true, "the screen number is ignored");
   await new Promise((r) => srv.close(r));
   rmSync(sock, { force: true });
+  }
   ok("real probes: sqlite, which, a writable folder (and its clean-up), and an X11 socket that answers or does not");
 }
 

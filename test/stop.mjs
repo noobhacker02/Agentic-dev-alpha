@@ -14,8 +14,9 @@ import { runPipeline } from "../dist/pipeline.js";
 import { RunControl } from "../dist/run-control.js";
 import { Store } from "../dist/store.js";
 import { freePort } from "./ui-extras-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ok = (m) => console.log(`[ok] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const calls = (file) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c.prompt !== undefined) : []);
@@ -197,7 +198,8 @@ async function runCli(extra, { env = {}, flags = [], signal, after = 0, second }
   ok("--max-cost: stops after the step that passes it (saved as stopped, with the reason and the report), never stops a run under it, and bad values are refused before anything runs");
 }
 
-for (const [signal, code, word] of [["SIGINT", 130, "Ctrl-C"], ["SIGTERM", 143, "Terminated"]]) {
+const POSIX = process.platform !== "win32";   // a child cannot be sent SIGINT/SIGTERM on Windows (kill() just ends it): those cases are POSIX-only
+for (const [signal, code, word] of POSIX ? [["SIGINT", 130, "Ctrl-C"], ["SIGTERM", 143, "Terminated"]] : []) {
   const r = await runCli([], { env: { FAKE_DELAY_MS: "6000" }, signal, after: 700 });
   assert.strictEqual(r.code, code, `${signal}: exit code ${r.code}\n${r.err}`);
   assert.ok(r.tookAfterSignal < 4000, `${signal}: stopped in ${r.tookAfterSignal} ms, not after the 6 s model call`);
@@ -213,7 +215,7 @@ for (const [signal, code, word] of [["SIGINT", 130, "Ctrl-C"], ["SIGTERM", 143, 
 }
 ok("Ctrl-C and SIGTERM: the run stops within moments (not after the long model call), is saved as stopped with the reason, the report is written, and the exit codes are 130 and 143");
 
-{
+if (POSIX) {
   // a model call that ignores the stop (so the first Ctrl-C cannot finish quickly): the second one quits at once
   const r = await runCli([], { env: { FAKE_DELAY_MS: "20000", FAKE_IGNORE_ABORT: "1" }, signal: "SIGINT", after: 700, second: 900 });
   assert.strictEqual(r.code, 130);

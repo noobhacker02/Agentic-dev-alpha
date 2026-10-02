@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../dist/store.js";
 import { freePort } from "./ui-extras-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const N = +process.env.CONCURRENT_RUNS || 5;
 const base = mkdtempSync(join(tmpdir(), "agent-loop-concurrent-"));
 const data = join(base, "shared-data");

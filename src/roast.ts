@@ -23,6 +23,8 @@ const PHASE_SET = new Set<string>(PHASES);
 interface Line { text: string; dark?: boolean }
 interface Finding {
   id: string;
+  /** Not said when any of these also fires: it would be the same point made twice ("125 yeses in a blink" and "150 yeses, no nos"). */
+  redundantWith?: string[];
   /** Higher is said first. */
   weight: number;
   when: (h: Habits) => boolean;
@@ -91,7 +93,7 @@ export const FINDINGS: Finding[] = [
     tip: "put what the {phase} keeps missing into the task up front, so it is not discovered the hard way.",
   },
   {
-    id: "never-denies", weight: 68,
+    id: "never-denies", weight: 68, redundantWith: ["quick-yes"],
     when: (h) => h.approvals.approved >= 15 && h.approvals.denied === 0,
     lines: [
       { text: "{approved} approvals, zero denials. Either the agents are flawless, or you are a 'yes' with extra steps." },
@@ -228,13 +230,15 @@ export function fillRoast(text: string, vars: Record<string, string>): string {
 /** A usage grade, from the numbers. It grades the habits, not you. */
 export function gradeFor(h: Habits): string {
   if (h.runs === 0) return "n/a";
+  // Outcomes first. A stopped run costs nothing (stopping early is the right thing to do, and the Stop button exists so that you will), and
+  // an unused rule is trivia. A run killed so hard it never said goodbye does cost a little: that is the habit Ctrl-C replaces.
   let score = 100;
   score -= 40 * (h.failed / h.runs);
   if (h.approvals.approved >= 8) score -= 15 * (h.quickYes / h.approvals.approved);
-  score -= 6 * Math.min(h.deniedThenAllowed, 3);
-  score -= 3 * Math.min(h.stopped, 5);
-  score -= 2 * Math.min(h.rulesNeverReused, 5);
-  score -= 10 * Math.min(1, totalRepairedRuns(h) / Math.max(1, h.runs * 2));
+  score -= 4 * Math.min(h.deniedThenAllowed, 3);
+  score -= 3 * Math.min(h.abandoned, 3);
+  score -= 1 * Math.min(h.rulesNeverReused, 3);
+  score -= 8 * Math.min(1, totalRepairedRuns(h) / Math.max(1, h.runs * 2));
   score = Math.max(0, Math.min(100, score));
   const bands: Array<[number, string]> = [[93, "A"], [90, "A-"], [87, "B+"], [83, "B"], [80, "B-"], [77, "C+"], [73, "C"], [70, "C-"], [60, "D"]];
   return bands.find(([min]) => score >= min)?.[1] ?? "F";
@@ -272,7 +276,9 @@ export function roast(h: Habits, level: HumorLevel, maxLines = 3): Roast {
   if (level === "off" || h.runs === 0) return empty;
   const seed = hash(habitsKey(h));
   const vars = varsFor(h);
-  const fired = FINDINGS.filter((f) => f.when(h)).sort((a, b) => b.weight - a.weight || a.id.localeCompare(b.id));
+  const all = FINDINGS.filter((f) => f.when(h));
+  const firedIds = new Set(all.map((f) => f.id));
+  const fired = all.filter((f) => !f.redundantWith?.some((id) => firedIds.has(id))).sort((a, b) => b.weight - a.weight || a.id.localeCompare(b.id));
   const lines: string[] = [], tips: string[] = [], findings: string[] = [];
   for (const f of fired) {
     if (lines.length >= maxLines) break;

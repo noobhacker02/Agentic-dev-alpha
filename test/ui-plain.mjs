@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { harness } from "./ui-extras-helpers.mjs";
 import { writeRunReport } from "../dist/report.js";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const gone = (page, sel) => page.evaluate((s) => { const n = document.querySelector(s); return !n || n.hidden || getComputedStyle(n).display === "none"; }, sel);
 const cartoons = (page) => page.evaluate(() => ({
   plain: document.documentElement.dataset.plain,

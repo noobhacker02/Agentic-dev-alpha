@@ -5,10 +5,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync, symlinkSync, appendFileSync, copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-export const APP = new URL("./desktop-app/app.py", import.meta.url).pathname;
-export const DECOY = new URL("./desktop-app/decoy.py", import.meta.url).pathname;
-export const GTK_APP = new URL("./desktop-app/gtk_app.py", import.meta.url).pathname;
+export const APP = fileURLToPath(new URL("./desktop-app/app.py", import.meta.url));
+export const DECOY = fileURLToPath(new URL("./desktop-app/decoy.py", import.meta.url));
+export const GTK_APP = fileURLToPath(new URL("./desktop-app/gtk_app.py", import.meta.url));
 
 /** A copy of the test app under another file name, so the interpreter's script (argv[1]) says what you like. */
 export function copyAppAs(name) {

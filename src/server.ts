@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join } from "node:path";
+import { posix } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { EventBus } from "./bus.js";
@@ -95,7 +96,9 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
       return;
     }
     const pathname = target.pathname;
-    const urlPath = normalize(pathname === "/" ? "/index.html" : pathname);
+    // posix.normalize, not the platform's: on Windows `normalize` turns "/persona.js" into "\\persona.js", and every route compared with a
+    // forward-slash path below (persona, sprites, plain, artifacts) fell through to a 404, so the page lost its jokes, its art and its screenshots.
+    const urlPath = posix.normalize(pathname === "/" ? "/index.html" : pathname);
     if (urlPath.includes("..")) {
       res.writeHead(400).end("bad path");
       return;
@@ -201,7 +204,9 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     // Replay the run so far: a tab opened or reloaded mid-run gets the whole transcript, and any
     // approval still waiting (otherwise the run would hang until the hook timed out).
     for (const event of bus.replay()) ws.send(JSON.stringify(event));
-    ws.send(JSON.stringify({ type: "replay-complete" }));
+    // The server's clock goes with the sentinel: event timestamps are its clock, and a page on another machine needs the difference to show
+    // how long anything has been running. A quiet stretch (a long model call) would otherwise leave it guessing until the next event.
+    ws.send(JSON.stringify({ type: "replay-complete", serverTime: new Date().toISOString() }));
   });
 
   const broadcast = (event: AgentEvent) => {

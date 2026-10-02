@@ -18,6 +18,7 @@ import { EventBus } from "../../dist/bus.js";
 import { DesktopSession, __testDesktopHandlers } from "../../dist/desktop-tools.js";
 import { openCuaDriver } from "../../dist/desktop-driver-cua.js";
 import { findPythonWithTk, startApp, skipOrFail, until, sleep, waitForWindowManager } from "../desktop-real-helpers.mjs";
+import { fileURLToPath } from "node:url";
 
 if (!process.env.DISPLAY) skipOrFail("no DISPLAY; run this through test/desktop-real.sh");
 const python = findPythonWithTk();
@@ -31,7 +32,7 @@ const caption = (text) => writeFileSync(captionFile, text);
 process.env.AGENT_LOOP_CAPTION_FILE = captionFile;
 process.env.AGENT_LOOP_VIEW_FILE = viewFile;
 
-const here = new URL("../desktop-app/", import.meta.url).pathname;
+const here = fileURLToPath(new URL("../desktop-app/", import.meta.url));
 caption("");
 const captionWin = startApp(python, { title: "caption", script: join(here, "caption.py") });
 const viewer = startApp(python, { title: "viewer", script: join(here, "viewer.py") });

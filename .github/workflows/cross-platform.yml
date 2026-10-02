@@ -31,14 +31,4 @@ jobs:
       - run: npm run build
       - run: npm run typecheck
       - name: Run each suite, then list which passed
-        shell: bash
-        run: |
-          suites=$(node -e "console.log((require('./package.json').scripts.test.match(/test:[a-z0-9-]+/g)||[]).join(' '))")
-          failed=""; passed=0
-          for s in $suites; do
-            if timeout 600 npm run -s "$s" > "suite-$s.log" 2>&1; then echo "PASS $s"; passed=$((passed+1));
-            else echo "FAIL $s"; failed="$failed $s"; echo "---- last lines of $s"; tail -25 "suite-$s.log"; echo "----"; fi
-          done
-          echo "passed: $passed"
-          echo "failed:${failed:- none}"
-          [ -z "$failed" ]
+        run: node scripts/run-suites.mjs --timeout-min 10

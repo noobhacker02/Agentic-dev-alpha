@@ -10,6 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../dist/store.js";
+import { fileURLToPath } from "node:url";
 
 const dataDir = mkdtempSync(join(tmpdir(), "agent-loop-insights-cli-"));
 const dbPath = join(dataDir, "agent-loop.db");
@@ -35,7 +36,7 @@ store.close();
 
 const out = execFileSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "dist/cli.js", "insights", "--data-dir", dataDir], {
   encoding: "utf8",
-  cwd: new URL("..", import.meta.url).pathname,
+  cwd: fileURLToPath(new URL("..", import.meta.url)),
 });
 
 assert.ok(!/\x1b/.test(out), `raw ESC byte reached real stdout: ${JSON.stringify(out)}`);
@@ -52,7 +53,7 @@ const s2 = new Store(join(clean, "agent-loop.db"));
 const r2 = s2.createRun("no desktop", "/w");
 s2.finishRun(r2.id, "done");
 s2.close();
-const out2 = execFileSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "dist/cli.js", "insights", "--data-dir", clean], { encoding: "utf8", cwd: new URL("..", import.meta.url).pathname });
+const out2 = execFileSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "dist/cli.js", "insights", "--data-dir", clean], { encoding: "utf8", cwd: fileURLToPath(new URL("..", import.meta.url)) });
 assert.ok(!/Desktop tools/.test(out2), "no desktop section when desktop tools were never used");
 console.log("[ok] insights prints desktop sessions, captures, actions sent vs stopped and human answers -- and nothing when desktop was never used");
 console.log("\nALL INSIGHTS CLI TESTS PASSED");
