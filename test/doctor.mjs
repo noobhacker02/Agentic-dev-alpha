@@ -135,7 +135,9 @@ const fails = (checks) => checks.filter((c) => c.level === "fail").map((c) => c.
       // PATH is only the fake directory: no `which`, no `where` can even be launched, so a probe that depends on one finds nothing. That is the
       // difference between a search and a subprocess, and the reason a slow runner could make the subprocess say "not installed".
       process.env.PATH = bin;
-      assert.strictEqual(await p.which("agent-loop-fake-tool"), fake, "a command in a PATH directory is found, by its full path, with no subprocess to launch");
+      // Windows paths are case-insensitive and the extension comes from PATHEXT (".CMD"), so the same file may be spelled ".cmd" on disk.
+      const found = await p.which("agent-loop-fake-tool");
+      assert.ok(found && (win ? found.toLowerCase() === fake.toLowerCase() : found === fake), `a command in a PATH directory is found, by its full path, with no subprocess to launch (${found})`);
       assert.strictEqual(await p.which("agent-loop-a-directory"), undefined, "a directory with the name is not a command");
       if (!win) assert.strictEqual(await p.which("agent-loop-not-executable"), undefined, "a file without the executable bit is not a command");
       assert.strictEqual(await p.which("../agent-loop-fake-tool"), undefined, "a path-like name is refused, not searched");
