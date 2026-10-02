@@ -75,4 +75,45 @@ await o.page.keyboard.press("Space");
 await sleep(260);
 await o.page.screenshot({ path: join(out, "04-offline-dino.png") });
 await o.close();
+// a command that has gone quiet, the Stop button armed (the first of its two clicks), and the run after it ended on that command.
+// The page's clock is faked and moved on 75 s, so the "still running" label is the real one, not painted.
+const q = await harness({ clock: true, onStop: () => {} });
+await q.open();
+q.ev({ type: "run-start", task: "Run the database migration and check the data", workDir: "/work/app" });
+q.ev({ type: "phase-start", phase: "builder", attempt: 1 });
+q.ev({ type: "tool-call", phase: "builder", toolUseId: "r1", toolName: "Read", toolInput: { file_path: "db/migrate.sql" } });
+q.ev({ type: "tool-result", phase: "builder", toolUseId: "r1", toolName: "", isError: false, summary: "(64 lines)" });
+q.ev({ type: "tool-call", phase: "builder", toolUseId: "m1", toolName: "Bash", toolInput: { command: "npm run migrate -- --all" } });
+await q.page.waitForSelector(".blk.tool");
+await sleep(400);
+await q.page.clock.fastForward(75_000);
+await q.page.waitForSelector(".blk.tool .still", { timeout: 5000 });
+await q.page.locator("#stop-btn").click();
+await q.page.mouse.move(640, 400);
+await sleep(500);
+await q.page.screenshot({ path: join(out, "08-stop-armed-still-running.png") });
+await q.page.locator("#stop-btn").click();
+await sleep(300);
+const later = () => new Date(Date.now() + 76_000).toISOString();   // the server's clock is not faked, so its stamps are moved on by hand
+q.ev({ type: "stop-requested", reason: "you pressed Stop on the page", ts: later() });
+q.ev({ type: "run-end", status: "stopped", ts: later() });
+await q.page.waitForSelector(".blk.run-end");
+await sleep(1200);
+await q.page.screenshot({ path: join(out, "09-stopped-no-result.png") });
+await q.close();
+
+// a run longer than the page's history: the replay says how many earlier tool events were dropped (the audit database has all of them)
+const t = await harness({ historyLimit: 60 });
+t.startRun();   // the events exist before the page does, so what it sees is a replay (a goto to the same URL with only a hash would not reload it)
+for (let i = 0; i < 90; i++) {
+  t.ev({ type: "tool-call", phase: "builder", toolUseId: `t${i}`, toolName: "Read", toolInput: { file_path: `src/file${i}.js` } });
+  t.ev({ type: "tool-result", phase: "builder", toolUseId: `t${i}`, toolName: "", isError: false, summary: `(${10 + i} lines)` });
+}
+await t.open();
+await t.page.waitForSelector(".blk.trimmed", { timeout: 5000 });
+await sleep(600);
+await t.page.evaluate(() => document.querySelector(".blk.trimmed").scrollIntoView({ block: "start" }));   // a replay ends scrolled to the newest line
+await sleep(500);
+await t.page.screenshot({ path: join(out, "10-history-trimmed.png") });
+await t.close();
 console.log("[saved]", out);

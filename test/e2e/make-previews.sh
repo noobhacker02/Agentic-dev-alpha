@@ -19,3 +19,4 @@ gif desktop-agent-ui 9 14 7 720       # the approval prompt: the exact click on 
 gif desktop-real-window 8 18 7 720    # a real window: what the agent sees, clicks landing, a terminal refused
 gif ui-v3-tour 20 17 8 720            # the cat runs to the waiting prompt, hops, and goes home when answered
 gif offline-dino 6 16 8 720           # the offline dialog and a bot playing the dinosaur
+gif stop-and-plain 11 27 6 680          # a quiet command labelled, the two-click stop, "no result", then the cartoons going off and back

@@ -86,5 +86,10 @@ Say the word and it can be added behind a flag (`--reviewers 2`), off by default
   against the real one on 2026-10-02 and passed. A query aborted in flight ended with an abort error about 2 s later (SDK teardown),
   leaving no child process; the real pipeline stopped 6 s into the Planner was saved as `stopped` 8 s in, in order, with no Overseer
   model call. It also showed the stand-in was wrong in one detail (the real SDK throws a plain `Error`, not an `AbortError`), which
-  the pipeline never depended on (it decides by the run's own stop flag) and which the stand-in now matches. Aborting before any text
-  had arrived is what was exercised; aborting mid-answer, or during a tool call, was not.
+  the pipeline never depended on (it decides by the run's own stop flag) and which the stand-in now matches. Two more situations were
+  added afterwards (`test/stop-real.mjs`, parts C and D): **a real approval waiting** (the model asked to write a file, Stop arrived
+  0.7 s later: the approval was refused, the run saved as stopped) and **a real shell command running** (the Builder ran `sleep`; Stop
+  arrived 2.5 s in: no process left running the command two seconds later). Honest record: the first run of the extended test exited 1
+  for a reason I did not capture; three later runs passed. So the four situations are a query aborted while writing, the Planner
+  mid-run, a waiting approval, and a running command; not covered: every other moment of a model's answer, and a stop during a
+  browser or desktop tool call.

@@ -5,7 +5,7 @@
 // page.clock), so a 36-minute run's header timer and every timestamp agree with the events instead of
 // racing real time. Captions explain each step; a cursor makes the clicks visible.
 //
-//   npm run build && node --experimental-sqlite --no-warnings test/e2e/record-features.mjs [lineage|persona|desktop|all] [outDir]
+//   npm run build && node --experimental-sqlite --no-warnings test/e2e/record-features.mjs [lineage|persona|desktop|stop|all] [outDir]
 //
 // Writes <name>.webm to outDir (default: a temp dir) and, with ffmpeg, <name>.mp4 next to it.
 import { chromium } from "playwright-core";
@@ -60,11 +60,18 @@ const OVERLAY = `
   if (document.readyState === "loading") addEventListener("DOMContentLoaded", boot); else boot();
 })();`;
 
-async function session(name, { humor = "dark", simStart, artifactRoot, director = false, tracker = true } = {}) {
+async function session(name, { humor = "dark", simStart, artifactRoot, director = false, tracker = true, onStop } = {}) {
   const bus = new EventBus();
   if (tracker) new LineageTracker(bus).attach();
   if (director) new PersonaDirector(bus, { level: "dark", clock: { hourOf: () => 15, dayOf: () => 2 } }).attach();
-  const srv = await startServer(bus, 0, { humor, artifactRoot });
+  // The page's clock is scripted below, so the server must report the same scripted time (it tells every page its time so a browser whose clock
+  // differs shows the right elapsed time; with a real clock here the header would read a day of "elapsed").
+  const sim = { now: Date.parse(simStart ?? "2026-10-01T14:00:00Z") + 500 };
+  // The bus stamps an approval request with the real clock itself (right in production). Every other timestamp here is scripted, and the page
+  // estimates the server's clock from the live events it sees, so one real-clock event made the desktop video's header read "1309m 48s".
+  const emit = bus.emitEvent.bind(bus);
+  bus.emitEvent = (e) => emit(e.type === "approval-request" ? { ...e, ts: new Date(sim.now).toISOString() } : e);
+  const srv = await startServer(bus, 0, { humor, artifactRoot, clock: () => sim.now, onStop });
   const browser = await chromium.launch({ executablePath: findChrome() });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, recordVideo: { dir: join(outDir, `.${name}-raw`), size: { width: 1280, height: 800 } } });
   const page = await ctx.newPage();
@@ -79,7 +86,9 @@ async function session(name, { humor = "dark", simStart, artifactRoot, director 
     bus, page, srv,
     get now() { return now; },
     /** Moves the page's clock to a simulated time, instantly. */
-    async advanceTo(ms) { if (ms > now) { await page.clock.runFor(ms - now); now = ms; } },
+    // A long jump uses fastForward: runFor would replay every timer in between (the spinner alone is 4.5 a second), which turned a simulated
+    // 30-minute run into minutes of real recording time. A short step runs its timers, so small animations still play.
+    async advanceTo(ms) { if (ms > now) { if (ms - now > 4000) await page.clock.fastForward(ms - now); else await page.clock.runFor(ms - now); now = ms; sim.now = ms; } },
     /** Plays one event: the page's clock catches up to its timestamp, then it goes through the bus. */
     async play(e, { pause = 0 } = {}) {
       if (e.ts) await api.advanceTo(Date.parse(e.ts));
@@ -309,11 +318,60 @@ async function desktop() {
   return s.finish();
 }
 
-const todo = which === "all" ? ["lineage", "persona", "desktop"] : [which];
+// ---------------------------------------------------------------- stop, "still running", plain mode
+// The events are scripted; the page, the server and the Stop button's path (click, click, WebSocket, token-checked onStop) are the real ones.
+async function stop() {
+  let pressed; const stopAsked = new Promise((r) => (pressed = r));
+  const s = await session("stop-and-plain", { humor: "off", simStart: "2026-10-01T14:00:00Z", onStop: () => pressed() });
+  const page = s.page;
+  const RUN = "demo-run";
+  let t = 0;
+  const base = Date.parse("2026-10-01T14:00:00Z");
+  const ts = (dt = 3) => new Date(base + 1000 + (t += dt) * 1000).toISOString();
+  const ev = (e, dt = 3, pause = 250) => s.play({ runId: RUN, ts: ts(dt), ...e }, { pause });
+  const still = () => page.evaluate(() => { const el = document.querySelector(".blk.tool .still"); return el ? el.textContent : null; });
+  // Moves the simulated clock on, and the script's own timestamps with it, so a later event is never stamped before the jump.
+  const jump = async (sec) => { await s.advanceTo(s.now + sec * 1000); t = (s.now - base - 1000) / 1000; };
+
+  await s.caption("1", "A run is working. Ctrl-C, the “stop run” button and --max-cost all end it the same way.", 800);
+  await ev({ type: "run-start", task: "Run the database migration and check the data", workDir: "/work/app" }, 1);
+  await ev({ type: "phase-start", phase: "builder", attempt: 1 }, 1);
+  await ev({ type: "tool-call", phase: "builder", toolUseId: "r1", toolName: "Read", toolInput: { file_path: "db/migrate.sql" } }, 2, 150);
+  await ev({ type: "tool-result", phase: "builder", toolUseId: "r1", toolName: "Read", isError: false, summary: "(64 lines)" }, 1, 400);
+  await ev({ type: "tool-call", phase: "builder", toolUseId: "m1", toolName: "Bash", toolInput: { command: "npm run migrate -- --all" } }, 2, 1800);
+
+  await s.caption("2", "A command that goes quiet is labelled after 30 seconds, counted from when it started — a hung step no longer looks like a calm spinner.", 600);
+  await jump(31);
+  await page.waitForFunction(() => !!document.querySelector(".blk.tool .still"), undefined, { timeout: 5000 });
+  if (!/^still running · 3\ds$/.test(await still())) throw new Error(`the still-running label did not show as expected: ${await still()}`);
+  await sleep(3200);
+  await jump(64);
+  await sleep(2400);
+
+  await s.caption("3", "Stopping takes two clicks, on purpose. The first only arms the button.", 700);
+  await s.click(page.locator("#stop-btn"), { hold: 2600 });
+  await s.caption("4", "The second asks the server, over the same token-checked connection as everything else.", 600);
+  await s.click(page.locator("#stop-btn"), { hold: 700 });
+  await Promise.race([stopAsked, sleep(5000).then(() => { throw new Error("the server never heard the second click"); })]);
+  await ev({ type: "stop-requested", reason: "you pressed Stop on the page" }, 1, 1800);
+  await s.caption("5", "The model sessions are aborted, waiting approvals are refused, and the run is saved as stopped — with the reason, and its report.", 600);
+  await ev({ type: "run-end", status: "stopped" }, 1, 400);
+  await sleep(4200);
+  await s.caption("6", "The call that never answered says so: “no result · the run ended”, instead of spinning forever in the saved report.", 4800);
+
+  await s.caption("7", "Not a cartoon person? One button turns off the cat, the pixel icons and cursors, the dinosaur game and the sound.", 700);
+  await s.click(page.locator("#plain-toggle"), { hold: 3600 });
+  await s.caption("8", "Same page, same prompts, same facts — nothing but the decoration is gone. Press it again and everything returns.", 700);
+  await s.click(page.locator("#plain-toggle"), { hold: 3200 });
+  return s.finish();
+}
+
+const todo = which === "all" ? ["lineage", "persona", "desktop", "stop"] : [which];
 for (const name of todo) {
   if (name === "lineage") await lineage();
   else if (name === "persona") await persona();
   else if (name === "desktop") await desktop();
+  else if (name === "stop") await stop();
   else throw new Error(`unknown scene ${name}`);
 }
 console.log(`\nDone. Files are in ${outDir}`);

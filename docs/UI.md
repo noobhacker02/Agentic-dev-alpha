@@ -330,6 +330,13 @@ soundtrack is *rendered offline by the page's own synthesiser* (`AL.sound.render
 then muxed in with ffmpeg: the same notes the page plays live, not a stock track. The tour's approvals go through the real
 approval round trip (a real pending approval answered by a real click).
 
+[`stop-and-plain.mp4`](media/stop-and-plain.mp4) (made by `npm run record:videos`, with the others) shows stopping: a command gone
+quiet and labelled "still running", the two-click stop, the run saved as stopped with "no result" on the call that never answered, and
+plain mode switching the cartoons off and back on. Its events are scripted; the page, the server and the Stop button's path (click, click,
+WebSocket, the token-checked `onStop`) are the real ones. `npm run record:terminal-images` renders the real output of `insights`,
+`doctor` and a `--max-cost` stop as images ([`screenshots/terminal/`](screenshots/terminal/)); the `insights` history is made up and the
+`--max-cost` run uses the test suite's stand-in model, and each image says so in its title bar.
+
 ### Plain mode: every cartoon off, with one switch
 
 For anyone who wants the page without the art: **plain mode** turns off the cat, every pixel icon, the pixel cursors, the dinosaur
@@ -350,9 +357,15 @@ and come back when plain mode ends. `ui/plain.js` decides first, before any of t
 - **"still running · 31s"** appears on a tool call that has been quiet for 30 s (a hung command otherwise looks like a calm spinner). The
   clock starts when you approve, never runs while a prompt waits on you, and never appears on a call you refused. If the run ends on a
   call that never answered, it says "no result · the run ended", in a saved report too.
+  ![A command gone quiet and the stop button armed](screenshots/ui-v3/08-stop-armed-still-running.png)
+  ![The run saved as stopped, the unanswered call marked](screenshots/ui-v3/09-stopped-no-result.png)
+- **A very long run says what it dropped**: the page keeps the newest events (5,000 by default) plus the structure of the whole run; a
+  reload shows "Showing the most recent activity: N earlier tool events were dropped from this view" with the exact count, and the audit
+  database has every one. ![The dropped-events note](screenshots/ui-v3/10-history-trimmed.png)
 - **Elapsed times are right even when the page's clock is wrong**: event timestamps are the server's, and a browser on another machine
-  (a forwarded port, a phone) can be minutes off. The page estimates the difference from live events (tested at 7 minutes either way;
-  not tried across two real machines).
+  (a forwarded port, a phone) can be minutes off. The page estimates the difference from live events and from the server's own time, which
+  it sends when a replay ends (tested at 7 minutes either way in a real browser, and with two real processes, one with a clock 7 minutes
+  behind: elapsed time read 423 s after a reload before the fix and is right now; not tried across two real machines).
 - **Notifications (opt-in)**: in the `?` window, "tell me with a browser notification when a prompt is waiting and this tab is in the
   background". Off by default; the browser asks permission; the notification says only "<agent> needs you", never the command; a tab
   opened while a prompt is already waiting does not announce the old prompt.

@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed
+- **README rewritten, and every walkthrough video and screenshot remade on the current page.** The README now opens with what the
+  project is for and the measured result that the five-agent pipeline did not beat one session (docs/IS-IT-USEFUL.md), lists what it
+  gives you with the evidence behind each line, shows the CI results per system instead of asserting them, and keeps its gaps in one
+  place. The long file and test tables moved to `docs/LAYOUT.md` and `docs/TESTING.md`, unchanged. New media: `stop-and-plain.mp4`
+  (the stop button, "still running", "no result", plain mode), three terminal images rendered from the real output of `insights`,
+  `doctor` and a `--max-cost` stop (`npm run record:terminal-images`; each says in its title bar what is a stand-in), and screenshots
+  of the armed stop button, a stopped run and the dropped-events note. The lineage, persona, desktop, tour and dinosaur videos were
+  re-recorded: the desktop video had a header reading "1309m 48s" because the recorder's server stamped one event with the real clock
+  while everything else used the scripted one (the recorder now scripts that too, and the server takes a `clock` option for it).
 - **A model that keeps asking after "no" stops getting prompts** (finding 21). Running a real model showed
   it asking for one refused click eight more times, each a fresh prompt. After three refused desktop input
   requests in a row the model is told to stop and no fourth prompt is shown; looking in between doesn't

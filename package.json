@@ -49,6 +49,7 @@
     "record:videos": "node --experimental-sqlite --no-warnings test/e2e/record-features.mjs all docs/media",
     "record:desktop-video": "AGENT_LOOP_VIDEO_OUT=docs/media bash test/desktop-real.sh test/e2e/record-desktop-real.mjs",
     "record:previews": "bash test/e2e/make-previews.sh",
+    "record:terminal-images": "node --experimental-sqlite --no-warnings test/e2e/render-terminal.mjs docs/screenshots/terminal",
     "test:persona": "node --experimental-sqlite --no-warnings test/persona.mjs",
     "test:ui-persona": "node --experimental-sqlite --no-warnings test/ui-persona.mjs",
     "test:ui-desktop": "node --experimental-sqlite --no-warnings test/ui-desktop.mjs",
