@@ -226,9 +226,9 @@ Everything runs on Linux, macOS and Windows with Node 22.5+; the CI results are 
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 37 suites in `npm test` (`.github/workflows/test.yml`), plus the real-driver desktop tests under Xvfb | @@LINUX@@ |
-| **macOS** (`macos-latest`) | Each of the 37 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`, non-blocking) | @@MAC@@ |
-| **Windows** (`windows-latest`) | The same | @@WIN@@ |
+| **Linux** | All 37 suites in `npm test` (`.github/workflows/test.yml`), plus the real-driver desktop tests under Xvfb | Blocking: the **Tests** badge at the top is the live result. |
+| **macOS** (`macos-latest`) | Each of the 37 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`, non-blocking) | 36 of 37 suites on the last completed run (2026-10-02). The failure was a notification test run in Chromium's headless shell instead of a full Chromium; a fix is pushed and being verified. |
+| **Windows** (`windows-latest`) | The same | 35 of 37 on the last completed run (2026-10-02): the same test, plus the CLI printing report links that were not valid URLs on Windows (fixed). |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
