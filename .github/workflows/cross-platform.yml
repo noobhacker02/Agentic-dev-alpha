@@ -1,0 +1,44 @@
+name: Cross-platform
+
+# Evidence for the "macOS and Windows are untested" line in the docs. Each suite from `npm test` runs on its own, so the result is a
+# table of which pass on each system, not one failure that hides the rest. It is non-blocking (continue-on-error) while the
+# failures are being learned from; a failure here is information, not a red main. The real-driver desktop tests and the shell
+# stress script stay Linux-only: they need X11 and bash.
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  suites:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install chromium
+      - run: npm run build
+      - run: npm run typecheck
+      - name: Run each suite, then list which passed
+        shell: bash
+        run: |
+          suites=$(node -e "console.log((require('./package.json').scripts.test.match(/test:[a-z0-9-]+/g)||[]).join(' '))")
+          failed=""; passed=0
+          for s in $suites; do
+            if timeout 600 npm run -s "$s" > "suite-$s.log" 2>&1; then echo "PASS $s"; passed=$((passed+1));
+            else echo "FAIL $s"; failed="$failed $s"; echo "---- last lines of $s"; tail -25 "suite-$s.log"; echo "----"; fi
+          done
+          echo "passed: $passed"
+          echo "failed:${failed:- none}"
+          [ -z "$failed" ]
