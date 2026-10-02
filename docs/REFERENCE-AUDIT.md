@@ -36,13 +36,62 @@ agent-loop's data differs), **not built** (and why), **n/a** (solves a problem a
 | Idea | Status | Where | What would fail |
 |---|---|---|---|
 | An authorization ceiling fixed outside the model's reach | **built** | The one window is resolved from `--desktop-target` before the run exists; no tool changes it; none reads the clipboard, captures the full screen or manages windows | `test/desktop-tools.mjs` ("tool list: … no tool to change the target…") |
-| Risk-classify actions; observation is cheap, input is expensive | **built** | `click`, `type_text`, `key` always ask and can never become a "don't ask again" rule; `capture` may. All desktop tools are denied with approval off | `test/desktop-tools.mjs` (approval) |
+| Risk-classify actions; observation is cheap, input is expensive | **adapted, and stricter** | OpenClaw has three tiers (observation; ordinary input; a short list of high-risk families such as kill app, browser navigate/download, file input, recording, scope escalation). Ours has two: `click`, `type_text`, `key` always ask and can never become a "don't ask again" rule; `capture` may. The high-risk families do not exist here because those actions do not. All desktop tools are denied with approval off | `test/desktop-tools.mjs` (approval) |
 | Off by default as enforced config, not a UI toggle | **built** | Desktop tools exist only with `--desktop-target`; refused with `--no-approval`; the driver is an optional dependency pinned to one version and refuses any other | `test/desktop-cli.mjs`, `test/desktop-adapter.mjs` |
 | Every action re-presents the frame identity of the latest screenshot | **built** | `snapshotId` is single-use; a moved or resized window, an older or invented id, a stale ref are all refused with nothing sent | `test/desktop-tools.mjs` ("fences"), real window: `test/desktop-real.mjs` |
 | Hierarchical subagent spawn/await with limits | **not built** | The pipeline is sequential on purpose (`pipeline.ts` awaits each phase), so there is never a second agent to coordinate | n/a |
 | Swarm: bounded parallel fan-out, children isolated, one coordinator reads structured results | **not built; your decision** | See below | n/a |
 | (OpenClaw has no shared notebook between peers, and says coordination by shared mutable state invites races) | **followed** | The lineage tree (`docs/LINEAGE.md`) is derived read-only from events the run already emits; agents write nothing shared | `test/lineage.mjs` |
 | Prompt injection from a window or page is an unsolved problem in both references | **built, beyond them** | Browser: localhost-only enforced at the network layer (including WebSocket, WebRTC, service workers). Desktop: one window, a denylist of terminals/shells/IDEs/launchers/browsers/remote-desktop/password managers by real process identity, window text treated as data, action caps, a human approving each action with what it will do. Threat table T1-T8 in `docs/DESKTOP-AGENT.md` | `test/browser-tools.mjs`, `test/desktop-tools.mjs`, `test/desktop-real-adversarial.mjs` (real exploits) |
+
+## OpenClaw's browser and computer-use controls, control by control
+
+**Scope, said plainly.** The original research (`RESEARCH-COMPUTER-USE-AND-MULTI-AGENT.md`) read OpenClaw's `extensions/cua-computer` only. Its
+**browser** extension (`extensions/browser`, nine documentation pages and a much larger surface) was never reviewed: our browser tools were designed from
+`specs/computer-use/SPEC.md`, Playwright's documentation and adversarial testing, and they converged with OpenClaw on some points by independent
+design. This section is the review done afterwards, against a clone at commit `7e6dd897` (2026-10-02), with the claims about our side checked by running
+our tool handlers, not from memory. Verdicts: **equivalent**, **adapted**, **not built**, **deliberately different**.
+
+### Browser
+
+| OpenClaw | Ours | Verdict |
+|---|---|---|
+| `snapshot`: stable refs, a ref whose control disappeared fails | `inspect`: refs `s<snapshot>e<n>`, the snapshot number never repeats, refused when the page moved on (`test/browser-computer-use.mjs`) | equivalent |
+| `act`: click, hover, select, press, fill, scrollIntoView, wait, clickCoords | `click`, `hover`, `select_option`, `press`, `fill`, `scroll`, `wait`, `click_at` (tied to one screenshot's id), plus `scroll_at` | built |
+| tabs: list, open, focus, close | `list_tabs`, `switch_tab`, `close_tab`, popups join as tabs (capped) | built |
+| `screenshot` | `screenshot` (50 per session) | built |
+| `navigate` | `open` (localhost only) | adapted |
+| `text`: readable page text up to 40,000 characters, snapshot `query` filter | `inspect` returns 3,000 characters of visible text and 40 elements | partial |
+| **`errors`, `console`, `requests`**: collected page errors, console output, network log | **nothing is collected**. A page with an uncaught exception, a `console.error` and a 404'd script looks healthy through `inspect` (run, 2026-10-02) | **not built; the most useful gap** (see below) |
+| dialogs: `inspect` / accept / dismiss hooks | `alert` is dismissed, `confirm` returns `false`, `prompt` returns `null`, and the click result says only "Clicked" (run). The agent is never told a dialog appeared | gap: silent |
+| downloads: saved under a managed folder, metadata returned | a download link clicks "successfully" and nothing is kept or reported (run) | gap: safe, but silent |
+| `evaluate`: arbitrary JavaScript, with a kill switch (`evaluateEnabled`) | none | deliberately not built (page-JS execution is what prompt injection steers) |
+| `set_input_files` (high risk) | none: `fill` on a file input errors ("Input of type file cannot be filled") | deliberately not built |
+| `drag`, `insertText`, `resize`, `batch` | none | not built; `batch` on purpose (every action asks on its own) |
+| `emulate`: device, colour scheme, timezone, locale | none | not built (useful for responsive checks) |
+| cookies, storage, headers, credentials, geolocation, permissions, offline, PDF, trace | none | not built; credentials and cookies on purpose |
+| profiles: an isolated managed profile, **attach to your signed-in Chrome**, remote CDP (Browserless, Browserbase) | one fresh isolated context per run, nothing persists, nothing signed in is reachable | deliberately different |
+| SSRF policy: block private networks, allow the public internet | **localhost only**: every request, WebSocket, WebRTC connection and service worker | opposite by design. OpenClaw's own docs list redirect hops, a popup's first request and service-worker traffic as not covered by its routing; ours blocks each, with a test per channel and a no-defence control run |
+| `doctor`: gateway, plugin, profile, browser and tab readiness | `agent-loop doctor` checks that Chromium is found; no per-run readiness check | partial |
+
+### Computer use (`cua-computer`)
+
+OpenClaw's contract has 40 actions; ours has **five tools** (`capture`, `window_info`, `click`, `type_text`, `key`) by design: one human-chosen window.
+
+- **Present:** screenshot with an accessibility-tree element list (`capture`), clicks (left, right, middle; single, double, triple), typing, keys with modifiers, window info.
+- **Not built, and wanted for testing a GUI app:** `scroll`, `drag`, `wait`, `set_value` (more reliable than typing), `invoke_menu`, `zoom` (an observation).
+- **Not built, on purpose** (each widens past "one window"): `launch_app`, `kill_app`, `bring_to_front`, `list_apps`, `list_windows`, `escalate_scope`, recording and replay, and the `browser_*` family.
+- **Mechanisms:** the authorization ceiling fixed outside the model's reach (built; stricter, since OpenClaw lets the model *request* `escalate_scope` behind an approval and ours has no such action); risk classification (adapted, above); off by default as enforced config (built); every action citing the latest observation (built, stricter: the snapshot id is single-use and the window's identity is checked before and after).
+
+### What to close first, in order of value for what this tool is for
+
+1. **Console errors, page errors and failed requests** for the Verifier: it is asked to verify a web app, and today a broken app that renders a shell looks fine. Low risk (read-only, localhost-only).
+2. **Tell the agent when a dialog was dismissed or a download was refused**, instead of reporting a bare "Clicked". Low risk.
+3. Longer readable text and a `query` filter on `inspect`.
+4. `resize` and `emulate`, for responsive checks.
+5. Desktop `scroll`, `wait` and `drag`.
+
+None of this is built yet; it is a list for a decision, not a claim.
 
 ## What this audit found by running things
 

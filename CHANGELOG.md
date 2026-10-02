@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed
+- **`docs/REFERENCE-AUDIT.md` now reviews OpenClaw's browser extension and computer-use actions control by control, and corrects one row.** The
+  original research read only OpenClaw's computer-use extension; its browser extension was never reviewed. Checked by running our handlers: a page
+  with an uncaught exception, a `console.error` and a 404'd script looks healthy through `inspect`; dialogs are dismissed and downloads discarded
+  without the agent being told. The "risk-classify actions" row said *built*; it is *adapted* (OpenClaw has three tiers, ours two, stricter). No
+  code changed; the gaps are listed in priority order for a decision.
 - **The cross-platform check blocks now, and all 37 suites pass on macOS and Windows** (CI, 2026-10-02, commit 13f6b1a; Linux green on the
   same commit). It had been allowed to fail (`continue-on-error`) while the first failures were learned from, which meant its badge
   would have read "passing" with suites inside it red; the first macOS/Windows runs were 36 of 37 and 34 of 37. `STATUS.md` no longer
