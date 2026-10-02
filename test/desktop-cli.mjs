@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 
 const scratch = mkdtempSync(join(tmpdir(), "agent-loop-desktop-cli-"));
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-const trace = fileURLToPath(new URL("./fixtures/trace-resolve.mjs", import.meta.url));
+// --import takes a URL: a bare Windows path (D:\...) is read as the scheme "d:" and the child dies before it starts.
+const trace = new URL("./fixtures/trace-resolve.mjs", import.meta.url).href;
 
 function run(args, label) {
   const traceFile = join(scratch, `${label.replace(/\W+/g, "-")}.trace`);
@@ -71,7 +72,7 @@ console.log("[ok] --desktop-target with no value (or a blank one) is refused wit
 // user of agent-loop is unaffected by it being installed. A complete (fake-model) run, traced.
 {
   const traceFile = join(scratch, "plain-run.trace");
-  const fakeSdk = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
+  const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).href;
   const r = spawnSync(
     process.execPath,
     ["--experimental-sqlite", "--no-warnings", "--import", trace, "--import", fakeSdk, cli, "run", "build a thing", "--dir", join(scratch, "plain-ws"), "--data-dir", join(scratch, "plain-data"), "--port", "0", "--no-approval"],

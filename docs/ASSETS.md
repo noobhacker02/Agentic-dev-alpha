@@ -22,7 +22,7 @@ Read this before publishing the repository.
 
 | Piece | Source | What is known |
 |---|---|---|
-| Icons | The Craftpix free GUI-icon pack (`Gui_icons2.psd`), <https://craftpix.net/freebies/>; licence page <https://craftpix.net/file-licenses/> | Only the 22 icons the page uses are committed, cut from the pack. **The PSD itself is not committed.** The pack's licence text was not read for this project (the pack contains only a link to it): check it before you redistribute. |
+| Icons | The Craftpix free GUI-icon pack (`Gui_icons2.psd`), <https://craftpix.net/freebies/>; licence page <https://craftpix.net/file-licenses/> | Only the 22 icons the page uses are committed, cut from the pack. **The PSD itself is not committed.** The pack's licence text was not read for this project (the pack contains only a link to it). Second-hand, from a search and not from the licence itself: Craftpix freebies are described as free for personal and commercial use, with **re-distributing the original files on their own prohibited**. Cut-up icons inside a product are probably the permitted case; loose PNGs in a public repository are closer to the prohibited one. Confirm on <https://craftpix.net/file-licenses/> before publishing. |
 | Cat | A sprite sheet supplied by the project owner | The sheet carries **no artist credit and no licence**, so this repository cannot state its terms. |
 | Cursors | A sprite sheet supplied by the project owner | Same: **no artist credit, no licence on the sheet.** |
 | Dinosaur | Chrome's offline dinosaur, from a sheet whose credit line reads "ripped by madK, RealHeroicGamer, Resistiv, roomjaguarproductions, and DogToon64" | The artwork is Google's/Chromium's; the sheet credits the people who extracted it. Their terms apply and were not checked here. |
@@ -30,6 +30,8 @@ Read this before publishing the repository.
 So: the cat and the cursors have unknown terms, and the dinosaur and icons have terms nobody here has checked. If this
 repository is public, or you ship the UI, **confirm you may publish these or replace them** (below). Nothing else in the
 page depends on them: the UI works with any piece, or all of it, missing, and that is tested.
+
+The cautious options, in order of effort: (1) keep the repository private, or tell people the art is for personal use; (2) stop committing the loose icon PNGs and generate them at build time from a pack you hold yourself (`scripts/` already slices the sheets; only the PSD would have to come from you); (3) replace the icons, the cat and the cursors with art you own or art under a licence you have read (CC0 sets exist). Plain mode (`--plain`) already runs the whole product without any of it.
 
 The same credits are in `manifest.json`, shown in the page (press `?`, "Credits"), and travel inside every saved report.
 

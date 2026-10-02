@@ -41,6 +41,9 @@ function parseTarget(target: string | undefined): URL | null {
 }
 
 export interface ServerOptions {
+  /** The server's idea of "now" in milliseconds, sent to every page so it can correct for a clock that differs from this one. Real runs leave it
+   * alone (Date.now). A recording or test that scripts its own timeline passes the same clock it shows the page. */
+  clock?: () => number;
   /** Called when the page's Stop button is pressed by a connection that passed the host, origin and token checks. */
   onStop?: () => void;
   /** Per-run secret the UI must present to open the WebSocket. Generated when omitted. */
@@ -206,7 +209,7 @@ export function startServer(bus: EventBus, port: number, opts: ServerOptions = {
     for (const event of bus.replay()) ws.send(JSON.stringify(event));
     // The server's clock goes with the sentinel: event timestamps are its clock, and a page on another machine needs the difference to show
     // how long anything has been running. A quiet stretch (a long model call) would otherwise leave it guessing until the next event.
-    ws.send(JSON.stringify({ type: "replay-complete", serverTime: new Date().toISOString() }));
+    ws.send(JSON.stringify({ type: "replay-complete", serverTime: new Date(opts.clock ? opts.clock() : Date.now()).toISOString() }));
   });
 
   const broadcast = (event: AgentEvent) => {

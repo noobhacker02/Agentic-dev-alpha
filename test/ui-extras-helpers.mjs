@@ -26,7 +26,7 @@ export async function freePort() {
 
 /**
  * opts: viewport, historyLimit (the bus's replay history, to make trimming happen with few events), plain (the server's default, --plain), onStop (what the Stop button calls), abort (URL substrings the page may not load, to prove it survives without them),
- *       clock (install Playwright's fake clock before the page loads), reducedMotion, init (script to run first).
+ *       serverClock (what the server reports as its time to every page; defaults to the real clock), clock (install Playwright's fake clock before the page loads), reducedMotion, init (script to run first).
  * Returns { bus, srv, browser, ctx, page, ev, errors, restartServer, close }.
  */
 export async function harness(opts = {}) {
@@ -34,7 +34,7 @@ export async function harness(opts = {}) {
   const token = "t".repeat(48);
   const bus = new EventBus(undefined, opts.historyLimit ? { historyLimit: opts.historyLimit } : {});
   const h = { bus, port, token, errors: [] };
-  h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop });
+  h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop, clock: opts.serverClock });
   h.browser = await chromium.launch({ executablePath: chromePath() });
   h.ctx = await h.browser.newContext({ viewport: opts.viewport ?? { width: 1280, height: 800 }, reducedMotion: opts.reducedMotion ? "reduce" : "no-preference" });
   for (const part of opts.abort ?? []) await h.ctx.route((u) => u.pathname.includes(part), (r) => r.abort());
@@ -59,7 +59,7 @@ export async function harness(opts = {}) {
     h.ev({ type: "tool-call", phase: "builder", toolUseId: "tu-" + id, toolName: "Bash", toolInput: { command: "npm test" } });
     h.ev({ type: "approval-request", phase: "builder", requestId: id, toolUseId: "tu-" + id, toolName: "Bash", toolInput: { command: "npm test" }, rule: "Bash(npm test)", ...extra });
   };
-  h.restartServer = async () => { h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop }); };
+  h.restartServer = async () => { h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop, clock: opts.serverClock }); };
   h.close = async () => { await h.browser.close(); try { await h.srv.close(); } catch {} };
   return h;
 }

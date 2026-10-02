@@ -18,7 +18,7 @@ const python = findPythonWithTk();
 if (!python) skipOrFail("no Python with tkinter found (apt install python3-tk)");
 
 const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-const fakeSdk = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
+const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).href;
 const scratch = mkdtempSync(join(tmpdir(), "agent-loop-desktop-cli-real-"));
 const title = `CLI Real Target ${process.pid}`;
 const app = startApp(python, { title });

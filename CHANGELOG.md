@@ -26,6 +26,27 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Fixed
+- **On Windows the server answered 404 to the page's own scripts** (found the first time the suite ran on macOS and Windows; both
+  had been listed as "untested"). `normalize("/persona.js")` is `\persona.js` there, so `/persona.js`, `/sprite-data.js`, `/plain.js`
+  and `/artifacts/*` all failed and a Windows user lost the jokes, the art and the screenshots. It is `posix.normalize` now
+  (`src/server.ts`). The same run showed several tests were not portable (`new URL().pathname` is `/D:/...`; an X11 socket and
+  `kill("SIGINT")` are POSIX-only; `--import` needs a `file://` URL, a bare `D:\...` path is read as the scheme `d:`): fixed or
+  guarded. macOS produced no results at all because the workflow used `timeout`, which macOS lacks; `scripts/run-suites.mjs` runs
+  each suite on its own with a timeout and lists which passed, on any system (`.github/workflows/cross-platform.yml`).
+- **Elapsed time was wrong after a reload when the browser's clock differed from the server's** (a forwarded port, a phone): it read
+  423 s against a server clock 7 minutes off, measured with two real processes. The server now sends its time with the end of every
+  replay (`serverTime`), and the page keeps the smallest clock difference it has seen. `ServerOptions.clock` lets a test or a
+  recording script its own timeline.
+- **A test I pushed contradicted the server it ran against, and went red on all three systems** (`test/ui-stop.mjs`, the "page 7
+  minutes ahead" case): it stamped events with a clock 7 minutes off while the test server truthfully reported its own, unskewed clock
+  in `replay-complete`. A real server stamps events and reports its time from one clock; the test server now does too
+  (`harness({ serverClock })`). Reproduced locally first, then re-checked with the page's skew handling deliberately broken: the test
+  fails. My earlier "full suite passes" had not been re-run after the `serverTime` change; the CI run was what found it.
+- **The `insights` grade punished the wrong things.** Stopped runs counted against you (stopping is the thing to reward), six clean
+  runs with some unused rules scored a B-, and the same point could be made twice ("125 yeses in a blink" and "150 yeses, no nos").
+  Outcomes now outweigh trivia, stopping is free, killed runs cost a little, and a point already made is not made again. Still a
+  formula made up for fun, and it says so where it prints.
+
 - **Several runs against one audit folder crashed with "database is locked"** (found by a stress test of five simultaneous runs; all five
   failed, three of three repeats). The crash hit in the middle of finishing a run, so it stayed "running" with no report. SQLite had no
   busy timeout; it has one now (15 s, set before switching to WAL). 12 simultaneous runs pass. And a database that fails mid-run (disk

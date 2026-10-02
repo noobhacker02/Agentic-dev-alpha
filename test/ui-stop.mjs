@@ -122,10 +122,13 @@ const pageNow = (page, behindMs = 0) => page.evaluate((b) => new Date(Date.now()
 
 // ---------- 3b. a browser whose clock is minutes off the server's does not see false "still running" labels or wrong elapsed times
 for (const behind of [-7 * 60_000, 7 * 60_000]) {   // the page's clock 7 minutes ahead of the server's, and 7 minutes behind
-  const h = await harness({ clock: true });
+  // The server's clock is the page's minus the difference, and it says so: a real server stamps its events and reports its time from one
+  // clock, so the test's server must too (it reports the real clock otherwise, which would contradict the stamps below).
+  let serverMs = Date.now() - behind;
+  const h = await harness({ clock: true, serverClock: () => serverMs });
   const { page } = h;
   await h.open();
-  const stamp = (ms = 0) => pageNow(page, behind + ms);   // the server's clock: the page's, minus the difference
+  const stamp = async (ms = 0) => { const t = await pageNow(page, behind + ms); serverMs = Date.parse(t); return t; };
   h.ev({ type: "run-start", task: "t", workDir: "/w", ts: await stamp() });
   h.ev({ type: "phase-start", phase: "builder", attempt: 1, ts: await stamp() });
   tool(h, "x", { ts: await stamp() });

@@ -378,7 +378,7 @@ const ids = (l) => l.nodes.map((n) => n.id);
 // ---------- 12. the command line: the artifacts a run leaves, and `agent-loop lineage`
 {
   const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-  const fakeSdk = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
+  const fakeSdk = new URL("./stress/fake-sdk/register.mjs", import.meta.url).href;   // --import takes a URL; a bare Windows path (D:\...) is read as the scheme "d:"
   const root = mkdtempSync(join(tmpdir(), "agent-loop-lineage-cli-"));
   const data = join(root, "data");
   const sh = (args, env = {}) => spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", ...args], { encoding: "utf8", timeout: 120_000, env: { ...process.env, ...env } });
