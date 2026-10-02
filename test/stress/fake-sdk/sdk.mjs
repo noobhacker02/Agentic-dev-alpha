@@ -81,7 +81,8 @@ export function query({ prompt, options }) {
     // FAKE_DELAY_MS keeps a run alive long enough for a test to look at its server while it is running.
     // It honours options.abortController the way the real SDK does: an abort ends the call with an AbortError, at once.
     const ac = options.abortController;
-    const abortError = () => Object.assign(new Error("Claude Code process aborted by user"), { name: "AbortError" });
+    // The real SDK (checked with test/stop-real.mjs) throws a plain Error with this message, not an AbortError.
+    const abortError = () => new Error("Claude Code process aborted by user");
     if (ac?.signal.aborted) throw abortError();
     if (process.env.FAKE_DELAY_MS) {
       await new Promise((resolve, reject) => {

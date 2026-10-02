@@ -66,7 +66,7 @@ All notable changes to this project are documented here. Format follows
   approvals) do the same. The run says "Stop requested, and why" in the transcript, is saved as `stopped`, and its report is written.
   `test/stop.mjs` (mid-phase, before it began, as a phase ends, no stop, the socket message and who may send it, the cost cap at three
   points and bad values, SIGINT and SIGTERM end to end, a second Ctrl-C when a call will not stop), `test/ui-stop.mjs` (real Chromium).
-  `npm run test:real-model-stop` (opt-in, a few cents) runs it against the real SDK.
+  `npm run test:real-model-stop` (opt-in, a few cents) runs it against the real SDK: run once, passed (an abort takes about 2 s to wind down; no child process left; and it showed the stand-in's `AbortError` was really a plain `Error`, now matched).
 - **`agent-loop doctor`** (`src/doctor.ts`): Node and `node:sqlite`, the audit folder, credentials (the value is never printed), Chromium,
   ffmpeg, and for desktop control the four failures that used to look the same ("could not load" / "did not answer"): **no display**,
   a display variable that **points at nothing** (a real X11 socket is probed), a **locked** session, and a driver that is **missing,

@@ -17,7 +17,7 @@ import { Store } from "../dist/store.js";
 if (process.env.AGENT_LOOP_REAL_MODEL_TESTS !== "1") { console.log("skipped: set AGENT_LOOP_REAL_MODEL_TESTS=1 to spend a few cents on real model calls"); process.exit(0); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const children = () => { try { return execFileSync("ps", ["-o", "pid=,args=", "--ppid", String(process.pid)], { encoding: "utf8" }).trim().split("\n").filter(Boolean); } catch { return []; } };
+const children = () => { try { return execFileSync("ps", ["-o", "pid=,args=", "--ppid", String(process.pid)], { encoding: "utf8" }).trim().split("\n").filter((l) => l && !/\bps -o pid=,args= --ppid\b/.test(l)); } catch { return []; } };   // (not the ps we just ran)
 const before = children();
 
 // ---------- A
@@ -35,12 +35,13 @@ const before = children();
   } catch (err) { ended = `threw ${err && err.name}: ${String(err && err.message).slice(0, 80)}`; }
   clearTimeout(timer);
   const took = Date.now() - t0;
-  console.log(`A: aborted at 2.5 s; the stream ended ${ended} after ${took} ms (first text at ${first} ms, ${text.length} chars, cost reported $${cost})`);
+  console.log(`A: aborted at 2.5 s; the stream ended ${ended} after ${took} ms (${first ? `first text at ${first} ms, ${text.length} chars` : "no text had arrived yet"}, cost reported $${cost})`);
+  assert.ok(/abort/i.test(ended), `an abort should end the stream with an abort error, got: ${ended}`);
   assert.ok(took < 8000, `the stream must end soon after the abort, took ${took} ms`);
   await sleep(1500);
   const left = children().filter((l) => !before.includes(l));
   assert.deepStrictEqual(left, [], `no child process may be left behind: ${left.join(" | ")}`);
-  console.log("[ok] A: a real query aborted mid-answer ends promptly and leaves no child process");
+  console.log("[ok] A: a real query aborted in flight ends promptly with an abort error and leaves no child process");
 }
 
 // ---------- B

@@ -82,5 +82,9 @@ Say the word and it can be added behind a flag (`--reviewers 2`), off by default
 - macOS and Windows desktop control (Linux/X11 is the only platform tested against a real driver).
 - Sound has never been heard by a person; it is measured (audible, not clipping) in a headless browser.
 - The cat's and cursors' licences (above).
-- Stopping with the real Claude SDK: `test/stop.mjs` uses a stand-in that honours an abort the way the real one is documented to.
-  `npm run test:real-model-stop` (opt-in, cents) runs the real one; see CHANGELOG for whether it has been run.
+- Stopping with the real Claude SDK: `test/stop.mjs` uses a stand-in; `npm run test:real-model-stop` (opt-in, cents) was run once
+  against the real one on 2026-10-02 and passed. A query aborted in flight ended with an abort error about 2 s later (SDK teardown),
+  leaving no child process; the real pipeline stopped 6 s into the Planner was saved as `stopped` 8 s in, in order, with no Overseer
+  model call. It also showed the stand-in was wrong in one detail (the real SDK throws a plain `Error`, not an `AbortError`), which
+  the pipeline never depended on (it decides by the run's own stop flag) and which the stand-in now matches. Aborting before any text
+  had arrived is what was exercised; aborting mid-answer, or during a tool call, was not.

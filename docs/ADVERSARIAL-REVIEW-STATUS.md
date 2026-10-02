@@ -291,7 +291,7 @@ changes in a row, four server restarts in a row (`test/ui-cartoon-stress.mjs`, k
 
 Open after the last round (none of these is a known bug; they are things not yet checked):
 
-- Stopping with the real SDK has a test (`test/stop-real.mjs`) but it is opt-in; see the CHANGELOG for whether it has been run.
+- Stopping with the real SDK: `test/stop-real.mjs` (opt-in) was run once and passed. An abort during the very first request was exercised; an abort mid-answer or during a tool call was not.
 - macOS and Windows desktop control; Linux/X11 is the only platform tested against a real driver.
 - The cat's and cursors' licences (unknown), the dinosaur's and Craftpix icons' (unchecked): `ASSETS.md`.
 - Parallel reviewers (OpenClaw's swarm idea) are deliberately not built; that is a spending decision for the project's owner.
