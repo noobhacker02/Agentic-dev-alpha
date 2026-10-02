@@ -106,7 +106,7 @@ landed, so neither leak is visible in them any more.
 
 ### Fewer prompts, without approving blindly
 
-Two changes took the todo app from 53 prompts to 16. Both follow Claude Code's own permission rules.
+Two changes took the todo app from 53 prompts to 13 (16 in the first run recorded, 13 in the later, fresh one the table above uses; one real run each, so the exact number moves a little). Both follow Claude Code's own permission rules.
 
 - **"Yes, and don't ask again" (option 2)** saves a rule for the rest of the run only:
   `Bash(npm test:*)` for shell commands, or the tool name for file and browser tools. File tools are
@@ -302,7 +302,7 @@ rendered as inert text everywhere they appear (tested with markup in each).
 ## Checking it yourself
 
 ```bash
-npm run build && npm test            # 26 suites, no API key; includes real-Chromium UI tests
+npm run build && npm test            # 37 suites, no API key; includes real-Chromium UI tests
 node test/e2e/record-run.mjs --out /tmp/rec --browser --smart -- "Build a tiny todo web app…"
                                      # real run (≈$0.60–1.60): video, screenshots per phase, summary.json
                                      # writes <out>/run.webm -- test/e2e/convert-to-mp4.sh <out>/run.webm

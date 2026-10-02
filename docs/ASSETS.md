@@ -5,7 +5,7 @@ piece is, **what is and is not known about where it came from**, how it gets to 
 
 ## What ships
 
-All of it is under [`ui/assets/`](../ui/assets/): 74 small PNGs and a `manifest.json`, **under 60 KB in total**.
+All of it is under [`ui/assets/`](../ui/assets/): 74 small PNGs and a `manifest.json`, **about 50 KB in total** (the sum of the file sizes; `du` over-reports because it counts disk blocks). They travel as one inline data script of about 71 KB (base64), which a live page loads once and every saved `report.html` carries, so a report opens with no network.
 
 | Piece | What | Used for |
 |---|---|---|

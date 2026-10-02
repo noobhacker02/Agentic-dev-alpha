@@ -25,14 +25,14 @@ export async function freePort() {
 }
 
 /**
- * opts: viewport, plain (the server's default, --plain), onStop (what the Stop button calls), abort (URL substrings the page may not load, to prove it survives without them),
+ * opts: viewport, historyLimit (the bus's replay history, to make trimming happen with few events), plain (the server's default, --plain), onStop (what the Stop button calls), abort (URL substrings the page may not load, to prove it survives without them),
  *       clock (install Playwright's fake clock before the page loads), reducedMotion, init (script to run first).
  * Returns { bus, srv, browser, ctx, page, ev, errors, restartServer, close }.
  */
 export async function harness(opts = {}) {
   const port = await freePort();
   const token = "t".repeat(48);
-  const bus = new EventBus();
+  const bus = new EventBus(undefined, opts.historyLimit ? { historyLimit: opts.historyLimit } : {});
   const h = { bus, port, token, errors: [] };
   h.srv = await startServer(bus, port, { token, plain: opts.plain, onStop: opts.onStop });
   h.browser = await chromium.launch({ executablePath: chromePath() });

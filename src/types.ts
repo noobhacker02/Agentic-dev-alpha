@@ -95,6 +95,8 @@ export interface TrustedDecision {
 export type AgentEvent =
   | { type: "run-start"; runId: string; task: string; workDir?: string; ts: string }
   | { type: "run-end"; runId: string; status: RunRecord["status"]; ts: string }
+  /** Synthetic, never stored: put first in a replay or a saved report when the bus had to drop this many older events to stay bounded. */
+  | { type: "history-trimmed"; runId: string; count: number; ts: string }
   /** Something asked the run to stop (cost cap, Ctrl-C, the Stop button). The reason is written by agent-loop, never by a model. */
   | { type: "stop-requested"; runId: string; reason: string; ts: string }
   | { type: "phase-start"; runId: string; phase: PhaseName; attempt: number; ts: string }

@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { PHASES } from "./types.js";
 import type { AgentEvent, PhaseName, PhaseRecord, PhaseVerdict, RunRecord, TrustedDecision } from "./types.js";
-import { emptyHabits, QUICK_MS, type Habits } from "./habits.js";
+import { ABANDONED_AFTER_MS, emptyHabits, QUICK_MS, type Habits } from "./habits.js";
 
 /** A stored payload as an object, or `{}` when the row is not JSON or not an object: a report over the audit log must not die on one bad row. */
 function payload<T extends object>(raw: string): Partial<T> {
@@ -22,6 +22,10 @@ export class Store {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
+    // Several runs (two terminals, a script that starts a few) share one audit database. Without a busy timeout a write that meets another
+    // run's write fails at once with "database is locked", and a run died in the middle of finishing, left "running" with no report.
+    // This comes first so that even switching to WAL below waits its turn.
+    this.db.exec("PRAGMA busy_timeout = 15000;");
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.init();
   }
@@ -288,6 +292,7 @@ export class Store {
       else if (r.status === "failed") h.failed++;
       else if (r.status === "stopped") h.stopped++;
       const t = ms(r.createdAt);
+      if (r.status === "running" && t !== undefined && Date.now() - t > ABANDONED_AFTER_MS) h.abandoned++;
       if (t !== undefined && new Date(t).getHours() < 5) h.nightRuns++;
       const key = r.task.trim().toLowerCase().replace(/\s+/g, " ");
       sameTask.set(key, (sameTask.get(key) ?? 0) + 1);

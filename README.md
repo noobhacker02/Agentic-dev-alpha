@@ -394,6 +394,16 @@ npm run test:sprites           # no LLM calls — the pixel set validates; every
 npm run test:ui-mascot         # no LLM calls — real Chromium: the cat runs to a waiting prompt and hops, cursors, icons, reduced motion
 npm run test:ui-offline        # no LLM calls — real Chromium: the offline dialog and the dinosaur, against a server that goes away and returns
 npm run test:ui-sound          # no LLM calls — real Chromium: sound off by default, never autoplays, measured on the real output
+npm run test:ui-plain          # no LLM calls — real Chromium: one switch turns every cartoon off; remembered; the page works the same
+npm run test:ui-cartoon-stress # no LLM calls — real Chromium: 80 flapping approvals, hostile viewports, resizes, four server restarts
+npm run test:ui-idle-cost      # no LLM calls — real Chromium: nothing repaint-bound runs while a prompt waits (it once cost 4.2% of a core)
+npm run test:ui-stop           # no LLM calls — real Chromium: the Stop button, "still running", notifications, a skewed clock
+npm run test:stop              # no LLM calls — cost cap, Ctrl-C, SIGTERM, the stop message; the run is saved as stopped
+npm run test:stop-e2e          # no LLM calls — a real run, a real browser, two real clicks on Stop; 200 stop messages from 3 tabs
+npm run test:concurrent        # no LLM calls — 5 (or CONCURRENT_RUNS=12) runs on one audit database; a database that fails mid-run
+npm run test:doctor            # no LLM calls — every doctor diagnosis through injected probes, the real X11 probe, the CLI
+npm run test:roast             # no LLM calls — the insights voice: lint, canaries, fake model, abandoned runs, the CLI
+npm run test:real-model-stop   # a few cents, opt-in — the real SDK aborted mid-request and the real pipeline stopped mid-Planner
 npm run check:sprites          # after swapping a sprite under ui/assets/: checks it against manifest.json
 node test/e2e/record-run.mjs --out <dir> [--browser] [--smart] -- "<task>"   # real API calls — records a whole run as video
 node test/browser-approval.mjs # real API calls — full pipeline, real browser, real Approve clicks
@@ -405,6 +415,10 @@ Every `test/validate-*` and `test/browser-approval.mjs` script spends real API t
 reading the code isn't evidence something works.
 
 ## Status
+
+**[docs/IS-IT-USEFUL.md](docs/IS-IT-USEFUL.md)** is the blunt version: what here earns its place (with the measurements), what is
+only delight, and the one experiment that would settle whether the five-agent pipeline beats a single session (it did not, on the
+one task measured: 4,039 vs 4,037 of 4,040 checks for 17x the cost).
 
 See `STATUS.md` for the current, evidence-based state: what's been actually run and independently verified vs.
 what's still untested. Nothing here is claimed to work from reading the code — every claim has a run ID, a

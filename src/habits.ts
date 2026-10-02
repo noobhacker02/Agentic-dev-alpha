@@ -12,6 +12,8 @@ export interface Habits {
   done: number;
   failed: number;
   stopped: number;
+  /** Runs still marked "running" more than 12 hours after they began: the process was closed or force-quit before it could say so. */
+  abandoned: number;
   totalCostUsd: number;
   /** Money spent on runs that ended failed or stopped. */
   wastedUsd: number;
@@ -35,8 +37,9 @@ export interface Habits {
 }
 
 export const QUICK_MS = 1500;
+export const ABANDONED_AFTER_MS = 12 * 60 * 60 * 1000;
 export const emptyHabits = (): Habits => ({
-  runs: 0, done: 0, failed: 0, stopped: 0, totalCostUsd: 0, wastedUsd: 0, priciestRunUsd: 0,
+  runs: 0, done: 0, failed: 0, stopped: 0, abandoned: 0, totalCostUsd: 0, wastedUsd: 0, priciestRunUsd: 0,
   approvals: { asked: 0, approved: 0, denied: 0, auto: 0 }, quickYes: 0, slowestAnswerMin: 0, deniedThenAllowed: 0,
   rulesCreated: 0, rulesNeverReused: 0, repairedRunsByPhase: {}, nightRuns: 0, repeatedTaskMax: 0, longestRunMin: 0,
   desktop: { sent: 0, stopped: 0, approved: 0, denied: 0 },

@@ -21,7 +21,7 @@ agent-loop's data differs), **not built** (and why), **n/a** (solves a problem a
 | Merge rapid hits into one visual beat (battle event coalescing) | **not adopted, on purpose** | A tool-call log is an audit trail; merging real calls would hide information. Replay batching coalesces *drawing*, not events | `test/ui-replay.mjs` counts every tool call |
 | Evolution timing decoupled from wall clock | **n/a** | nothing in agent-loop evolves. (The cat's 90 s nap and nudges are wall-clock by design) | none |
 | File-by-file attribution of what was ported | **built** | `docs/ASSETS.md` credits every sprite sheet. **Open item for you:** the cat's and cursors' licence status is unknown and the dinosaur and Craftpix icons are unchecked; read it before publishing | `npm run check:sprites` validates files, not licences |
-| (PokeHarness has no automated tests) | | agent-loop has 34 suites in `npm test` | |
+| (PokeHarness has no automated tests) | | agent-loop has 37 suites in `npm test` | |
 
 ## Hermes
 

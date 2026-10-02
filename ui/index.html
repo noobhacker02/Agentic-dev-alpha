@@ -58,7 +58,11 @@
      the count badge is what actually surfaces that. Styled as a soft ambient glow in the same
      accent color already used throughout, not a hard outline -- present enough to catch the eye,
      quiet enough to sit next to five other steps without shouting. */
-  .step[data-waiting="1"] { animation: pulse-glow 2.2s ease-in-out infinite; }
+  /* The glow is a pseudo-element whose OPACITY breathes. It used to animate box-shadow on the step itself, which cannot run on the
+     compositor: the page repainted every frame for as long as a prompt waited (measured 4.2% of a core, 0.28% without it), and a prompt can
+     wait for hours while you are away. */
+  .step[data-waiting="1"] { position: relative; }
+  .step[data-waiting="1"]::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; box-shadow: 0 0 10px 1px rgba(217, 119, 87, .38); opacity: 0; pointer-events: none; animation: glow-breathe 2.2s ease-in-out infinite; }
   .wait-badge {
     display: inline-flex; align-items: center; justify-content: center; min-width: 14px; height: 14px;
     padding: 0 3px; border-radius: 999px; background: var(--accent); color: #fff;
@@ -142,6 +146,7 @@
   .still { font-size: 11px; color: var(--yellow); margin-left: 8px; }
   .still.ended { color: var(--dim); }
   .blk.stopnote { color: var(--red); }
+  .blk.trimmed { color: var(--dim); font-style: italic; }
 
   /* transcript blocks */
   .blk { margin: 0 0 10px; padding-left: 20px; position: relative; white-space: pre-wrap; word-break: break-word; animation: blk-in .2s ease-out; }
@@ -419,14 +424,14 @@
      asked their OS for reduced motion. */
   @keyframes blk-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes sheet-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-  @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 87, 0); } 50% { box-shadow: 0 0 10px 1px rgba(217, 119, 87, .38); } }
+  @keyframes glow-breathe { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
   .step[data-waiting="1"] { border-color: var(--accent); }
   /* The exact tool call a pending approval is for, highlighted in the transcript -- not just the
      stepper badge and the bottom dock, so it's unambiguous which line an approval belongs to even
      with several tool calls on screen. A thin accent-colored bar that gently breathes, not a ring
      around the whole line -- present, not loud. */
-  .blk.tool.awaiting { animation: blk-in .2s ease-out, pulse-glow-blk 2.2s ease-in-out infinite; }
-  @keyframes pulse-glow-blk { 0%, 100% { box-shadow: -2px 0 0 0 rgba(217, 119, 87, .5); } 50% { box-shadow: -2px 0 8px 1px rgba(217, 119, 87, .38); } }
+  .blk.tool.awaiting { animation: blk-in .2s ease-out; box-shadow: -2px 0 0 0 rgba(217, 119, 87, .5); }
+  .blk.tool.awaiting::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; box-shadow: -2px 0 8px 1px rgba(217, 119, 87, .38); opacity: 0; pointer-events: none; animation: glow-breathe 2.2s ease-in-out infinite; }
   /* The browser panel's "live" dot and the brief flash on its main image when a new snapshot lands
      -- shot-main is a fresh DOM node on every render (innerHTML is rebuilt wholesale), so this
      animation replays automatically each time without any manual class-toggling JS, the same trick
@@ -992,6 +997,9 @@ function render(ev) {
       { const cw = $("w-cwd"); if (cw && ev.workDir) cw.textContent = "working in " + ev.workDir; }
       blk("text md", "<strong>Task:</strong> " + md(ev.task));
       break;
+    case "history-trimmed":
+      blk("trimmed", "Showing the most recent activity: " + Number(ev.count).toLocaleString("en-US") + " earlier tool events were dropped from this view to keep the page fast. The audit database has every one of them (<code>agent-loop lineage</code>).");
+      break;
     case "stop-requested":
       state.stopping = true;
       blk("stopnote", '<span class="hint">■ Stop requested</span> <span class="muted">· ' + esc(ev.reason) + "</span>");
@@ -1439,7 +1447,7 @@ function syncExtras() {
 }
 // the turning glyph in the status line (not for anyone who has asked for less motion)
 if (!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches)) {
-  setInterval(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) sp.textContent = spinGlyph(); }, 220);
+  setInterval(() => { const sp = dockInner.querySelector(".statusline .spin"); if (sp) { const g = spinGlyph(); if (sp.textContent !== g) sp.textContent = g; } }, 220);   // (not rewritten when unchanged: a rewrite is a layout)
 }
 
 // shortcuts that work anywhere you are not typing

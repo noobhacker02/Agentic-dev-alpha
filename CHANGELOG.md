@@ -26,6 +26,24 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Fixed
+- **Several runs against one audit folder crashed with "database is locked"** (found by a stress test of five simultaneous runs; all five
+  failed, three of three repeats). The crash hit in the middle of finishing a run, so it stayed "running" with no report. SQLite had no
+  busy timeout; it has one now (15 s, set before switching to WAL). 12 simultaneous runs pass. And a database that fails mid-run (disk
+  full, a lock that does not clear) no longer kills the run: the page and the report work from memory, it says once that events are not
+  being recorded, and says at the end that the run will still read "running" there (`test/concurrent-runs.mjs`).
+- **A waiting prompt made the page repaint every frame** (found by measuring CPU, not by a test): the "needs you" glow animated
+  `box-shadow`, which cannot run on the compositor, and burned 4.2% of a core for as long as a prompt waited (hours, if you are away). It
+  animates opacity now: 0.3%. `test/ui-idle-cost.mjs` guards the cause (no repaint-bound infinite animation while the page is busy,
+  with a control that proves the detector fires); the spinner also stopped rewriting identical text 4.5 times a second in plain mode.
+- **A long run's reloaded page and saved report silently showed only the newest 5,000 events while the README said "full transcript".**
+  They now start with "Showing the most recent activity: N earlier tool events were dropped" (the count is exact, and the audit database
+  has every one). Trimming also no longer cuts between a tool call and its result (a headerless card at the top) and never drops a request
+  somebody is still being asked to answer. `test/bus-history.mjs`, `test/ui-replay.mjs`.
+- **Runs killed or crashed stay "running" forever, and `insights` presented them as maybe-alive.** It now says what "running" may mean, counts
+  runs still "running" 12+ hours later as abandoned (with a Ctrl-C tip), and no longer prints every unused rule (thousands of lines on a big
+  history; it stops at ten). The roast's grade now says, where it prints, that it is a made-up score.
+- **Docs that no longer matched the code**: suite counts, a size claim that was true but incomplete (50 KB of PNGs travel as 71 KB of base64
+  in every saved report), and a prompt-count that said 16 in one paragraph and 13 in the table beside it (13 is the later, fresh run).
 - **Ctrl-C left a run "running" in the audit database forever, and wrote no report** (found by the reference-project audit,
   `docs/REFERENCE-AUDIT.md`, and reproduced against the previous commit: SIGINT killed the process, the run stayed `running`, no
   `report.html`, browser and desktop sessions unclosed). Ctrl-C, SIGTERM, the page's Stop button and `--max-cost` now end a run through one
@@ -60,6 +78,11 @@ All notable changes to this project are documented here. Format follows
   a telescope) — they are now paired by position and checked by colour.
 
 ### Added
+- **`docs/IS-IT-USEFUL.md`: what here earns its place and what is only delight, with measurements** (and an honest note that on the one
+  task measured the five-agent pipeline scored 4,039 vs plain Claude's 4,037 of 4,040 checks at 17x the cost). It also lists the experiment that
+  would settle it (about $8 to $20, not run). The Stop button is now tested end to end with a real run, a real browser and two real
+  clicks (189 ms), and 200 stop messages from three tabs plus a Ctrl-C make exactly one stop (`test/stop-e2e.mjs`). Measured at scale:
+  `insights` on 3,000 runs / 636,000 events takes 2.5 s; a page reloaded onto a 40,000-event run loads in 1.6 s.
 - **Ending a run early, properly** (`src/run-control.ts`). `--max-cost <usd>` stops the run once that much is spent (checked after each
   phase attempt and Overseer call, so one long step can pass it; the Overseer is not paid to judge a run that is over). Ctrl-C, SIGTERM
   and a **stop run** button on the page (two clicks, the first arms it for 4 s; the page asks over the same token-checked socket as

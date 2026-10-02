@@ -89,6 +89,7 @@ function printInsights(insights: Insights) {
     return;
   }
   console.log("By outcome: " + Object.entries(insights.byStatus).map(([s, n]) => `${s}=${n}`).join(", "));
+  if (insights.byStatus.running) console.log(`  (running=${insights.byStatus.running}: still going, or the process was closed or force-quit before it could finish; Ctrl-C and the page's stop button do finish a run)`);
   console.log(`\nTotal cost: $${insights.totalCost.toFixed(2)}`);
   for (const p of insights.byPhase) {
     const cost = insights.costByPhase[p.name];
@@ -112,7 +113,8 @@ function printInsights(insights: Insights) {
   }
   if (insights.neverReusedRules.length) {
     console.log(`\nCreated but never reused (consider whether these are worth "don't ask again" at all):`);
-    for (const r of insights.neverReusedRules) console.log(`  ${stripTerminalControlBytes(r)}`);
+    for (const r of insights.neverReusedRules.slice(0, 10)) console.log(`  ${stripTerminalControlBytes(r)}`);
+    if (insights.neverReusedRules.length > 10) console.log(`  …and ${insights.neverReusedRules.length - 10} more`);
   }
 }
 
@@ -156,7 +158,10 @@ async function printVoice(insights: Insights, habits: Habits, humor: { level: Hu
     for (const l of lines) console.log(`    ◦ ${l}`);
     for (const t of base.tips) console.log(`    → ${t}`);
   }
-  if (habits.runs > 0) console.log(`\n  Report card: ${base.grade}${base.gradeComment ? `   ${base.gradeComment}` : ""}`);
+  if (habits.runs > 0) {
+    console.log(`\n  Report card: ${base.grade}${base.gradeComment ? `   ${base.gradeComment}` : ""}`);
+    console.log("  (for fun: a rough score made up from the numbers above, not a measure of your work)");
+  }
   if (note) console.log(`  (${note})`);
 }
 

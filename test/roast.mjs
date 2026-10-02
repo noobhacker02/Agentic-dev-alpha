@@ -36,6 +36,7 @@ const FIRES = {
   night: H({ nightRuns: 2 }),
   "many-denials": H({ approvals: { asked: 9, approved: 2, denied: 7, auto: 0 } }),
   stopped: H({ stopped: 2 }),
+  abandoned: H({ abandoned: 3 }),
   repairs: H({ repairedRunsByPhase: { builder: 3, verifier: 2 } }),
   "long-run": H({ longestRunMin: 125 }),
   clean: H({ runs: 3, done: 3, failed: 0 }),
@@ -177,6 +178,29 @@ assert.deepStrictEqual(h.repairedRunsByPhase, { builder: 1 }, "only real phase n
 assert.ok(Math.abs(h.longestRunMin - 90) < 0.01);
 assert.deepStrictEqual(h.desktop, { sent: 2, stopped: 1, approved: 1, denied: 0 });
 ok("getHabits counts statuses, night runs (5:00 is not night), repeated tasks, money in failed runs, quick yeses, the same call denied then allowed once, rules never reused, repairs, run length and desktop use; bad rows are skipped");
+
+// ---------------------------------------------------------------------------------------------- runs that never finished, and a long list of rules
+{
+  const d = mkdtempSync(join(tmpdir(), "agent-loop-roast-ghost-"));
+  const st = new Store(join(d, "agent-loop.db"));
+  const rawDb = new DatabaseSync(join(d, "agent-loop.db"));
+  const HOUR = 3_600_000;
+  const mk = (task, status, hoursAgo) => { const r = st.createRun(task, "/w"); rawDb.prepare("UPDATE runs SET status = ?, created_at = ? WHERE id = ?").run(status, new Date(Date.now() - hoursAgo * HOUR).toISOString(), r.id); return r; };
+  mk("a", "running", 48); mk("b", "running", 13); mk("c", "running", 11.9); mk("d", "running", 0.01); mk("e", "done", 100); mk("f", "failed", 100);
+  const g = st.getHabits();
+  assert.strictEqual(g.runs, 6);
+  assert.strictEqual(g.abandoned, 2, "still 'running' after more than 12 h counts (48 h, 13 h); 11.9 h and a run that began a moment ago may still be alive and do not; a finished run never does");
+  const rr = roast(g, "dark", 99);
+  assert.ok(rr.findings.includes("abandoned") && /Ctrl-C/.test(rr.tips.join(" ")), "…with a tip that names the way to stop a run properly");
+  for (let i = 0; i < 15; i++) rawDb.prepare("INSERT INTO events (run_id, phase, ts, type, payload_json) VALUES ('x', 'builder', ?, 'approval-resolved', ?)").run(new Date().toISOString(), JSON.stringify({ requestId: "r" + i, decision: "allow", rememberedRule: `Bash(rule${i}:*)` }));
+  st.close(); rawDb.close();
+  const out = spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "dist/cli.js", "insights", "--data-dir", d], { encoding: "utf8", cwd: ROOT }).stdout;
+  assert.ok(/running=4\b/.test(out) && /running=4: still going, or the process was closed or force-quit/.test(out), `the numbers say what 'running' may mean:\n${out}`);
+  const listed = (out.match(/^  Bash\(rule\d+:\*\)$/gm) || []).length;
+  assert.strictEqual(listed, 10, `a long list of rules is cut at 10 (${listed})`);
+  assert.ok(/…and 5 more/.test(out), out);
+  ok("runs still 'running' after 12 h are counted as abandoned (11.9 h and brand-new ones are not), the roast names Ctrl-C, `insights` explains what 'running' may mean, and a 15-rule list is cut at 10 with a count");
+}
 
 // ---------------------------------------------------------------------------------------------- nothing a person typed gets out
 const blob = JSON.stringify(h);

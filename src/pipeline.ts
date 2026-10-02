@@ -282,7 +282,8 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
     // BrowserSessionManager's own contract rules out (see src/browser-tools.ts).
     if (browserSessions) await browserSessions.close(run.id, bus, finalStatus === "failed" ? "failed" : "completed");
     if (desktopSession) await desktopSession.close(finalStatus === "failed" ? "failed" : "completed");
-    store.finishRun(run.id, finalStatus);
+    try { store.finishRun(run.id, finalStatus); }
+    catch (err) { console.error(`\nagent-loop: could not record the end of the run in the audit database (${err instanceof Error ? err.message : String(err)}); it will still say "running" there.`); }
     bus.emitEvent({ type: "run-end", runId: run.id, status: finalStatus, ts: new Date().toISOString() });
   }
 

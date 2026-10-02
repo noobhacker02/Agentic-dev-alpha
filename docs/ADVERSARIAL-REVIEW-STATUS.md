@@ -283,6 +283,11 @@ Full write-up and the idea-by-idea table: [`REFERENCE-AUDIT.md`](REFERENCE-AUDIT
 | A10 | `doctor` first reported "No display" as a blocking error to someone not using desktop control | Ran it on this machine | Desktop problems block only with `doctor --desktop` | `test/doctor.mjs` |
 | A11 | My own change made `agent-loop run` load the native desktop driver module at startup (`doctor.ts` imported its constants), even when a run was refused from its arguments | The existing module-resolution-trace test in the full suite | The driver module is loaded lazily by the probe | `test/desktop-cli.mjs` |
 
+| A12 | Five runs sharing one audit folder crashed with `database is locked` mid-finish, leaving a run "running" with no report | A stress test of simultaneous runs (5 of 5 failed, three repeats) | Busy timeout; a failing database no longer kills a run | `test/concurrent-runs.mjs` (12 at once also pass) |
+| A13 | A waiting prompt repainted the page every frame (4.2% of a core, hours at a time) | Measuring CPU with the cartoons off, then removing animations one by one | The glow animates opacity (0.3%) | `test/ui-idle-cost.mjs` |
+| A14 | A reloaded page and saved report silently showed only the tail of a long run; trimming could orphan a result or drop a waiting request | Measuring a 40,000-event run; a test that counted cards | An exact "N events dropped" note; pairs kept together; waiting requests never trimmed | `test/bus-history.mjs`, `test/ui-replay.mjs` |
+| A15 | Killed or crashed runs stay "running" forever and `insights` could not tell them from live ones; it printed thousands of unused rules | A 3,000-run synthetic history | Labelled, counted as abandoned after 12 h, list capped at ten | `test/roast.mjs` |
+
 Swept and found nothing: 80 approvals flapping while the cat chases the prompt, 60 clicks on the cat, 320x480 / 1920x300 / 600x900
 viewports (cat inside the window, over no answer button, no sideways scroll), resizes while it hops, markup in run text, 300 sound mode
 changes in a row, four server restarts in a row (`test/ui-cartoon-stress.mjs`, kept as a regression test).

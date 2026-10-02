@@ -144,6 +144,15 @@ export const FINDINGS: Finding[] = [
     ],
   },
   {
+    id: "abandoned", weight: 62,
+    when: (h) => h.abandoned >= 2,
+    lines: [
+      { text: "{abandoned} runs are still marked 'running' from long ago. Closing the laptop mid-run is not a workflow, it is a ghost story." },
+      { text: "{abandoned} runs never said goodbye: no end, no report, still 'running'. Respectfully, that is a group project nobody closed.", dark: true },
+    ],
+    tip: "Ctrl-C (or the stop button on the page) saves a run as stopped, with its report. Closing the terminal or a force-quit cannot.",
+  },
+  {
     id: "stopped", weight: 50,
     when: (h) => h.stopped >= 2,
     lines: [
@@ -193,7 +202,7 @@ export const FINDINGS: Finding[] = [
 ];
 
 /** Placeholders a line may use, and what each one is filled with. Anything else is a lint failure. */
-export const PLACEHOLDERS = ["quick", "approved", "denied", "flipped", "flippedTimes", "flippedDenials", "wasted", "failed", "done", "stopped", "phase", "phaseRuns", "runs", "runsCount", "unused", "night", "repeats", "dsent", "dsentTimes", "dstopped", "repairs", "longest", "slowest"] as const;
+export const PLACEHOLDERS = ["quick", "approved", "denied", "flipped", "flippedTimes", "flippedDenials", "wasted", "failed", "done", "stopped", "phase", "phaseRuns", "runs", "runsCount", "abandoned", "unused", "night", "repeats", "dsent", "dsentTimes", "dstopped", "repairs", "longest", "slowest"] as const;
 
 const money = (n: number) => "$" + n.toFixed(2);
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -204,7 +213,7 @@ export function varsFor(h: Habits): Record<(typeof PLACEHOLDERS)[number], string
     quick: String(h.quickYes), approved: String(h.approvals.approved), denied: String(h.approvals.denied), flipped: String(h.deniedThenAllowed),
     wasted: money(h.wastedUsd), failed: String(h.failed), done: String(h.done), stopped: String(h.stopped), phase: w.phase, phaseRuns: String(w.runs),
     flippedTimes: plural(h.deniedThenAllowed, "time", "times"), flippedDenials: plural(h.deniedThenAllowed, "denial", "denials"),
-    runs: String(h.runs), runsCount: plural(h.runs, "run", "runs"), dsentTimes: plural(h.desktop.sent, "time", "times"), unused: String(h.rulesNeverReused), night: String(h.nightRuns), repeats: String(h.repeatedTaskMax),
+    abandoned: String(h.abandoned), runs: String(h.runs), runsCount: plural(h.runs, "run", "runs"), dsentTimes: plural(h.desktop.sent, "time", "times"), unused: String(h.rulesNeverReused), night: String(h.nightRuns), repeats: String(h.repeatedTaskMax),
     dsent: String(h.desktop.sent), dstopped: String(h.desktop.stopped), repairs: String(totalRepairedRuns(h)),
     longest: String(Math.round(h.longestRunMin)), slowest: String(Math.round(h.slowestAnswerMin)),
   };
@@ -364,7 +373,7 @@ export function allowedNumbersFor(h: Habits): Set<string> {
   const add = (n: number) => { out.add(String(n)); out.add(String(Math.round(n))); out.add(n.toFixed(2)); out.add(n.toFixed(1)); };
   const v = varsFor(h);
   for (const x of Object.values(v)) for (const m of x.match(/\d+(?:\.\d+)?/g) ?? []) out.add(m);
-  for (const n of [h.runs, h.done, h.failed, h.stopped, h.totalCostUsd, h.wastedUsd, h.priciestRunUsd, h.approvals.asked, h.approvals.approved, h.approvals.denied, h.approvals.auto, h.quickYes, h.slowestAnswerMin, h.deniedThenAllowed, h.rulesCreated, h.rulesNeverReused, h.nightRuns, h.repeatedTaskMax, h.longestRunMin, h.desktop.sent, h.desktop.stopped, h.desktop.approved, h.desktop.denied]) add(n);
+  for (const n of [h.runs, h.done, h.failed, h.stopped, h.abandoned, h.totalCostUsd, h.wastedUsd, h.priciestRunUsd, h.approvals.asked, h.approvals.approved, h.approvals.denied, h.approvals.auto, h.quickYes, h.slowestAnswerMin, h.deniedThenAllowed, h.rulesCreated, h.rulesNeverReused, h.nightRuns, h.repeatedTaskMax, h.longestRunMin, h.desktop.sent, h.desktop.stopped, h.desktop.approved, h.desktop.denied]) add(n);
   return out;
 }
 

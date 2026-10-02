@@ -49,6 +49,10 @@ export class EventBus extends EventEmitter {
 
   /** How many events are kept for replay; a test can lower it. */
   private historyLimit: number;
+  /** How many writes to the audit database have failed (0 normally). */
+  private storeFailed = 0;
+  /** How many events trimming has dropped so far (they are all still in the audit database). */
+  private trimmed = 0;
 
   constructor(private store?: Store, opts: { historyLimit?: number } = {}) {
     super();
@@ -60,7 +64,14 @@ export class EventBus extends EventEmitter {
     // A lineage snapshot is derived from the events already stored (agent-loop lineage rebuilds it), so it
     // isn't stored again; and only the newest per run is kept for a tab that connects later.
     if (event.type === "lineage-updated") this.history = this.history.filter((e) => !(e.type === "lineage-updated" && e.runId === event.runId));
-    else this.store?.logEvent(event.runId, phase, event.type, event);
+    else {
+      // A log that cannot be written (locked, disk full) must not kill a live run: the page and the terminal still work from memory.
+      // It is said once, loudly, because from here on the audit database is missing events.
+      try { this.store?.logEvent(event.runId, phase, event.type, event); }
+      catch (err) {
+        if (!this.storeFailed++) console.error(`\nagent-loop: could not write to the audit database (${err instanceof Error ? err.message : String(err)}). The run continues, but this and any later events are NOT being recorded there.`);
+      }
+    }
     this.history.push(event);
     this.trimHistory();
     this.emit("event", event);
@@ -74,13 +85,30 @@ export class EventBus extends EventEmitter {
     const slack = Math.max(1, Math.floor(this.historyLimit / 4));
     if (this.history.length <= this.historyLimit + slack) return;
     let drop = this.history.length - this.historyLimit;
-    const kept: AgentEvent[] = [];
+    // Never dropped: the shape of the run, and a request somebody is still being asked to answer (a tab opened now must see it).
+    const keep = (e: AgentEvent) => STRUCTURAL_EVENTS.has(e.type) || (e.type === "approval-request" && this.pending.has(e.requestId));
+    let kept: AgentEvent[] = [];
     for (const e of this.history) {
-      if (drop > 0 && !STRUCTURAL_EVENTS.has(e.type)) drop--;
+      if (drop > 0 && !keep(e)) { drop--; this.trimmed++; }
       else kept.push(e);
     }
+    // A result whose call was dropped would show as a headerless card at the top of the page; drop it with its call.
+    const calls = new Set<string>();
+    for (const e of kept) if (e.type === "tool-call") calls.add(e.toolUseId);
+    kept = kept.filter((e) => {
+      if (e.type === "tool-result" && !calls.has(e.toolUseId)) { this.trimmed++; return false; }
+      return true;
+    });
     // Only structural events left over the limit (absurd, but bounded): drop the oldest of those rather than grow forever.
+    if (drop > 0) this.trimmed += drop;
     this.history = drop > 0 ? kept.slice(drop) : kept;
+  }
+
+  /** A note for the top of a replay or a saved report when events were dropped, so a trimmed transcript never passes for a whole one. */
+  private trimNote(): AgentEvent[] {
+    if (!this.trimmed) return [];
+    const first = this.history.find((e) => "runId" in e);
+    return [{ type: "history-trimmed", runId: first && "runId" in first ? first.runId : "", count: this.trimmed, ts: new Date().toISOString() }];
   }
 
   /**
@@ -88,12 +116,12 @@ export class EventBus extends EventEmitter {
    * already decided (their outcome is carried by the approval-resolved event that follows them).
    */
   replay(): AgentEvent[] {
-    return this.history.filter((e) => e.type !== "approval-request" || this.pending.has(e.requestId));
+    return [...this.trimNote(), ...this.history.filter((e) => e.type !== "approval-request" || this.pending.has(e.requestId))];
   }
 
   /** Every event this process emitted (up to the history limit), for writing a saved report. */
   allEvents(): AgentEvent[] {
-    return [...this.history];
+    return [...this.trimNote(), ...this.history];
   }
 
   addAllowRule(rule: string) {

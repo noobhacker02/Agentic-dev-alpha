@@ -5,8 +5,8 @@
 import assert from "node:assert";
 import { harness } from "./ui-extras-helpers.mjs";
 
-async function replayMs(pairs) {
-  const h = await harness();
+async function replayMs(pairs, historyLimit) {
+  const h = await harness({ historyLimit });
   h.startRun();
   for (let i = 0; i < pairs; i++) {
     h.ev({ type: "tool-call", phase: "builder", toolUseId: "t" + i, toolName: i % 3 ? "Read" : "Bash", toolInput: i % 3 ? { file_path: "/work/app/f" + i + ".js" } : { command: "npm test " + i } });
@@ -22,6 +22,8 @@ async function replayMs(pairs) {
   const seen = await h.page.evaluate(() => ({
     blocks: document.querySelectorAll("#transcript .blk").length,
     tools: +document.getElementById("s-tools").textContent,
+    toolCards: document.querySelectorAll("#transcript .blk.tool").length,
+    note: (document.querySelector("#transcript .blk.trimmed") || {}).textContent || null,
     builder: document.querySelector('.step[data-phase="builder"]').dataset.state,
     planner: document.querySelector('.step[data-phase="planner"]').dataset.state,
     runState: document.getElementById("run-state").textContent,
@@ -36,7 +38,19 @@ const small = await replayMs(500);
 const big = await replayMs(3000);
 assert.strictEqual(big.seen.builder, "active", "the stepper is painted when the replay ends");
 assert.strictEqual(big.seen.runState, "running", "the header is painted when the replay ends");
-assert.ok(big.seen.tools >= 2000 && big.seen.tools === big.seen.blocks - 1 || big.seen.tools > 2000, `the side panel counted the replayed tool calls (${big.seen.tools})`);
+assert.strictEqual(big.seen.tools, 3000, "all 3,000 tool calls are shown: 6,000 events is under the bus's history limit, so nothing is dropped");
+assert.strictEqual(big.seen.tools, big.seen.toolCards, "the side panel's tool count is exactly the cards on screen");
+assert.strictEqual(big.seen.note, null, "…and a replay that lost nothing carries no note");
+assert.strictEqual(small.seen.tools, 500);
+// a run past the history limit: the page says it is showing the tail, and the numbers add up
+const cut = await replayMs(600, 400);
+assert.ok(cut.seen.note && /Showing the most recent activity: [\d,]+ earlier tool events were dropped/.test(cut.seen.note), `a trimmed replay says so: ${cut.seen.note}`);
+const dropped = +cut.seen.note.match(/: ([\d,]+) earlier/)[1].replace(/,/g, "");
+assert.ok(cut.seen.tools > 0 && cut.seen.tools < 600, `some tool calls were dropped (${cut.seen.tools} of 600 shown)`);
+assert.strictEqual(cut.seen.tools, cut.seen.toolCards);
+assert.strictEqual(dropped + cut.seen.tools * 2, 1200, `the note's count and the cards on screen add up to the 600 calls sent (${dropped} dropped + ${cut.seen.tools * 2} shown = 1,200 events)`);
+assert.strictEqual(cut.seen.runState, "running", "and the run's shape (stepper, header, cost) is intact");
+console.log(`[ok] past the history limit the page says "${cut.seen.note.slice(0, 60)}…" and the dropped count and the cards on screen add up exactly`);
 assert.ok(big.seen.atBottom, "a replay ends scrolled to the newest activity");
 assert.ok(big.ms < 10_000, `a 6,000-event replay is usable in ${big.ms} ms (it took ~30 s before batching)`);
 assert.ok(big.ms < small.ms * 14, `replay time grows about linearly: ${small.ms} ms for 1,000 events, ${big.ms} ms for 6,000 (quadratic growth would be ~36x)`);
