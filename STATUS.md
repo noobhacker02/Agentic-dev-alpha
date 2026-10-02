@@ -151,7 +151,7 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
   deliberately adversarial/impossible task, or real usage over enough runs that a phase eventually fails on
   its own.
 - **Desktop control on macOS and Windows, and a real-model run on either.** The 37 no-API suites pass on
-  `macos-latest` and `windows-latest` in CI (2026-10-02, commit 13f6b1a; `.github/workflows/cross-platform.yml`),
+  `macos-latest` and `windows-latest` in CI (2026-10-02; `.github/workflows/cross-platform.yml`, blocking, so a red badge is real),
   after the first run there found real bugs (a Windows route 404, a printed link that was not a URL). What no CI
   covers: the native desktop driver (tested against real X11 windows on Linux only), and anything that spends
   money (the real-model runs behind this file all happened on Linux). Remote portability (a browser on another

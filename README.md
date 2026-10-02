@@ -223,7 +223,7 @@ machine's directory layout.
 
 ## Platform support
 
-Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI (2026-10-02, commit `13f6b1a`), and the two badges at the top are the live ones.
+Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-02 (the last commit checked was `e0764be`), and the two badges at the top are the live ones.
 
 | System | What the CI runs | Latest result |
 |---|---|---|
