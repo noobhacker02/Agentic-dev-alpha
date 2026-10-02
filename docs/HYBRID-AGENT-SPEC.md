@@ -234,6 +234,10 @@ not merged.
 - **No signal means "unknown, slow down", not "fine".** Between items, while the queue waits out a gap, no query runs and no event arrives; the
   governor starts every goal in a cautious state until it has seen at least one event, treats a missing `resetsAt` as "ask the user when to resume",
   and handles a `rejected` with no earlier warning (it can happen in the middle of an item, so the ledger's intent/verify rule covers it).
+- **Checkpoint before anything else.** At the first warning (and before any pause) the governor saves state: the ledger is flushed, the current item is
+  finished or parked with the reason, the goal's progress and next step are written to the store, and for the dev flow the work is committed to its branch (never
+  pushed without the user's go). Only then does it degrade or pause. A run that dies of a usage limit must be resumable from what was written; the self-healing
+  catalog ([SELF-HEALING.md](SELF-HEALING.md)) lists this first.
 - Above a warning level: drop executors to the cheaper alias, stop the Advisor, finish the current item, then pause with the reset
   time shown. On `rejected`: stop cleanly, record where, resume at the reset time only if the user said so.
 - `--max-cost` stays, because API-key users exist. For subscription users the primary bound is the window.

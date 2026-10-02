@@ -70,7 +70,7 @@ against a real site, and the README will say so.
 
 | ID | Threat | Looks like | Stop | Test | Status |
 |---|---|---|---|---|---|
-| E1 | Usage window exhausted | `rate_limit_event` with `allowed_warning` / `rejected`, **or no event at all** | **code**: governor degrades (cheaper aliases, no Advisor), then pauses with the reset time if known (else asks); `rejected` stops cleanly, including one with no earlier warning and no `resetsAt`; **no signal is "unknown, slow down"**. | Fake SDK streams: warning then rejected; rejected alone; no `resetsAt`; no events for a whole item. | planned |
+| E1 | Usage window exhausted | `rate_limit_event` with `allowed_warning` / `rejected`, **or no event at all** | **code**: governor **checkpoints first** (ledger flushed, item finished or parked, progress written), then degrades (cheaper aliases, no Advisor), then pauses with the reset time if known (else asks); `rejected` stops cleanly, including one with no earlier warning and no `resetsAt`; **no signal is "unknown, slow down"**. | Fake SDK streams: warning then rejected; rejected alone; no `resetsAt`; no events for a whole item; in each, the checkpoint exists in the store **before** the pause begins and a kill right after it resumes without redoing the item. | planned |
 | E2 | Cost cap (API-key users) | Spend above `--max-cost` | **code**: existing RunControl. | Existing tests. | built |
 | E3 | Infinite loop on one page | Same URL and snapshot hash, N times | **code**: no-progress monitor → skip item, then pause site if repeated. | Board page that never advances. | planned |
 | E4 | Item takes too long | A form with 40 steps | **code**: per-item time and step budget → skip. | Board multi-step modal with 40 steps. | planned |

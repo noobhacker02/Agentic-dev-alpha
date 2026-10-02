@@ -209,3 +209,21 @@ come from those documents, not from a re-run.
 - **Skill impact:** SKILL-007 (a baseline taken from an accidental pass is worse than none: measure the old code with the corrected scorer).
 - **Follow-ups:** the same checks for the skill-side benchmark (`tests/bench_skill_test.py`).
 
+## IMP-012 · 2026-10-02 · Saving before usage runs out is a command and a rule, and recoveries are a catalog (user request)
+- **Problem:** the session was close to its usage limit more than once. A sub-agent died of the limit before it wrote anything (round 1's first attempt), a background
+  suite was lost to a worker restart, and saving two repos by hand costs several steps at exactly the wrong moment. The same kinds of mistake (a stale generated table, a
+  test on global state, a lenient scorer, building while a suite ran) were also made more than once.
+- **Why it matters:** work that is not on the remote is work that has to be redone, and a rule nobody can find is not a rule.
+- **Change (how):** `scripts/checkpoint.mjs` (`npm run checkpoint -- "why"`): for this repo and the Dev-Skill checkout one level up, stage, commit and push the current
+  branch, with a message that says it is not a claim of green, never `--no-verify`, never a force push, retry on network errors only, and a plain report of what it could not do.
+  `CLAUDE.md` in both repos (loaded every session) carries the rule and the standing rules; `docs/SELF-HEALING.md` is the catalog (process recoveries, runtime recoveries,
+  mistakes made more than once, each with the habit that prevents it); the dev-workflow skill's Step 9 and improvement-loop reference carry the rule; the spec's usage governor
+  and threat E1 now require a checkpoint **before** any pause.
+- **Measured:** `test/checkpoint.mjs`, 6 checks with controls: a dirty repo is committed and pushed, a clean one makes no commit, an unpushed commit is pushed, a blocking hook is
+  respected and its message shown, a rejected push is reported and not forced, and the parent repo is found only when it is a different one. The first real use saved two repos
+  that a pre-commit scanner had blocked on four false positives; the catalog now says how to allow them inline. Not measurable: whether the rule is followed under pressure.
+- **Cost / trade-off:** one more file to keep current (the catalog); a checkpoint commit can contain unfinished work, which its message says.
+- **Suites:** none
+- **Skill impact:** SKILL-008 (Step 9, improvement-loop section 6, a self-healing reference).
+- **Follow-ups:** make the governor's checkpoint real in S4; a `Stop`-hook nudge when the transcript shows a limit warning would be the next step but cannot be verified here.
+

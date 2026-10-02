@@ -6,8 +6,8 @@ single place that says what was asked, what was decided, where things are, what 
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
 Updated: 2026-10-02T18:12:38Z
-Covers agent-loop commit: 7138e1b
-Covers Dev-Skill commit: 4f96ec9
+Covers agent-loop commit: 784f2be
+Covers Dev-Skill commit: 4855163
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
 else, this paragraph is wrong and should be corrected.
@@ -24,6 +24,9 @@ else, this paragraph is wrong and should be corrected.
   "Both skills" = the dev-workflow skill and agent-loop with its flow skills.
 - **Before the conversation is compacted**, this handoff must be current. Hooks save the compaction summary and re-inject this
   file; they are configured but their live firing is **unproven** until the next compaction happens (see Verified and not verified).
+- **Save before usage runs out** (the user asked twice): when usage is nearly out, run `npm run checkpoint` (commits and pushes both repos, never `--no-verify`), update this file's
+  "Next step" and what is verified, make anything in the background write to disk as it goes, and only then continue. Rules live in `CLAUDE.md` (loaded each session), the
+  dev-workflow skill (Step 9) and `docs/SELF-HEALING.md`, the catalog of recoveries and of mistakes made more than once, which gets a row the second time anything fails.
 - Persona rules: tease tool-usage habits, never the person; "politics" means legislature process only; dark but not too dark.
 - Ask before costly real-model runs (the user has since said subscription use is fine: "we aren't paying money", but keep it bounded
   by usage windows).
@@ -84,6 +87,10 @@ Newest last. Do not paraphrase these away.
    about and then if it's good enough we implemente it". Designed in docs/REEL-FLOW.md (stage S5b): the reliable path is the user giving
    a file or pasted text; reading the URL is a convenience that stops and asks when the site pushes back (no evasion); a reel's claim is
    treated as a hypothesis and implemented as a measured experiment. Real Instagram cannot be tested from here.
+13. "We are about to be out of usage make sure whenever we are close to hitting usage we save everything before moving ahead so we don't redo stuff okay remember
+   this in memory and process both and keep remembering all self healing stuff you can do and we should do okay so we don't rmekae shit a lot of em okay". Done:
+   `CLAUDE.md` in both repos (loaded every session, the closest thing to memory this environment has), `scripts/checkpoint.mjs` (`npm run checkpoint`),
+   `docs/SELF-HEALING.md`, skill Step 9 and `references/improvement-loop.md`, and the usage governor's checkpoint-before-pause in the spec.
 
 ## Decisions made
 

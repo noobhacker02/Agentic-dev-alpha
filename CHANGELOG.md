@@ -14,6 +14,9 @@ All notable changes to this project are documented here. Format follows
   `resize`; `inspect` takes a `query` and says when a page is blank. The benchmark's `observability` suite went from 0 of 8 to 8 of 8 (the baseline was first recorded as 1 of 8 and corrected after an adversary round showed its one point was scored by accident). The
   test found three real faults in its own first draft: an eviction policy that threw away the most informative entry, counts reported before a
   burst had finished, and a download cancelled too late for small files about 1 run in 6 (now refused by the browser).
+- **`npm run checkpoint` saves everything before usage runs out, `CLAUDE.md` carries the rule, and `docs/SELF-HEALING.md` catalogs recoveries and repeated mistakes** (user
+  request; IMP-012). One command stages, commits and pushes this repo and the Dev-Skill checkout above it, never with `--no-verify` and never forced, and says plainly what it
+  could not do (`test/checkpoint.mjs`, 6 checks with controls). The usage governor in the spec now checkpoints before it pauses.
 - **The browser can no longer be sent to an off-list host through a redirect, and file tools cannot walk out of `--dir` through a symlink** (adversary
   round 1, findings A2 critical and A1 high; `docs/IMPROVEMENTS.md` IMP-009 and IMP-010). The route handler Playwright gives us sees only the first URL
   of a request, so a server-side 301/302/303/307/308 from an allowed local page reached a decoy on `127.0.0.2` with its query string; the shipped docs
