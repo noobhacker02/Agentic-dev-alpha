@@ -15,9 +15,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const game = (page) => page.evaluate(() => AL.offline.state());
 const ink = (page) => page.evaluate(() => {
   const c = document.getElementById("dino"), d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
-  let grey = 0, paper = 0;
-  for (let i = 0; i < d.length; i += 4) { if (d[i] === 83 && d[i + 1] === 83 && d[i + 2] === 83) grey++; else if (d[i] === 247) paper++; }
-  return { grey, paper, w: c.width, h: c.height };
+  let grey = 0, paper = 0, sig = 0;   // sig: where the grey pixels are, so a sprite that only moved still changes it
+  for (let i = 0; i < d.length; i += 4) { if (d[i] === 83 && d[i + 1] === 83 && d[i + 2] === 83) { grey++; sig = (Math.imul(sig, 31) + i) >>> 0; } else if (d[i] === 247) paper++; }
+  return { grey, paper, sig, w: c.width, h: c.height };
 });
 
 // ---------- 1. the server goes away mid-run, and comes back
@@ -72,8 +72,12 @@ const ink = (page) => page.evaluate(() => {
   assert.strictEqual((await game(page)).duck, false, "releasing ↓ stands up");
   await page.waitForFunction(() => AL.offline.state().score > 0 || AL.offline.state().over, undefined, { timeout: 6000 });
   assert.ok((await game(page)).score > 0, "the score runs");
-  const a = (await ink(page)).grey; await sleep(250); const b = (await ink(page)).grey;
-  assert.ok(a !== b || (await game(page)).over, "the picture changes as it runs");
+  // Not a fixed 250 ms: on a loaded machine (a CI runner) the game's time runs slower than the clock, and one sample pair saw no change once.
+  // The picture has to change within a few seconds, or the game has ended.
+  const before = (await ink(page)).sig;
+  let moved = false;
+  for (let i = 0; i < 20 && !moved; i++) { await sleep(250); moved = (await ink(page)).sig !== before || (await game(page)).over; }
+  assert.ok(moved, "the picture changes as it runs");
   let over;
   for (let i = 0; i < 60 && !(over = (await game(page))).over; i++) await sleep(250); // never jump again: a cactus gets it
   assert.ok(over.over && over.score > 0, `it ends when a cactus hits: ${JSON.stringify(over)}`);
