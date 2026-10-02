@@ -206,7 +206,7 @@ for (const [signal, code, word] of POSIX ? [["SIGINT", 130, "Ctrl-C"], ["SIGTERM
   assert.ok(new RegExp(`${word}: stopping the run`).test(r.err), r.err);
   assert.strictEqual(r.runs[0].status, "stopped", `${signal}: the run is recorded as stopped, not left "running"`);
   assert.ok(/finished with status: stopped/.test(r.out), r.out);
-  const report = (r.out.match(/Report: file:\/\/(\S+)/) || [])[1];
+  const report = (r.out.match(/Report: (file:\/\/\S+)/) || []).slice(1).map((u) => fileURLToPath(u))[0];
   assert.ok(report && existsSync(report), `${signal}: the report was written`);
   assert.ok(readFileSync(report, "utf8").includes(signal === "SIGINT" ? "you pressed Ctrl-C" : "the process was terminated"), "…and says why");
   const stop = r.events.find((e) => e.type === "stop-requested");

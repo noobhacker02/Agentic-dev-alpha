@@ -37,6 +37,16 @@ All notable changes to this project are documented here. Format follows
   423 s against a server clock 7 minutes off, measured with two real processes. The server now sends its time with the end of every
   replay (`serverTime`), and the page keeps the smallest clock difference it has seen. `ServerOptions.clock` lets a test or a
   recording script its own timeline.
+- **On Windows the report and lineage links the command line printed were not valid URLs** (found by the Windows run of
+  `test/lineage.mjs`): it printed `file://` followed by the path, which on Windows is `file://C:\Users\...\report.html`
+  (backslashes, no third slash), so a terminal would not make it a link. It prints `pathToFileURL(...)` now, `file:///C:/Users/...`;
+  on Linux and macOS the line is unchanged for ordinary paths. The four tests that read the line parse it as a URL.
+- **The dinosaur test could fail on a loaded machine** (one Linux CI run): it compared two canvas frames 250 ms apart. It now waits
+  up to five seconds for the picture to change and compares where the grey pixels are, not how many there are. I could not reproduce
+  the failure locally, so the cause (load on the runner) is likely, not confirmed.
+- **The real-permission notification test granted permission with no origin**, which macOS and Windows Chromium reported as
+  `denied`; it grants it for the page's own origin now, the documented form. (Never ran green on those systems before, because
+  earlier runs stopped before reaching it.)
 - **A test I pushed contradicted the server it ran against, and went red on all three systems** (`test/ui-stop.mjs`, the "page 7
   minutes ahead" case): it stamped events with a clock 7 minutes off while the test server truthfully reported its own, unskewed clock
   in `replay-complete`. A real server stamps events and reports its time from one clock; the test server now does too

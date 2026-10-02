@@ -1,5 +1,6 @@
 import { mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { EventBus } from "./bus.js";
 import { Store, type Insights } from "./store.js";
 import { startServer } from "./server.js";
@@ -441,9 +442,10 @@ Usage:
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "lineage.md"), renderLineageMarkdown(lineage));
     writeFileSync(join(dir, "lineage.json"), JSON.stringify(lineage, null, 2));
-    console.log(`Lineage: file://${join(dir, "lineage.md")}`);
+    // A real file URL: `file://` + a Windows path is not one (backslashes, no third slash), and the terminal would not make it a link.
+    console.log(`Lineage: ${pathToFileURL(join(dir, "lineage.md")).href}`);
     const report = writeRunReport(dir, bus.allEvents(), humor.level, plain);
-    console.log(`Report: file://${report}`);
+    console.log(`Report: ${pathToFileURL(report).href}`);
     await new Promise((r) => setTimeout(r, 300)); // let open pages receive the last events
   } catch (err) {
     console.error(`Could not write the run report: ${err instanceof Error ? err.message : String(err)}`);

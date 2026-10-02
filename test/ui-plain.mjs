@@ -276,7 +276,7 @@ const waitPlain = (page, v) => page.waitForFunction((x) => document.documentElem
     }
     const code = await new Promise((r) => child.on("close", r));
     assert.ok(served.startsWith(`window.__PLAIN_DEFAULT__ = ${flag};`), `the live server's default (--plain ${flag}): ${served.slice(0, 50)}`);
-    const reportPath = (out.match(/Report: file:\/\/(\S+)/) || [])[1];
+    const reportPath = (out.match(/Report: (file:\/\/\S+)/) || []).slice(1).map((u) => fileURLToPath(u))[0];
     assert.ok(reportPath, `no report was written (exit ${code}):\n${out.slice(-600)}`);
     assert.ok(readFileSync(reportPath, "utf8").includes(`window.__PLAIN_DEFAULT__ = ${flag};`), `the saved report's default (--plain ${flag})`);
   }

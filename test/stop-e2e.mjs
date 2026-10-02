@@ -36,7 +36,7 @@ const finish = (run) => {
   const runs = store ? store.listRuns() : [];
   const events = runs[0] ? store.getRunEvents(runs[0].id) : [];
   store?.close();
-  return { runs, events, report: (run.out.match(/Report: file:\/\/(\S+)/) || [])[1] };
+  return { runs, events, report: (run.out.match(/Report: (file:\/\/\S+)/) || []).slice(1).map((u) => fileURLToPath(u))[0] };
 };
 
 // ---------- 1. a human presses Stop on the page of a real run

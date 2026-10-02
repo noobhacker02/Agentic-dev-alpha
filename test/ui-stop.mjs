@@ -273,9 +273,10 @@ ok("a page whose clock is 7 minutes ahead of or behind the server's still shows 
 
   // permission granted by the browser
   const g = await harness({ init: counting });
-  await g.ctx.grantPermissions(["notifications"]);
+  await g.ctx.grantPermissions(["notifications"], { origin: `http://127.0.0.1:${g.port}` });   // for this origin, the documented form; with none, some platforms report "denied"
   await g.open(); g.startRun();
-  assert.strictEqual(await g.page.evaluate(() => Notification.permission), "granted", "the browser really reports granted");
+  const reported = await g.page.evaluate(async () => ({ constructor: Notification.permission, query: (await navigator.permissions.query({ name: "notifications" }).catch((e) => ({ state: "error: " + e.message }))).state }));
+  assert.strictEqual(reported.constructor, "granted", `the browser really reports granted (${JSON.stringify(reported)})`);
   await g.page.keyboard.press("?");
   await g.page.locator("#opt-notify").check();
   await g.page.waitForFunction(() => localStorage.getItem("agent-loop-notify") === "on");
