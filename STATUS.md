@@ -150,9 +150,12 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
   an honest gap, not something to paper over by forcing a contrived failure. It would need either a
   deliberately adversarial/impossible task, or real usage over enough runs that a phase eventually fails on
   its own.
-- **Windows / remote portability** — built and run only in this Linux container so far. Nothing in the code is
-  platform-specific (Node + `node:sqlite` + `ws`, no shell-outs beyond what the agents themselves invoke via
-  the SDK's own Bash tool), but this is an assumption, not something tested on Windows yet.
+- **Desktop control on macOS and Windows, and a real-model run on either.** The 37 no-API suites pass on
+  `macos-latest` and `windows-latest` in CI (2026-10-02, commit 13f6b1a; `.github/workflows/cross-platform.yml`),
+  after the first run there found real bugs (a Windows route 404, a printed link that was not a URL). What no CI
+  covers: the native desktop driver (tested against real X11 windows on Linux only), and anything that spends
+  money (the real-model runs behind this file all happened on Linux). Remote portability (a browser on another
+  machine) is simulated with skewed clocks, not tried across two real machines.
 
 ## Architecture decisions worth recording
 
@@ -190,7 +193,7 @@ approval works", approval UI ON, `test/browser-approval.mjs`):**
 | Built tool actually works, checked independently of the pipeline's own claims | pass — `wc`, `node wordcount.js sample1.txt`/`sample2.txt`/missing-file all run by hand, output matches `README.md` exactly |
 | A second, distinct instance of a later phase catching an earlier phase's real mistake | pass — test-designer caught a wrong word count in the Planner's `PLAN.md` (16 vs. correct 17), builder used the corrected value |
 | Retry path (Overseer sends a phase back with feedback) | not exercised — implemented, typechecked; 3 real runs (2 smoke, 1 real feature with full retry budget available) and none has ever needed one |
-| Windows / non-Linux run | not run |
+| Windows / macOS run | pass — all 37 no-API suites on `windows-latest` and `macos-latest` (CI, 2026-10-02); desktop control and real-model runs not covered there |
 | agent-loop validates dev-workflow's real-world skill triggering | pass — `test/validate-dev-workflow.mjs`, Skill tool fired unprompted, 9/9 artifact checks passed, see Dev-Skill's `specs/dev-workflow-skill/STATUS.md` (Iteration 3) |
 | dev-workflow asks once (genuinely ambiguous task) and never re-asks (decision already logged) | pass — `test/validate-decisions-log.mjs`, 3/3 checks: Run A asked real, specific, batched questions instead of guessing a payment provider; Run B, with `DECISIONS.md` pre-seeded, used Stripe directly without re-asking |
 | agent-loop's own Overseer reads `DECISIONS.md` (not just dev-workflow's sessions) | pass — real pipeline run with `DECISIONS.md` pre-seeded (`logLevel: "debug"`); Builder used the logged value verbatim in `config.json`, independently confirmed by hand |
@@ -204,7 +207,7 @@ not urgent:
 1. The retry path is still genuinely unexercised after 3 real runs — needs either a deliberately
    adversarial/impossible task or enough real usage that a phase eventually fails on its own; not worth
    forcing artificially just to check a box.
-2. Windows/remote portability is still unverified — an assumption, not something disproven.
+2. Windows and macOS: the no-API suites pass in CI; desktop control there and real-model runs are still unverified.
 3. The dev-workflow validation scripts have only run once or twice each, with one task phrasing apiece — real
    signal, but not enough runs to call any of this "solved"; worth repeating with different phrasing over time.
 4. Agent-loop's own 5-phase pipeline (planner/test-designer/builder/verifier/gatekeeper) is a *different*,

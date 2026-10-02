@@ -1,8 +1,9 @@
 name: Cross-platform
 
-# Evidence for the "macOS and Windows are untested" line in the docs. Each suite from `npm test` runs on its own, so the result is a
-# table of which pass on each system, not one failure that hides the rest. It is non-blocking (continue-on-error) while the
-# failures are being learned from; a failure here is information, not a red main. The real-driver desktop tests and the shell
+# The macOS and Windows half of the test matrix. Each suite from `npm test` runs on its own, so the result is a list of which pass on
+# each system, not one failure that hides the rest. It was non-blocking (continue-on-error) while the first failures were learned from;
+# all 37 suites pass on both now, so it blocks: a green badge here means it, and a red one is a real regression. (A job that is allowed
+# to fail reports "success" while suites inside it fail; that is why this flag is gone.) The real-driver desktop tests and the shell
 # stress script stay Linux-only: they need X11 and bash.
 
 "on":
@@ -14,7 +15,6 @@ jobs:
   suites:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: true
     timeout-minutes: 60
     strategy:
       fail-fast: false

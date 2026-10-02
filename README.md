@@ -1,6 +1,7 @@
 # agent-loop
 
 [![Tests](https://github.com/noobhacker02/Agentic-dev-alpha/actions/workflows/test.yml/badge.svg)](https://github.com/noobhacker02/Agentic-dev-alpha/actions/workflows/test.yml)
+[![Cross-platform](https://github.com/noobhacker02/Agentic-dev-alpha/actions/workflows/cross-platform.yml/badge.svg)](https://github.com/noobhacker02/Agentic-dev-alpha/actions/workflows/cross-platform.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Let Claude work on your machine while you stay in charge of it.** agent-loop runs the real
@@ -222,17 +223,17 @@ machine's directory layout.
 
 ## Platform support
 
-Everything runs on Linux, macOS and Windows with Node 22.5+; the CI results are below, not asserted.
+Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI (2026-10-02, commit `13f6b1a`), and the two badges at the top are the live ones.
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 37 suites in `npm test` (`.github/workflows/test.yml`), plus the real-driver desktop tests under Xvfb | Blocking: the **Tests** badge at the top is the live result. |
-| **macOS** (`macos-latest`) | Each of the 37 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`, non-blocking) | 36 of 37 suites on the last completed run (2026-10-02). The failure was a notification test run in Chromium's headless shell instead of a full Chromium; a fix is pushed and being verified. |
-| **Windows** (`windows-latest`) | The same | 35 of 37 on the last completed run (2026-10-02): the same test, plus the CLI printing report links that were not valid URLs on Windows (fixed). |
+| **Linux** | All 37 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green |
+| **macOS** (`macos-latest`) | Each of the 37 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | **37 of 37** |
+| **Windows** (`windows-latest`) | The same | **37 of 37** |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
-links that were not valid URLs. Both are fixed. Not covered by any CI: **desktop control on macOS and Windows** (the native driver is
+links that were not valid URLs; and a notification-permission test that had only ever run in this sandbox's Chromium failed on all three systems, because Playwright's default for a headless launch is the headless shell, which has no notification permission of its own. All three are fixed, and the cross-platform job now blocks (it used to be allowed to fail, which let it show green while suites inside it were red). Not covered by any CI: **desktop control on macOS and Windows** (the native driver is
 tested against real X11 windows on Linux only) and the real-model tests (they spend money, so they are opt-in).
 
 Two things to know rather than paper over:

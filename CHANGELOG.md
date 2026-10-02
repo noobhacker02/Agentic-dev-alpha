@@ -6,6 +6,10 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Changed
+- **The cross-platform check blocks now, and all 37 suites pass on macOS and Windows** (CI, 2026-10-02, commit 13f6b1a; Linux green on the
+  same commit). It had been allowed to fail (`continue-on-error`) while the first failures were learned from, which meant its badge
+  would have read "passing" with suites inside it red; the first macOS/Windows runs were 36 of 37 and 34 of 37. `STATUS.md` no longer
+  says Windows was never tried. Still not covered by any CI: desktop control on macOS and Windows, and the real-model runs.
 - **README rewritten, and every walkthrough video and screenshot remade on the current page.** The README now opens with what the
   project is for and the measured result that the five-agent pipeline did not beat one session (docs/IS-IT-USEFUL.md), lists what it
   gives you with the evidence behind each line, shows the CI results per system instead of asserting them, and keeps its gaps in one
@@ -59,7 +63,7 @@ All notable changes to this project are documented here. Format follows
   sandbox always passed the full Chromium, so it passed here; pointing the test at the shell reproduced CI's exact output. The section
   now asks for a full Chromium (`harness({ fullChromium: true })`, `channel: "chromium"` when no path is given) and fails loudly, naming
   both readings, if it is ever run in the shell. My first guess (the grant had no origin) was wrong; granting for the page's origin is
-  kept, being the documented form. Not verified on CI until it has run there.
+  kept, being the documented form. Verified: it passes on Linux, macOS and Windows CI (2026-10-02).
 - **A test I pushed contradicted the server it ran against, and went red on all three systems** (`test/ui-stop.mjs`, the "page 7
   minutes ahead" case): it stamped events with a clock 7 minutes off while the test server truthfully reported its own, unskewed clock
   in `replay-complete`. A real server stamps events and reports its time from one clock; the test server now does too
