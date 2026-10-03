@@ -5,8 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-03T09:39:25Z
-Covers agent-loop commit: fa48f4e
+Updated: 2026-10-03T09:58:21Z
+Covers agent-loop commit: 916e776
 Covers Dev-Skill commit: 5778718
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
@@ -141,7 +141,7 @@ when its latest adversary round has no open confirmed finding at medium or above
 |---|---|
 | S0 spec, threats, benchmark, improvement log, handoff, team and reel designs | **built, not closed**: adversary round 1 (20 findings) is triaged in `docs/adversary/round-01-triage.md`; 5 fixed in code, 14 design changes whose tests come with their stages, 1 scheduled (A10). |
 | S1 browser observability + network gate | **built** (`observability` 0 to 8 of 8; the redirect decoy gets 0 of 16; symlink walk closed). Not yet re-attacked by a second adversary round. |
-| S1b read what is really on the page (frames, shadow DOM, unverifiable fields) | **built** (IMP-014; adversary A10 closed; `form-coverage` 1 to 8 of 8; `test:browser-frames` 14 checks, 17 mutants killed). The form *diff* is S5. CI on its commit: see Next step. |
+| S1b read what is really on the page (frames, shadow DOM, unverifiable fields) | **built** (IMP-014; adversary A10 closed; `form-coverage` 1 to 8 of 8; `test:browser-frames` 14 checks, 17 mutants killed). The form *diff* is S5. CI green on all three systems at `916e776`. |
 | S2 LIVE mode (allowances on the gate, profile, login handoff, gated upload with destination check) | not started |
 | S3a team composition core (roster, composer, validator, lineage identity, post-build gate) | design revised after round 1 (V8, V14, V15, identity, checkers); not built; V9 moved to S4 |
 | S3 Haiku router, flow registry, `agent-loop do` | not started |
@@ -157,9 +157,9 @@ when its latest adversary round has no open confirmed finding at medium or above
 1. **CI was green on all three systems at agent-loop `fa48f4e` and `646cdcb`** (Tests on Linux; Cross-platform on macOS and Windows; read from the Actions API). It took four rounds (IMP-013); still unproven and
    said so there: the Windows path-root fix has only CI behind it, and the burst lull change (60 to 120 ms) is a hardening, not a measured fix. **Rule that came out of it:** do not push until the full suite has
    passed locally, and read all three systems after every push.
-2. **S1b is built and committed** (IMP-014): `inspect` walks frames and open shadow roots, names what it could not read, and does not offer (and `fill` refuses) text fields a person cannot see. The full suite passed
-   locally before the push. **First thing to do:** read the Actions runs for the S1b commit on all three systems (`gh api repos/noobhacker02/Agentic-dev-alpha/actions/runs`, then `mcp__github__get_job_logs` for any
-   failed job) and fix what is red. Things most likely to differ on macOS or Windows: frame-loading timing (`readableFrames` waits up to 1.5 s), the geometry rules for hidden fields, `new Function` page code.
+2. **S1b is built, and CI is green on all three systems at agent-loop `916e776`** (read from the Actions API; the full local suite passed 49 of 49 on the same tree first). IMP-014: `inspect` walks frames and open
+   shadow roots, names what it could not read, and does not offer (and `fill` refuses) text fields a person cannot see. Open follow-ups are listed in IMP-014 (closed roots, covered or clipped fields, hidden
+   checkbox or select traps, `press` on a hidden field, frames injected after `inspect`).
 3. Run **adversary round 2** (a new fresh-context agent, titles of round 1's findings as the only history) against the *code* built so far (gate, hooks, notices, frames and hidden fields,
    bench), not only the documents; fix what is confirmed test-first. Brief it to write each finding to its file as it confirms it.
 4. Then S2, S3a, S4 in the order of the spec's table.
