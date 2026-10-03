@@ -228,7 +228,7 @@ come from those documents, not from a re-run.
 - **Follow-ups:** make the governor's checkpoint real in S4; a `Stop`-hook nudge when the transcript shows a limit warning would be the next step but cannot be verified here.
 
 
-## IMP-013 · 2026-10-03 · Red CI on all three systems: the gate tries every address, Windows paths, line endings, two timing races (user: "make the shit work")
+## IMP-013 · 2026-10-03 · Red CI on all three systems: the gate tries every address, Windows paths, line endings, timing races, a popup's first error (user: "make the shit work")
 - **Problem:** every run of the `Tests` and `Cross-platform` workflows on 784f2be, 818775c and d3aefdc was red. Linux: `test:net-gate` got an empty reply for `http://localhost:PORT/post`
   (the CI runner resolves `localhost` to `::1` first and the gate connected only to the first allowed address, while the target listens on 127.0.0.1). Windows: the same, plus
   `test:scope` and `test:safety` (every ordinary read and write inside a workdir written as `/tmp/...` was refused: the bare root `/` was not mapped to the current drive, so no
@@ -244,6 +244,13 @@ come from those documents, not from a re-run.
   with the two docs converted to CRLF the old `bench-table` test fails and the new one passes. **Not reproduced here, so not claimed:** the Windows path-root fix (no Windows
   machine; the new placement check passes on Linux with or without it) and the macOS and Windows timing races (the mascot test could not be made to fail under 12x CPU
   throttling; the old and new stop tests both passed under 8 CPU hogs). Those three are confirmed or refuted only by the CI run on the commit that carries them.
+- **Second round (the first push of these fixes, `b554218`, was read on all three systems):** Windows passed everything except a handoff-format line I had broken, so the path-root fix and the
+  gate fix are confirmed there; macOS passed `ui-mascot`, and failed `browser-observability` (a burst reported as x50 where x100 was coming). Chasing it under CPU load found a different, real
+  fault: a popup's first console error was lost 3 runs in 5 on the committed code, because console, exception and dialog listeners were attached to a page only after it had started loading.
+  They are now also attached to the browser context, which hears a popup before the page object exists; an unknown page is adopted as a tab when it first speaks and each event is handled once
+  (`test/browser-observability.mjs` section 3d, a stand-in context: 4 mutants killed: no dedupe, no adoption, no exception handler, no dialog handler; a real-browser run under 4 CPU hogs: committed
+  code 3 failures in 5, fixed code 0 in 5, and 0 in 8 under 8 hogs). The burst lull went from 60 ms to 120 ms (cap 480 ms); **that one is a guess**: the macOS failure did not reproduce locally
+  (0 in 8 under 8 hogs, before and after), so the change is recorded as a hardening, not a measured fix.
 - **Cost / trade-off:** a refused address costs up to 5 s before the next is tried (a refusal is instant; only a black-holed address waits); `catBox` can wait longer on a cat that never arrives (and now
   says where it is and where it should be); LF everywhere means a Windows editor that wants CRLF has to be told not to rewrite files.
 - **Suites:** none

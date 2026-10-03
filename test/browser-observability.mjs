@@ -6,7 +6,7 @@ import { mkdtempSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
-import { BrowserSessionManager, __testHandlers, __testWatchPage } from "../dist/browser-tools.js";
+import { BrowserSessionManager, __testHandlers, __testWatchPage, __testWatchContext } from "../dist/browser-tools.js";
 import { EventBus } from "../dist/bus.js";
 
 const LONG = Array.from({ length: 400 }, (_, i) => `Line ${i} of a long job description.`).join(" ");
@@ -114,6 +114,47 @@ try {
     emit("requestfailed", { url: () => "http://h/b", failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }) });
     assert.strictEqual(log.entries.length, 3, "control: a refused connection must be reported");
     console.log("[ok] listener rules: favicon and aborted requests ignored, real failures reported, query stripped");
+  }
+
+  // 3d. A page the session has not met yet (a popup still loading) speaks first: the context hears it, the page is adopted as a tab, the event is
+  // reported once, and the same event arriving again through the page's own listener is ignored. Under CPU load a real popup's first error was lost
+  // 3 runs in 5 when only page listeners existed; a real browser cannot be made to do that on demand, hence the stand-in.
+  {
+    const ctxListeners = {};
+    const ctx = { on: (ev, fn) => { (ctxListeners[ev] ??= []).push(fn); } };
+    const emitCtx = (ev, arg) => (ctxListeners[ev] ?? []).forEach((fn) => fn(arg));
+    const mkPage = () => { const l = {}; return { l, on: (ev, fn) => { (l[ev] ??= []).push(fn); }, mainFrame: () => ({}) }; };
+    const emitPage = (pg, ev, arg) => (pg.l[ev] ?? []).forEach((fn) => fn(arg));
+    const { notices, tabIds } = __testWatchContext(ctx);
+    const popup = mkPage(), second = mkPage();
+    const early = { type: () => "error", text: () => "early-popup-error", page: () => popup };
+    emitCtx("console", early);
+    assert.strictEqual(notices.entries.length, 1, "an error from a page the session had not met was lost");
+    assert.strictEqual(notices.entries[0].tabId, "t1", "the unknown page was not adopted as a tab");
+    assert.deepStrictEqual(tabIds(), ["t1"]);
+    emitPage(popup, "console", early);
+    assert.strictEqual(notices.entries.length, 1, "the same console event was reported twice (context and page)");
+    emitPage(popup, "console", { type: () => "error", text: () => "later-error", page: () => popup });
+    assert.strictEqual(notices.entries.length, 2, "control: a later event heard only by the page listener must be reported");
+    emitCtx("console", { type: () => "error", text: () => "orphan", page: () => null });
+    assert.strictEqual(notices.entries.length, 2, "an event with no page was not ignored");
+    const boom = new Error("boom-early");
+    emitCtx("weberror", { page: () => second, error: () => boom });
+    assert.strictEqual(notices.entries.length, 3, "an uncaught exception from an unmet page was lost");
+    assert.strictEqual(notices.entries[2].tabId, "t2");
+    emitPage(second, "pageerror", boom);
+    assert.strictEqual(notices.entries.length, 3, "the same exception was reported twice");
+    let dismissed = 0;
+    const third = mkPage(); // a page nothing has said anything about yet: only the context can hear its dialog
+    const dlg = { type: () => "alert", message: () => "hi", dismiss: async () => { dismissed += 1; }, page: () => third };
+    emitCtx("dialog", dlg);
+    assert.strictEqual(dismissed, 1, "a dialog from an unmet page was not dismissed (it would hold the page open)");
+    assert.strictEqual(notices.entries.filter((e) => e.kind === "dialog").length, 1, "a dialog from an unmet page was not reported");
+    assert.strictEqual(notices.entries.at(-1).tabId, "t3");
+    emitPage(third, "dialog", dlg);
+    assert.strictEqual(dismissed, 1, "a dialog was dismissed twice");
+    assert.strictEqual(notices.entries.filter((e) => e.kind === "dialog").length, 1, "a dialog was reported twice");
+    console.log("[ok] a page heard before it is known: adopted as a tab, reported once (console, exception, dialog), the page's own listener does not repeat it");
   }
 
   // 4. A request our own localhost-only rule blocked is reported as blocked by the rule.

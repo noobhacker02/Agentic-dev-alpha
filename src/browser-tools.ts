@@ -240,13 +240,15 @@ function pushNotice(session: BrowserSession, tabId: string, kind: NoticeKind, ra
 
 const formatNotice = (n: Notice): string => `- ${n.tabId} ${n.kind}${n.count > 1 ? ` (x${n.count})` : ""}: ${n.text}`;
 
-/** When there is something to show, give a burst a moment to finish (up to 300 ms, stopping at the first 60 ms lull) so the counts on
- * repeated messages are the final ones and not whatever had arrived when the page's script was half way through. */
+/** When there is something to show, give a burst a moment to finish (up to 480 ms, stopping at the first 120 ms lull) so the counts on
+ * repeated messages are the final ones and not whatever had arrived when the page's script was half way through. The lull was 60 ms until a
+ * macOS CI run on a very slow machine reported a burst half finished (x50 where x100 was coming); a lull has to be longer than the machine's
+ * worst stall between two messages, and 120 ms costs a call with notices 60 ms more. */
 async function settleNotices(session: BrowserSession): Promise<void> {
   if (!session.notices.entries.some((n) => !n.delivered)) return;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 4; i++) {
     const before = session.notices.activity;
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise((r) => setTimeout(r, 120));
     if (session.notices.activity === before) return;
   }
 }
@@ -333,30 +335,69 @@ export function __testWatchPage(page: { on: (event: string, fn: (arg: any) => vo
   return notices;
 }
 
+/** For tests only: runs the context-level listeners against a stand-in context (anything with `on`) with a session that has no tabs yet, so a
+ * page that speaks before the session has met it can be simulated without racing a real browser. */
+export function __testWatchContext(context: { on: (event: string, fn: (arg: any) => void) => unknown }): { notices: NoticeLog; tabIds: () => string[] } {
+  const notices: NoticeLog = { entries: [], seq: 0, dropped: 0, logLines: 0, busEvents: 0, activity: 0 };
+  const session = { notices, tabs: [], everTabs: [], tabCounter: 0, refusedTabs: 0 } as unknown as BrowserSession;
+  watchContext(session, context as unknown as BrowserContext);
+  return { notices, tabIds: () => session.everTabs.map((t) => t.id) };
+}
+
 /** Listens to one tab for what only a page-level event can tell: console output, uncaught exceptions, dialogs, downloads, crashes.
  * Dialogs are dismissed (as Playwright already did silently) and reported; downloads are refused by the browser and reported. */
 function watchPage(session: BrowserSession, tab: BrowserTab): void {
   const page = tab.page;
   const note = (kind: NoticeKind, text: string) => pushNotice(session, tab.id, kind, text);
-  page.on("console", (msg) => {
-    const type = msg.type();
-    if (type === "error" || type === "warning") {
-      const text = msg.text();
-      // The browser also logs every failed load as a console error; the response/requestfailed notices say it better, with the status.
-      if (/^Failed to load resource/i.test(text)) return;
-      note(type === "error" ? "console.error" : "console.warn", text);
-    } else session.notices.logLines += 1;
-  });
-  page.on("pageerror", (err) => note("pageerror", err?.message || String(err)));
-  page.on("dialog", (d) => {
-    note("dialog", `${d.type()} dismissed: ${JSON.stringify(cleanText(d.message(), 150))}`);
-    void d.dismiss().catch(() => {});
-  });
+  page.on("console", (msg) => onConsole(session, tab, msg));
+  page.on("pageerror", (err) => onPageError(session, tab, err));
+  page.on("dialog", (d) => onDialog(session, tab, d));
   page.on("download", (d) => {
     note("download", `blocked, not saved: ${cleanText(d.suggestedFilename(), 80)} from ${safeUrl(d.url())}`);
     void d.cancel().catch(() => {});
   });
   page.on("crash", () => note("crash", "the page crashed"));
+}
+
+// Console output, uncaught exceptions and dialogs are heard at two levels: on the page, and on the whole browser context. A popup's page object only
+// reaches us after it has started loading, so what it says first (an error while it loads, an alert on load) is seen by the context before any page
+// listener exists. Each event is handled once, whichever level hears it first.
+const handled = new WeakSet<object>();
+const firstTime = (thing: unknown): boolean => {
+  if (typeof thing !== "object" || thing === null) return true;
+  if (handled.has(thing)) return false;
+  handled.add(thing);
+  return true;
+};
+
+function onConsole(session: BrowserSession, tab: BrowserTab, msg: { type(): string; text(): string }): void {
+  if (!firstTime(msg)) return;
+  const type = msg.type();
+  if (type === "error" || type === "warning") {
+    const text = msg.text();
+    // The browser also logs every failed load as a console error; the response/requestfailed notices say it better, with the status.
+    if (/^Failed to load resource/i.test(text)) return;
+    pushNotice(session, tab.id, type === "error" ? "console.error" : "console.warn", text);
+  } else session.notices.logLines += 1;
+}
+
+function onPageError(session: BrowserSession, tab: BrowserTab, err: unknown): void {
+  if (!firstTime(err)) return;
+  pushNotice(session, tab.id, "pageerror", (err as Error)?.message || String(err));
+}
+
+function onDialog(session: BrowserSession, tab: BrowserTab, d: { type(): string; message(): string; dismiss(): Promise<void> }): void {
+  if (!firstTime(d)) return;
+  pushNotice(session, tab.id, "dialog", `${d.type()} dismissed: ${JSON.stringify(cleanText(d.message(), 150))}`);
+  void d.dismiss().catch(() => {});
+}
+
+/** Context-level listeners (see above): a page we have not met yet is adopted as a tab the moment it speaks. */
+function watchContext(session: BrowserSession, context: BrowserContext): void {
+  const tabFor = (page: Page | null | undefined): BrowserTab | undefined => (page ? adoptPage(session, page) : undefined);
+  context.on("console", (msg) => { const tab = tabFor(msg.page()); if (tab) onConsole(session, tab, msg); });
+  context.on("weberror", (we) => { const tab = tabFor(we.page()); if (tab) onPageError(session, tab, we.error()); });
+  context.on("dialog", (d) => { const tab = tabFor(d.page()); if (tab) onDialog(session, tab, d); });
 }
 
 function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined {
@@ -524,6 +565,7 @@ export class BrowserSessionManager {
     // Popups (window.open, target=_blank) join the session as tabs. They share this one context, so
     // the route/WebSocket gates and the WebRTC removal above already cover them.
     context.on("page", (p) => adoptPage(session, p));
+    watchContext(session, context);
     this.sessions.set(runId, session);
     bus.emitEvent({
       type: "browser-session-started",

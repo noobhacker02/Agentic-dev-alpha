@@ -184,7 +184,8 @@ How it stays safe and small:
   messages collapse into one with a count (`x100`). When the buffer is full the least informative entry goes first (a one-off console line
   before a repeated one, a warning before an exception), not simply the oldest. An oldest-first buffer threw away a message repeated 100 times
   to keep 200 one-offs, which the test found.
-- **A burst is let to finish** (up to 300 ms, stopping at the first 60 ms lull, only when there is something to show) so the counts are the final ones.
+- **A burst is let to finish** (up to 480 ms, stopping at the first 120 ms lull, only when there is something to show) so the counts are the final ones. The lull was 60 ms until a very slow macOS CI machine reported a burst half finished.
+- **A popup is heard from its first message.** Console output, uncaught exceptions and dialogs are listened to on the whole browser context as well as on each page, because a popup's page object only reaches us after it has started loading: under CPU load its first error was lost 3 runs in 5 when only page listeners existed. An unknown page that speaks is adopted as a tab on the spot, and each event is handled once whichever level hears it first.
 - The browser's own `favicon.ico` request is not news.
 - Each notice is also a `browser-notice` event (capped at 300 per session) for the page and, later, the watchdog.
 
