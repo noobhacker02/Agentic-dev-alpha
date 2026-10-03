@@ -335,6 +335,11 @@ export function __testWatchPage(page: { on: (event: string, fn: (arg: any) => vo
   return notices;
 }
 
+/** For tests only: the burst-settling wait, on a notice log the test controls (it runs on mocked timers, so the rule is tested without a clock). */
+export function __testSettle(notices: NoticeLog): Promise<void> {
+  return settleNotices({ notices } as unknown as BrowserSession);
+}
+
 /** For tests only: runs the context-level listeners against a stand-in context (anything with `on`) with a session that has no tabs yet, so a
  * page that speaks before the session has met it can be simulated without racing a real browser. */
 export function __testWatchContext(context: { on: (event: string, fn: (arg: any) => void) => unknown }): { notices: NoticeLog; tabIds: () => string[] } {

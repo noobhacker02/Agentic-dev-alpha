@@ -251,6 +251,11 @@ come from those documents, not from a re-run.
   (`test/browser-observability.mjs` section 3d, a stand-in context: 4 mutants killed: no dedupe, no adoption, no exception handler, no dialog handler; a real-browser run under 4 CPU hogs: committed
   code 3 failures in 5, fixed code 0 in 5, and 0 in 8 under 8 hogs). The burst lull went from 60 ms to 120 ms (cap 480 ms); **that one is a guess**: the macOS failure did not reproduce locally
   (0 in 8 under 8 hogs, before and after), so the change is recorded as a hardening, not a measured fix.
+- **Third round:** the second push (`4258f4c`) failed the same macOS assertion again, this time with an empty result (the first message had not reached the session 40 ms after the click).
+  Two different symptoms of one cause: the real-browser test depended on wall-clock arrival times, which a slow runner breaks in more than one way, so no lull length could make it reliable. It is now two
+  tests: the settling rule on mocked timers (waits while messages arrive less than 120 ms apart, at most four rounds, not at all when nothing is waiting; 3 mutants killed: the old 60 ms lull, no cap,
+  always waiting), and a real-browser check that a burst of 200 messages is counted in full (x100 each) once the page says it is done. What this gives up: nothing now checks, in a real browser, that a
+  result built mid-burst shows final counts; the rule test covers the rule, not the browser's delivery times.
 - **Cost / trade-off:** a refused address costs up to 5 s before the next is tried (a refusal is instant; only a black-holed address waits); `catBox` can wait longer on a cat that never arrives (and now
   says where it is and where it should be); LF everywhere means a Windows editor that wants CRLF has to be told not to rewrite files.
 - **Suites:** none
