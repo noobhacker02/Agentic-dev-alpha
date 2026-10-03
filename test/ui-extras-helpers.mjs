@@ -69,14 +69,23 @@ export async function harness(opts = {}) {
 
 /** Waits until the cat has stopped moving (its box is the same twice, 120 ms apart) and returns that box. */
 export async function catBox(page) {
-  const read = () => page.evaluate(() => { const r = document.getElementById("cat").getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; });
+  // Settled means two things: it has stopped, and it is where the mascot says it is going. The second matters because a transition only advances
+  // when the browser draws frames: a slow or busy machine (a macOS CI run) can show the cat at its start position twice in a row, 120 ms apart,
+  // which "stopped" alone accepts. The mascot's own state() holds the position it set; the box has to reach it.
+  const read = () => page.evaluate(() => {
+    const r = document.getElementById("cat").getBoundingClientRect(), s = AL.mascot.state();
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, wantX: s.x, wantY: s.y };
+  });
+  const strip = ({ left, top, right, bottom }) => ({ left, top, right, bottom });
   let a = await read();
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     await page.waitForTimeout(120);
     const b = await read();
-    if (Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5) return b;
+    const still = Math.abs(a.left - b.left) < 0.5 && Math.abs(a.top - b.top) < 0.5;
+    const there = Math.abs(b.left - b.wantX) <= 1.5 && Math.abs(b.top - b.wantY) <= 1.5;
+    if (still && there) return strip(b);
     a = b;
   }
-  throw new Error("the cat never stopped moving");
+  throw new Error(`the cat never settled where the mascot put it: at ${a.left},${a.top}; the mascot says ${a.wantX},${a.wantY}`);
 }
 export const box = (page, sel) => page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; }, sel);

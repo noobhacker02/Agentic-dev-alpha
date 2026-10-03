@@ -68,6 +68,34 @@ export interface NetGate {
 }
 
 const MAX_DENIED_KEPT = 200;
+const CONNECT_TIMEOUT_MS = 5000;
+
+/**
+ * Connect to the first of these addresses that accepts the connection. A name can resolve to several allowed addresses and a local server may
+ * listen on only one of them: `localhost` is ::1 before 127.0.0.1 on some machines (the CI runners among them) while a test server binds
+ * 127.0.0.1, so trying only the first address made every such request fail with an empty reply. Every address tried was already allowed.
+ */
+async function connectFirst(ips: string[], port: number): Promise<net.Socket> {
+  let last: unknown = new Error("no address to connect to");
+  for (const ip of ips) {
+    try {
+      return await new Promise<net.Socket>((ok, fail) => {
+        const s = net.connect({ host: ip, port });
+        s.setTimeout(CONNECT_TIMEOUT_MS, () => s.destroy(new Error("connect timed out")));
+        s.once("error", fail);
+        s.once("connect", () => {
+          s.setTimeout(0);
+          s.removeListener("error", fail);
+          s.on("error", () => { /* the caller attaches its own handler; an error before that must not crash the process */ });
+          ok(s);
+        });
+      });
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
+}
 
 /** TEST mode: only this machine, only 127.0.0.1 and localhost. */
 export const localOnlyPolicy: NetGatePolicy = {
@@ -105,8 +133,8 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
   /** A request made by a page carries Sec-Fetch-* headers, an Origin or a Referer; the browser's own background requests carry none. */
   const pageInitiated = (h: IncomingHttpHeaders): boolean => Boolean(h["sec-fetch-dest"] || h["sec-fetch-mode"] || h["sec-fetch-site"] || h.origin || h.referer);
 
-  /** Where may a connection to host:port go? Returns the one address to connect to, or why not. */
-  const decide = async (host: string, port: number, ctx: { path?: string; pageInitiated: boolean | undefined }): Promise<{ ip: string } | { deny: string }> => {
+  /** Where may a connection to host:port go? Returns every allowed address the name resolved to (in resolver order), or why not. */
+  const decide = async (host: string, port: number, ctx: { path?: string; pageInitiated: boolean | undefined }): Promise<{ ips: string[] } | { deny: string }> => {
     const h = host.toLowerCase().replace(/^\[|\]$/g, "");
     if (!policy.allowHost(h)) return { deny: refuse(host, port, `${asciiOneLine(h)} is not on the allowed list`, ctx) };
     let addresses: string[];
@@ -117,7 +145,7 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
     }
     const ok = addresses.filter((a) => policy.allowAddress(a));
     if (!ok.length) return { deny: refuse(host, port, `${asciiOneLine(h)} resolves to an address that is not allowed (${asciiOneLine(addresses[0] ?? "none")})`, ctx) };
-    return { ip: ok[0] };
+    return { ips: [...new Set(ok)] };
   };
 
   const hostPort = (target: string, fallbackPort: number): { host: string; port: number } | undefined => {
@@ -154,7 +182,16 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
     const headers: IncomingHttpHeaders = { ...req.headers, host: url.host };
     delete headers["proxy-authorization"];
     delete headers["proxy-connection"];
-    const up = httpRequest({ host: d.ip, port, method: req.method, path: url.pathname + url.search, headers }, (r) => {
+    let sock: net.Socket;
+    try {
+      sock = await connectFirst(d.ips, port);
+    } catch {
+      res.writeHead(502, { connection: "close" });
+      return void res.end();
+    }
+    if (res.destroyed) return void sock.destroy();
+    track(sock);
+    const up = httpRequest({ createConnection: () => sock, method: req.method, path: url.pathname + url.search, headers }, (r) => {
       res.writeHead(r.statusCode ?? 502, r.headers);
       r.pipe(res);
     });
@@ -181,19 +218,28 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
     const d = await decide(hp.host, hp.port, { pageInitiated: undefined });
     if ("deny" in d) return void client.end(`HTTP/1.1 403 Forbidden\r\nx-agent-loop-gate: blocked\r\nx-agent-loop-gate-reason: ${asciiOneLine(d.deny)}\r\nConnection: close\r\n\r\n`);
     connectedHosts.add(hp.host.toLowerCase().replace(/^\[|\]$/g, ""));
-    const up = net.connect(hp.port, d.ip);
+    let up: net.Socket | undefined;
+    let clientGone = false;
+    client.on("close", () => {
+      clientGone = true;
+      up?.destroy();
+    });
+    try {
+      up = await connectFirst(d.ips, hp.port);
+    } catch {
+      return void client.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    }
+    if (clientGone) return void up.destroy();
     track(up);
-    up.on("error", () => {
+    const upstream = up;
+    upstream.on("error", () => {
       client.destroy();
-      up.destroy();
+      upstream.destroy();
     });
-    up.once("connect", () => {
-      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head.length) up.write(head);
-      client.pipe(up);
-      up.pipe(client);
-    });
-    client.on("close", () => up.destroy());
+    client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (head.length) upstream.write(head);
+    client.pipe(upstream);
+    upstream.pipe(client);
   });
 
   /** A plain ws:// handshake sent to the proxy as an absolute-URI request with an Upgrade header. */
@@ -210,24 +256,33 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
     const d = await decide(url.hostname, port, { path: url.pathname, pageInitiated: pageInitiated(req.headers) });
     if ("deny" in d) return void client.end(`HTTP/1.1 403 Forbidden\r\nx-agent-loop-gate: blocked\r\nConnection: close\r\n\r\n`);
     connectedHosts.add(url.hostname.toLowerCase());
-    const up = net.connect(port, d.ip);
+    let up: net.Socket | undefined;
+    let clientGone = false;
+    client.on("close", () => {
+      clientGone = true;
+      up?.destroy();
+    });
+    try {
+      up = await connectFirst(d.ips, port);
+    } catch {
+      return void client.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    }
+    if (clientGone) return void up.destroy();
     track(up);
-    up.on("error", () => {
+    const upstream = up;
+    upstream.on("error", () => {
       client.destroy();
-      up.destroy();
+      upstream.destroy();
     });
-    up.once("connect", () => {
-      const lines = [`${req.method} ${url.pathname}${url.search} HTTP/1.1`, `host: ${url.host}`];
-      for (const [k, v] of Object.entries(req.headers)) {
-        if (k === "host" || k === "proxy-authorization" || k === "proxy-connection") continue;
-        for (const one of Array.isArray(v) ? v : [String(v)]) lines.push(`${k}: ${one}`);
-      }
-      up.write(lines.join("\r\n") + "\r\n\r\n");
-      if (head.length) up.write(head);
-      client.pipe(up);
-      up.pipe(client);
-    });
-    client.on("close", () => up.destroy());
+    const lines = [`${req.method} ${url.pathname}${url.search} HTTP/1.1`, `host: ${url.host}`];
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (k === "host" || k === "proxy-authorization" || k === "proxy-connection") continue;
+      for (const one of Array.isArray(v) ? v : [String(v)]) lines.push(`${k}: ${one}`);
+    }
+    upstream.write(lines.join("\r\n") + "\r\n\r\n");
+    if (head.length) upstream.write(head);
+    client.pipe(upstream);
+    upstream.pipe(client);
   });
 
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

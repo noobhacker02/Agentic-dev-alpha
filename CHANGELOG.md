@@ -82,6 +82,12 @@ All notable changes to this project are documented here. Format follows
   - Real runs: 53 → 16 prompts (todo app), 24 → 11 (Roman numerals), same hidden-grader scores.
 
 ### Fixed
+- **CI was red on all three systems since the S0/S1 commits; the causes were different on each** (user: "make the shit work"; IMP-013). The network gate connected only to the first
+  address a name resolved to, so on a machine where `localhost` is `::1` first (the Linux runners, Windows) a local page could not be fetched at all in TEST mode; it now tries every
+  allowed address (plain requests, CONNECT, ws://) and answers 502 when none accepts (`test/net-gate.mjs`, fails on the old gate and on a first-address-only mutant). On Windows a workdir
+  written as `/tmp/...` was refused every read and write, because the bare root was not mapped to the current drive (`src/hooks.ts`). Windows checkouts have CRLF endings, which broke the
+  generated benchmark table's comparison (`.gitattributes` with `eol=lf`; proven with CRLF docs). Two timing races in tests became waits for the state itself (`test:stop`, the cat's position
+  in `test:ui-mascot`). The Windows path fix and the two timing fixes could not be reproduced on the machine that wrote them; the entry says so, and CI is what confirms them.
 - **On Windows the server answered 404 to the page's own scripts** (found the first time the suite ran on macOS and Windows; both
   had been listed as "untested"). `normalize("/persona.js")` is `\persona.js` there, so `/persona.js`, `/sprite-data.js`, `/plain.js`
   and `/artifacts/*` all failed and a Windows user lost the jokes, the art and the screenshots. It is `posix.normalize` now

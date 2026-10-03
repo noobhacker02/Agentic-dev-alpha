@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderTable, START, END, improvementIds } from "../bench/doc.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const read = (p) => readFileSync(join(root, p), "utf8");
+const read = (p) => readFileSync(join(root, p), "utf8").replace(/\r\n/g, "\n"); // a checkout with CRLF endings (autocrlf) must not change what is compared
 const latest = JSON.parse(read("bench/latest.json")), baseline = JSON.parse(read("bench/baseline.json"));
 const improvementsMd = read("docs/IMPROVEMENTS.md");
 const metas = [];

@@ -140,7 +140,9 @@ export function canonicalPath(input: string, baseDir: string, hops = 0): string 
   if (hops > 40) return undefined; // a chain of links this long is a loop
   const raw = isAbsolute(input) ? input : baseDir + sep + input;
   const root = parse(raw).root;
-  let cur = root;
+  // `resolve` on the bare root only maps it to a place: on Windows "/" and "\\" are the current drive's root, not a directory named "/", and
+  // walking up from the unmapped root made every `/tmp/...` path unresolvable, so every workdir looked like it had nothing inside it.
+  let cur = resolve(root);
   for (const comp of raw.slice(root.length).split(/[\\/]+/)) {
     if (comp === "" || comp === ".") continue;
     if (comp === "..") {

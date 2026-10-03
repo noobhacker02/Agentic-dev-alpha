@@ -73,3 +73,10 @@ pauses** (flush the ledger, finish or park the current item, write the goal's pr
 | Docs said "1 of 8" in four places after the number changed | 2 | Grep for the old number |
 | A sub-agent's work lost to a usage limit | 1 | Write to disk as you go |
 | Committed without reading the scanner's message | 1 (blocked, no harm) | Read it; allow false positives inline with a reason |
+| Code picked the first resolved address (`localhost` is `::1` first on the CI runners and on Windows) | 1 (Linux and Windows CI) | Try every allowed address in order; test with a resolver that returns `::1` first and a server on 127.0.0.1 only |
+| Treated a path root as text (`/` on Windows is the current drive, not a directory) | 1 (Windows CI) | Place the root with `path.resolve` before walking; a test that checks the root of the result |
+| Compared generated text with committed text on a checkout that has CRLF endings | 1 (Windows CI) | `.gitattributes` with `eol=lf`, and normalize reads in tests that compare text |
+| A fixed pause before an action that has to land in a particular state (`sleep(500)`, "still for 120 ms") | 2 (`test:stop`, `test:ui-mascot`) | Wait for the state itself (the call is in flight; the cat is where the mascot says), then measure from the action |
+| Ran a suite without the flags its npm script adds (the fake SDK needs `--import`), so a load experiment measured the real SDK | 1 | Run `npm run test:<name>`, or copy the script's flags exactly |
+| `pkill -f` with a pattern that is also in my own command line killed the shell and the run | 1 | Save PIDs and kill those, or match on something the command line does not contain |
+| New tests were written and run on Linux only, and CI on the other two systems was read late | 2 | Before pushing a test, list what it assumes about the OS (paths, loopback order, line endings, timers); read CI on all three systems after every push |

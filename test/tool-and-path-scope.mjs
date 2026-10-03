@@ -2,7 +2,8 @@
 // scoping, and the minimal env passed to each phase. No API calls:
 //   npm run build && npm run test:scope
 import assert from "node:assert";
-import { createPathScopeHook } from "../dist/hooks.js";
+import { parse, resolve } from "node:path";
+import { createPathScopeHook, canonicalPath } from "../dist/hooks.js";
 import { minimalEnv } from "../dist/env.js";
 
 const sig = new AbortController().signal;
@@ -39,6 +40,15 @@ for (const [tool, input] of allowCases) {
   assert.deepStrictEqual(r, {}, `${tool} ${JSON.stringify(input)} inside the workdir should not be touched`);
 }
 console.log(`[ok] path scope hook leaves ${allowCases.length} in-workdir / non-file operations alone`);
+
+// A path that starts at the bare root ("/tmp/...") belongs to the current drive on Windows, where "/" is not a directory: it must be placed the way
+// path.resolve places it, or no workdir written that way can contain anything (the Windows CI run of 784f2be denied every ordinary read and write).
+{
+  const placed = canonicalPath(`${WORKDIR}/PLAN.md`, WORKDIR);
+  assert.ok(placed !== undefined, "an absolute path with a bare root could not be resolved");
+  assert.strictEqual(parse(placed).root.toLowerCase(), parse(resolve(`${WORKDIR}/PLAN.md`)).root.toLowerCase(), "the bare root was not mapped to the current root");
+  console.log("[ok] a path from the bare root is placed on the current root (Windows: the current drive)");
+}
 
 // A workdir given without a trailing separator must not accidentally allow a sibling directory
 // that merely shares its name as a prefix (e.g. "/tmp/x" vs "/tmp/x-evil").

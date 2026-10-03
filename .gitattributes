@@ -1,0 +1,3 @@
+# Line endings are LF everywhere, on every platform: tests compare generated text with committed text (docs/BENCHMARK.md), and
+# shell hooks must not gain a carriage return. Windows runners otherwise check files out as CRLF (the Windows run of 784f2be failed test:bench-table).
+* text=auto eol=lf

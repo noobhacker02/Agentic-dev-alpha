@@ -227,3 +227,25 @@ come from those documents, not from a re-run.
 - **Skill impact:** SKILL-008 (Step 9, improvement-loop section 6, a self-healing reference).
 - **Follow-ups:** make the governor's checkpoint real in S4; a `Stop`-hook nudge when the transcript shows a limit warning would be the next step but cannot be verified here.
 
+
+## IMP-013 · 2026-10-03 · Red CI on all three systems: the gate tries every address, Windows paths, line endings, two timing races (user: "make the shit work")
+- **Problem:** every run of the `Tests` and `Cross-platform` workflows on 784f2be, 818775c and d3aefdc was red. Linux: `test:net-gate` got an empty reply for `http://localhost:PORT/post`
+  (the CI runner resolves `localhost` to `::1` first and the gate connected only to the first allowed address, while the target listens on 127.0.0.1). Windows: the same, plus
+  `test:scope` and `test:safety` (every ordinary read and write inside a workdir written as `/tmp/...` was refused: the bare root `/` was not mapped to the current drive, so no
+  path could be resolved) and `test:bench-table` (the checkout has CRLF endings; the generated table has LF). macOS: `test:ui-mascot` measured the cat at its start position
+  (727 against 564.86 px). Windows had also failed `test:stop` once at 7138e1b ("cut short" took 5249 ms).
+- **Why it matters:** a red build hides real regressions, and the gate bug was real: any machine whose `localhost` is IPv6 first could not use the browser tools at all in TEST mode.
+- **Change (how):** `src/net-gate.ts`: `decide` returns every allowed address and a new `connectFirst` tries them in order (5 s each) for plain requests, CONNECT tunnels and
+  ws:// upgrades; none reachable is a clean 502. `src/hooks.ts` `canonicalPath`: the walk starts from `resolve(root)`. `.gitattributes` (`* text=auto eol=lf`) plus a
+  CRLF-tolerant read in `test/bench-table.mjs`. `test/ui-extras-helpers.mjs` `catBox` now waits until the cat is at the position the mascot reports, not merely still. `test/stop.mjs`
+  waits for the model call to be in flight and measures from the stop instead of pausing a fixed 500 ms.
+- **Measured:** gate: the new check in `test/net-gate.mjs` (resolver returning `::1` then `127.0.0.1`, target on 127.0.0.1 only; plain, CONNECT, ws://; plus "none reachable is 502") fails on
+  the old gate ("plain request: the gate gave up after the first address (502)"), fails on a mutant that tries only the first address, and passes twice on the fix. Line endings:
+  with the two docs converted to CRLF the old `bench-table` test fails and the new one passes. **Not reproduced here, so not claimed:** the Windows path-root fix (no Windows
+  machine; the new placement check passes on Linux with or without it) and the macOS and Windows timing races (the mascot test could not be made to fail under 12x CPU
+  throttling; the old and new stop tests both passed under 8 CPU hogs). Those three are confirmed or refuted only by the CI run on the commit that carries them.
+- **Cost / trade-off:** a refused address costs up to 5 s before the next is tried (a refusal is instant; only a black-holed address waits); `catBox` can wait longer on a cat that never arrives (and now
+  says where it is and where it should be); LF everywhere means a Windows editor that wants CRLF has to be told not to rewrite files.
+- **Suites:** none
+- **Skill impact:** SKILL-009 (a new test lists what it assumes about the OS: loopback order, path roots, line endings, timers; fixed pauses become waits for the state).
+- **Follow-ups:** read CI for all three systems after every push, and record the result in HANDOFF "what is verified"; a `test:scope` case on a real Windows drive path once a Windows machine is at hand.

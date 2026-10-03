@@ -186,6 +186,56 @@ try {
     console.log("[ok] host rule and address rule each hold on their own (a loopback-resolving name off the list; an allowed name resolving to 10.0.0.5)");
   }
 
+  // 7c. A name with several allowed addresses: the gate tries the next one when the first refuses. `localhost` is ::1 before 127.0.0.1 on some machines
+  // (GitHub's runners, Windows), while the target here listens on 127.0.0.1 only; connecting to the first address alone gave an empty reply.
+  {
+    const order = (ips) => startNetGate({ policy: localOnlyPolicy, resolve: async () => ips });
+    const plain = (g, host) => new Promise((resolve) => {
+      const a = "Basic " + Buffer.from(`${g.username}:${g.password}`).toString("base64");
+      const q = httpRequest({ host: "127.0.0.1", port: g.port, path: `http://${host}:${tport}/fb`, headers: { host: `${host}:${tport}`, "proxy-authorization": a, connection: "close" } }, (res) => { const c = []; res.on("data", (d) => c.push(d)); res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(c).toString() })); });
+      q.on("error", () => resolve({ status: 0, body: "" })); q.end();
+    });
+    const tunnel = (g, host) => new Promise((resolve) => {
+      const a = "Basic " + Buffer.from(`${g.username}:${g.password}`).toString("base64");
+      const s = net.connect(g.port, "127.0.0.1");
+      let buf = "";
+      s.on("error", () => resolve({ status: 0, body: "" }));
+      s.on("data", (c) => {
+        buf += c.toString("latin1");
+        if (/^HTTP\/1\.1 200/.test(buf) && /"method"/.test(buf)) { s.destroy(); resolve({ status: 200, body: buf }); }
+        else if (/^HTTP\/1\.1 [45]/.test(buf) && buf.includes("\r\n\r\n")) { s.destroy(); resolve({ status: Number(buf.split(" ")[1]), body: buf }); }
+        else if (/^HTTP\/1\.1 200 Connection Established\r\n\r\n$/.test(buf)) s.write(`GET /fb HTTP/1.1\r\nHost: ${host}:${tport}\r\nConnection: close\r\n\r\n`);
+      });
+      s.write(`CONNECT ${host}:${tport} HTTP/1.1\r\nHost: ${host}:${tport}\r\nProxy-Authorization: ${a}\r\n\r\n`);
+    });
+    const ws = (g, host) => new Promise((resolve) => {
+      const a = "Basic " + Buffer.from(`${g.username}:${g.password}`).toString("base64");
+      const s = net.connect(g.port, "127.0.0.1");
+      let buf = "";
+      s.on("error", () => resolve(0));
+      s.on("close", () => resolve(Number((buf.split(" ")[1]) || 0)));
+      s.on("data", (c) => { buf += c.toString("latin1"); if (buf.includes("\r\n\r\n")) { s.destroy(); resolve(Number(buf.split(" ")[1])); } });
+      s.write(`GET ws://${host}:${tport}/ HTTP/1.1\r\nHost: ${host}:${tport}\r\nProxy-Authorization: ${a}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    const v6first = await order(["::1", "127.0.0.1"]);
+    const p = await plain(v6first, "localhost");
+    assert.strictEqual(p.status, 200, `plain request: the gate gave up after the first address (${p.status})`);
+    assert.strictEqual(JSON.parse(p.body).url, "/fb");
+    const t = await tunnel(v6first, "localhost");
+    assert.strictEqual(t.status, 200, `CONNECT: the gate gave up after the first address (${t.status})`);
+    assert.strictEqual(await ws(v6first, "localhost"), 101, "ws:// upgrade: the gate gave up after the first address");
+    await v6first.close();
+    const v4first = await order(["127.0.0.1", "::1"]);
+    assert.strictEqual((await plain(v4first, "localhost")).status, 200, "control: the address that works first");
+    await v4first.close();
+    const onlyV6 = await order(["::1"]);
+    assert.strictEqual((await plain(onlyV6, "localhost")).status, 502, "no allowed address accepts: expected a clean 502");
+    assert.strictEqual((await tunnel(onlyV6, "localhost")).status, 502, "CONNECT with no reachable address: expected a clean 502");
+    assert.strictEqual(await ws(onlyV6, "localhost"), 502, "ws:// with no reachable address: expected a clean 502");
+    await onlyV6.close();
+    console.log("[ok] several allowed addresses: the next one is tried when the first refuses (plain, CONNECT, ws://); none reachable is a clean 502");
+  }
+
   // 8. The refusal log is bounded and answers deniedReason(url); a connected host is not reported as refused.
   {
     const g3 = await startNetGate({ policy: localOnlyPolicy });

@@ -46,13 +46,16 @@ const types = (events, t) => events.filter((e) => e.type === t);
     // an approval is waiting when the stop arrives
     if (e.type === "run-start") askId = t.bus.requestApproval({ runId: e.runId, phase: "planner", toolUseId: "tu1", toolName: "Bash", toolInput: { command: "npm test" } });
   });
-  const started = Date.now();
   const p = runPipeline(t.cfg(control), t.bus, t.store);
-  await sleep(500);
+  // The stop has to land while the model call is in flight. A fixed pause was wrong on a loaded machine: the call can start well after 500 ms, and a stop
+  // before it starts is a different case (nothing to cut short). Wait for the call itself, then measure from the stop.
+  for (let i = 0; i < 800 && calls(t.log).length === 0; i++) await sleep(25);
+  assert.ok(calls(t.log).length >= 1, "the model call never started");
   assert.strictEqual(t.bus.pendingRequests().length, 1, "an approval is waiting");
+  const stopAt = Date.now();
   assert.ok(control.stop("test stop"), "the first stop is the one that counts");
   const run = await p;
-  assert.ok(Date.now() - started < 3500, `the model call was cut short, not waited out (${Date.now() - started} ms)`);
+  assert.ok(Date.now() - stopAt < 2500, `the model call was cut short, not waited out (${Date.now() - stopAt} ms after the stop; the call lasts 5000 ms)`);
   assert.strictEqual(run.status, "stopped");
   assert.strictEqual(t.store.listRuns()[0].status, "stopped", "recorded in the audit database");
   const stop = types(t.events, "stop-requested");
@@ -153,6 +156,7 @@ async function runCli(extra, { env = {}, flags = [], signal, after = 0, second }
   let signalledAt = 0;
   if (signal) {
     while (!/Task: do the thing/.test(out)) await sleep(30);
+    while (calls(log).length === 0) await sleep(30); // the signal has to land while a model call is in flight, however slowly the process started
     await sleep(after);
     signalledAt = Date.now();
     child.kill(signal);

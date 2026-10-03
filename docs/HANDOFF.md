@@ -5,8 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-02T18:12:38Z
-Covers agent-loop commit: 818775c
+Updated: 2026-10-03T06:18:50Z
+Covers agent-loop commit: d3aefdc (plus the CI-fix commit that follows it; see IMP-013)
 Covers Dev-Skill commit: 5778718
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
@@ -154,10 +154,11 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
-1. **Both repos are saved and pushed** (agent-loop `818775c` on `main`, Dev-Skill `5778718` on `claude/dev-workflow-process-v4kafr`). Not yet seen: the result of the full `npm test`
-   on that exact state (it was re-running in the background; its log is in the session scratchpad and may be gone, so just re-run it: `npm test`) and CI on three systems (read
-   the Actions runs for both pushes). The macOS and Windows runs matter most: the decoy tests skip there, the symlink test skips on Windows, and nobody has seen the new tests run on
-   those systems. Do not claim green until both are read.
+1. **CI was red on all three systems (784f2be, 818775c, d3aefdc); the fixes are IMP-013 and are on the commit after d3aefdc.** What was seen and what was not: the gate's
+   first-address-only connect (Linux and Windows `test:net-gate`) is reproduced and fixed with a test that fails on the old gate; the Windows CRLF failure of `test:bench-table` is
+   reproduced and fixed; the Windows path-root bug (`test:scope`, `test:safety`) and the macOS `test:ui-mascot` and Windows `test:stop` timing races are **not reproduced here** and
+   are confirmed or refuted only by CI on the new commit. **First thing to do:** read the Actions runs for that commit (`gh api repos/noobhacker02/Agentic-dev-alpha/actions/runs`, then
+   `mcp__github__get_job_logs` for any failed job) and fix what is still red before starting S1b. Do not claim green until all three systems are read.
 2. **S1b**, test first: a page with a main-frame field, an iframe form and a shadow-root field; `inspect` must list all three, say when it cannot read one, and
    `fill` on a field `inspect` cannot see must be refused. Mutation-check. Log it (IMP-012) with the number it moved.
 3. Run **adversary round 2** (a new fresh-context agent, titles of round 1's findings as the only history) against the *code* built so far (gate, hooks, notices,
@@ -179,10 +180,9 @@ Verified (by running, with the evidence in CHANGELOG/STATUS):
 
 Not verified:
 
-- **That the harness fires the PreCompact and PostCompact hooks.** `SessionStart` **is verified live**: after a session-limit interruption
-  the session resumed with source `resume` and the handoff was injected. PreCompact and PostCompact are tested only with the documented JSON
-  payloads; after the next compaction `docs/handoff/compactions/` should hold a file. If it does not, that config is wrong and this line
-  must say so.
+- **That the harness fires the PreCompact hook** (PostCompact **is verified live** now: `docs/handoff/compactions/20261003T060319Z-auto.md` was written by it after the second compaction; the first compaction predates the hook). `SessionStart` **is verified live**: after a session-limit interruption
+  the session resumed with source `resume` and the handoff was injected. PreCompact is tested only with the documented JSON payload (it can only warn);
+  nothing in `docs/handoff/compactions/` shows it fired, so treat it as unconfirmed.
 - Art licences (second-hand note only), sound never heard by a person, desktop control only on Linux, no CI for the real-model runs.
 - The pipeline-vs-plain experiment has not been run (authorised by "use what's the problem", still to do in S7).
 - Everything about LIVE mode, the router, the watchdog, the ledger, the job flow, team composition and the reel flow: not built.
