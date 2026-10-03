@@ -2,6 +2,12 @@
 import assert from "node:assert";
 import { CHECKS, PROBE_PATHS } from "../bench/suites/observability.mjs";
 import { CHECKS as FORM_CHECKS, PROBE_PATHS as FORM_PATHS } from "../bench/suites/form-coverage.mjs";
+import { generate, scoreWith } from "../bench/suites/team-invariants.mjs";
+import { scoreSizing, TASKS as SIZING_TASKS } from "../bench/suites/team-sizing.mjs";
+import { validatePlan } from "../dist/team/plan.js";
+import { BUILTIN_ROSTER } from "../dist/team/roster.js";
+import { composeOffline } from "../dist/team/compose.js";
+import { computeSignals } from "../dist/team/signals.js";
 
 const ids = Object.keys(CHECKS);
 assert.strictEqual(ids.length, 8);
@@ -70,4 +76,46 @@ console.log(`[ok] bench scorers: ${ids.length} checks miss on silence and hit on
   // Offering the trap as an ordinary field is the failure the check exists for.
   assert.ok(!FORM_CHECKS["hidden-trap-flagged-not-offered"](head(1234) + refsFor(["x trap-9"]) + "\nhidden text trap-9"), "listing the trap as a ref still counted as flagging it");
   console.log(`[ok] bench scorers (form-coverage): ${fids.length} checks miss on silence and on echoed page text and hit on a report; lenient, text-matching and source-echo scorers are caught`);
+}
+
+// ---- team-invariants and team-sizing: a scorer has to be able to give a bad grade. A validator that accepts everything, one that refuses everything, and one that refuses for
+// the wrong reason each score badly; so does a composer that always returns the same team, and one that always returns the smallest.
+{
+  const cases = generate(500);
+  assert.strictEqual(cases.length, 500, "the generator did not make 500 cases");
+  assert.deepStrictEqual(generate(500), cases, "the generator is not deterministic");
+  const mutants = cases.filter((c) => c.kind === "mutant"), valid = cases.filter((c) => c.kind === "valid");
+  assert.ok(valid.length >= 90 && mutants.length >= 380, `the mix of cases is off: ${valid.length} valid, ${mutants.length} mutants`);
+  const rules = new Set(mutants.map((c) => c.expect));
+  for (const r of ["V1", "V2", "V3", "V4", "V5", "V6", "V8", "V10", "V15", "WHY", "FIELD"]) assert.ok(rules.has(r), `no mutant breaks ${r}`);
+  const real = (plan, ctx) => validatePlan(plan, { roster: BUILTIN_ROSTER, ...ctx });
+  assert.strictEqual(scoreWith(real, cases).right, 500, "the real validator does not score full marks on its own suite");
+  const lenient = scoreWith(() => ({ ok: true, violations: [] }), cases);
+  const strict = scoreWith(() => ({ ok: false, violations: [{ rule: "V1" }] }), cases);
+  const wrongRule = scoreWith((plan, ctx) => { const v = real(plan, ctx); return { ok: v.ok, violations: v.ok ? [] : [{ rule: "V1" }] }; }, cases);
+  const crashing = scoreWith(() => { throw new Error("boom"); }, cases);
+  assert.ok(lenient.right <= 120, `a validator that accepts everything scored ${lenient.right} of 500`);
+  assert.ok(strict.right <= 120, `a validator that refuses everything scored ${strict.right} of 500`);
+  assert.ok(wrongRule.right <= 250, `a validator that refuses for the wrong rule scored ${wrongRule.right} of 500`);
+  assert.ok(crashing.right <= 120, `a validator that crashes scored ${crashing.right} of 500 (a crash is not a refusal)`);
+  // dropping one rule from the real validator costs points: the suite notices a missing rule
+  const noV4 = scoreWith((plan, ctx) => real(plan, { ...ctx, required: [] }), cases);
+  assert.ok(noV4.right < 500 && noV4.wrong.V4 > 0, "a validator without V4 still scored full marks");
+  console.log(`[ok] team-invariants: 500 deterministic cases (${valid.length} valid, ${mutants.length} mutants over ${rules.size} rules); lenient ${lenient.right}, strict ${strict.right}, wrong-rule ${wrongRule.right}, crashing ${crashing.right}; a validator without V4 loses ${500 - noV4.right}`);
+}
+{
+  const real = (task, files) => composeOffline(task, computeSignals(task, { files }), BUILTIN_ROSTER).plan?.steps.map((s) => s.role) ?? [];
+  const good = scoreSizing(real);
+  assert.strictEqual(good.right, SIZING_TASKS.length, `the real composer misses: ${JSON.stringify(good.misses)}`);
+  assert.strictEqual(good.oversized, 0);
+  const fixedFive = scoreSizing(() => ["planner", "test-designer", "builder", "verifier", "gatekeeper"]);
+  const smallest = scoreSizing(() => ["builder", "verifier", "gatekeeper"]);
+  const huge = scoreSizing(() => Array.from({ length: 14 }, () => "builder"));
+  assert.ok(fixedFive.right <= 8, `a fixed team of five scored ${fixedFive.right} of ${SIZING_TASKS.length}`);
+  assert.ok(smallest.right <= 8, `the smallest team scored ${smallest.right}`);
+  assert.strictEqual(huge.right, 0, "a team of fourteen builders scored points");
+  assert.strictEqual(huge.oversized, SIZING_TASKS.length, "oversized plans were not counted");
+  assert.strictEqual(scoreSizing(() => { throw new Error("boom"); }).right, 0, "a composer that crashes scored points");
+  assert.strictEqual(SIZING_TASKS.length, 28, "the labelled task list changed size without the suite's title saying so");
+  console.log(`[ok] team-sizing: 28 labelled tasks; the real composer ${good.right}; a fixed five ${fixedFive.right}, the smallest team ${smallest.right}, fourteen builders 0 with ${huge.oversized} oversized plans counted`);
 }

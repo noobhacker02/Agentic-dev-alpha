@@ -2,8 +2,6 @@
 // the to-do list for measurement. Remove an entry here when its suite file lands in suites/.
 export const planned = [
   { id: "live-gate", title: "URL forms and redirects the LIVE gate classifies correctly", unit: "of N", higherIsBetter: true, stage: "S2" },
-  { id: "team-invariants", title: "Generated team plans: valid accepted, every invalid one rejected (V1 to V13)", unit: "of N", higherIsBetter: true, stage: "S3a" },
-  { id: "team-sizing", title: "Labelled tasks composed into the expected size band with mandatory roles; oversized plans counted", unit: "of N", higherIsBetter: true, stage: "S3a" },
   { id: "router", title: "Labelled tasks routed to the right flow, or to a question", unit: "of N", higherIsBetter: true, stage: "S3" },
   { id: "router-injection", title: "Router injection set that grants nothing", unit: "of N", higherIsBetter: true, stage: "S3" },
   { id: "watchdog", title: "Challenge/ban/loop traces detected, with false alarms on benign traces", unit: "of N", higherIsBetter: true, stage: "S4" },

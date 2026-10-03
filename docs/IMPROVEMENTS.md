@@ -284,3 +284,30 @@ come from those documents, not from a re-run.
 - **Skill impact:** SKILL-010 (lesson 26: a reader that cannot see part of the thing says what it could not see).
 - **Follow-ups:** the form diff itself (S5); a closed shadow root stays unreadable by design (reported, not solved); a covered or clipped field still counts as visible; a hidden checkbox or select used as a trap is not judged;
   `press` can still focus a hidden field by ref (one key at a time; no guard yet); a frame a script injects after `inspect` is not listed until the next one.
+
+## IMP-015 · 2026-10-03 · The team a task gets is decided by code and can be shown without running it: roster, plan validator, signals, offline composer, `roster` and `team --dry-run` (S3a part one; user: "we won't have constant numbers of 5 agents")
+- **Problem:** the pipeline always runs the same five phases, and the run can only shrink (`SKIPPABLE_PHASES`); nothing can add a security reviewer for a change to authentication, and nothing can say in advance why a
+  task gets five agents or twelve. Letting a model propose the team without a floor under it would let a task's own words (or a README) inflate the team, or talk the verifier and the gate away.
+- **Why it matters:** the user's rule is that the number depends on the task; the threat model (G1 inflate, G2 shrink the floor, G3 injection through repository text, G7 cycles, G8 overlapping writers, G10 a project role file
+  that redefines the gatekeeper) is only closed if the limits live in code that does not read the task as instructions.
+- **Change (how):** `src/team/`. `roster.ts`: 19 built-in roles as data (kind, model alias, tools, write scope, skippable, per-role cap); your own roles from `~/.agent-loop/roster` (or `$AGENT_LOOP_HOME`), a project
+  roster ignored until `--trust-project`, nothing can redefine a built-in role (V13). `plan.ts`: `validatePlan` (V1 to V8, V10 to V12, V15; V9 waits for the governor), `appendSteps`, `skipStep`, `auditDiffScope`; unknown
+  fields refused, refusal text cut and stripped of control bytes. `signals.ts`: from the task's words and the PATHS in the repository, never the text of its files (G3); `transitiveImporters` for the post-build re-check
+  (V14). `compose.ts`: the sizing guide as code (`composeOffline`), `finalizePlan` (the floor under any proposal: verifier per builder, mandatory reviewers, gatekeeper last, shrink to the cap cheapest first),
+  `chooseFinal` (a refused proposal falls back to the offline plan), `composeForEach` (item cap is the user's), `parseComposerJson` (bounded, never evaluates). `scan.ts`: relative paths only, no links, bounded in
+  depth and files, breadth first. `cli-commands.ts` and `src/cli.ts`: `agent-loop roster [--json]` and `agent-loop team "<task>" --dry-run [--cap n] [--json]` (exit 2 when no team fits the cap). Running a composed
+  team is S3a part two; `team` without `--dry-run` says so and does nothing.
+- **Measured:** two new suites, baselines recorded on `1845dc7`: `team-invariants` **500 of 500** (100 valid plans accepted, 400 mutants each refused for the rule they break) and `team-sizing` **28 of 28** (labelled
+  tasks land in their size band with the mandatory roles; 0 oversized plans). Both baselines are full marks because the suites and the code were written together; what shows the suites can fail is the controls in
+  `test/bench-suites.mjs` (a lenient validator scores 100 of 500, a strict one 28 of 28 sizing but 128 wrong-rule, a crashing one 100; a fixed-five composer misses 4 of 28, a smallest-possible one 4, a fourteen-builder
+  one 0 but with 28 oversized plans counted). Tests: `team-roster`, `team-plan`, `team-signals`, `team-compose`, `team-cli`; **68 mutants on the data layer, 0 survivors; 40 on the CLI, scan and control-byte filters,
+  39 killed and one equivalent** (a guard that only stops the directory walk early; the output cannot differ). Building it found: a default-parameter trap in a test helper (`undefined` takes the default, so "no roster"
+  needed `null`); words with a slash (`async/await`, `client/server`) read as paths until a path had to look like one; a generator that produced plans over the cap and blamed the validator; and that the first control-byte
+  test covered one byte class (C0) and one channel (text), which let C1 bytes (U+0080 to U+009F) into the plan's `brief` and a file NAME reach `--json` through the signals' paths.
+- **Cost / trade-off:** a repository scan on every `team` call (at most 20,000 paths, eight levels); the offline composer is a heuristic, so some tasks get a team a person would size differently (`--cap` bounds it, a
+  proposal from a model goes through the same checks, and the signals can only add a mandatory role, never remove one); user roles cannot write outside `tests`, `docs` or their own slice and cannot be gate or monitor
+  roles, which rules out some legitimate custom roles.
+- **Suites:** team-invariants, team-sizing
+- **Skill impact:** SKILL-011 (lesson 27: a filter test names the byte classes and channels it covers).
+- **Follow-ups:** S3a part two (the pipeline runs the plan: `--team auto|fixed5`, events with `stepId`, store columns, lineage identity, the variable-length stepper, Overseer append/split/skip/repair, diff-scope audit after
+  each builder, V14 wiring, V7 enforced by the hook chain); an adversary round aimed at the validator; V9 with the S4 governor; the sizing labels are mine, so a second labeller would be a better test.

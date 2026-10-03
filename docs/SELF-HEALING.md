@@ -73,7 +73,11 @@ pauses** (flush the ledger, finish or park the current item, write the goal's pr
 | Claimed a boundary was tested when it was tested only for the direct case | 1, critical | Decoy plus the whole chain (rule 23) |
 | Mutation results taken at face value when every mutant died of the same message | 1 | Run the unmutated test first, several times |
 | Docs said "1 of 8" in four places after the number changed | 2 | Grep for the old number |
-| A sub-agent's work lost to a usage limit | 1 | Write to disk as you go |
+| A sub-agent's work lost to a usage limit | 1 (round 2 died at its limit after its findings table; the file written as it went survived) | Write to disk as you go |
+| A filter test that covered one byte class and one channel | 1 (C0 in text passed; C1 in `--json` and a file name in the signals did not) | Name the classes (C0, C1, bidi) and the channels (text, JSON, file names, role files) a filter test covers, and strip at the source and at the edge |
+| A generated test case that the code under test is right to refuse | 1 (plans over the cap) | A generator respects the caps; the control is the case that exceeds them |
+| The scanner's allow marker ignored past column 200 (the finding text was cut before the check) | 1 | Check the marker against the whole line; cut only for display (Dev-Skill SKILL-012); never answer a scanner block with `--no-verify` |
+| Words with a slash read as paths (`async/await`) | 1 | A path has an extension, exists in the repository, or starts like a project directory |
 | Committed without reading the scanner's message | 1 (blocked, no harm) | Read it; allow false positives inline with a reason |
 | Code picked the first resolved address (`localhost` is `::1` first on the CI runners and on Windows) | 1 (Linux and Windows CI) | Try every allowed address in order; test with a resolver that returns `::1` first and a server on 127.0.0.1 only |
 | Treated a path root as text (`/` on Windows is the current drive, not a directory) | 1 (Windows CI) | Place the root with `path.resolve` before walking; a test that checks the root of the result |

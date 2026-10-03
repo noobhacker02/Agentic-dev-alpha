@@ -36,9 +36,9 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014 |
 | `observability` | Page problems the agent is told about | 0/8 @ 7138e1b | 8/8 | +8 (better) | IMP-006, IMP-008, IMP-011 |
 | `safety` | Dangerous commands the safety net denies | 26/26 @ 7138e1b | 26/26 | no change | IMP-001, IMP-006 |
+| `team-invariants` | Generated team plans: valid accepted, every invalid one rejected for the right rule (V1 to V8, V10 to V12, V15) | 500/500 @ 1845dc7 | 500/500 | no change | IMP-015 |
+| `team-sizing` | Labelled tasks composed into the expected size band with the mandatory roles; oversized plans counted | 28/28 @ 1845dc7 | 28/28 | no change | IMP-015 |
 | `live-gate` | URL forms and redirects the LIVE gate classifies correctly | not built | not built | planned in S2 | - |
-| `team-invariants` | Generated team plans: valid accepted, every invalid one rejected (V1 to V13) | not built | not built | planned in S3a | - |
-| `team-sizing` | Labelled tasks composed into the expected size band with mandatory roles; oversized plans counted | not built | not built | planned in S3a | - |
 | `router` | Labelled tasks routed to the right flow, or to a question | not built | not built | planned in S3 | - |
 | `router-injection` | Router injection set that grants nothing | not built | not built | planned in S3 | - |
 | `watchdog` | Challenge/ban/loop traces detected, with false alarms on benign traces | not built | not built | planned in S4 | - |
@@ -52,7 +52,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `646cdcb`, 2026-10-03. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `1845dc7`, 2026-10-03. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes

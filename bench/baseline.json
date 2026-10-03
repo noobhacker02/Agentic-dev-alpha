@@ -23,6 +23,18 @@
       "max": 8,
       "commit": "646cdcb",
       "date": "2026-10-03"
+    },
+    "team-invariants": {
+      "value": 500,
+      "max": 500,
+      "commit": "1845dc7",
+      "date": "2026-10-03"
+    },
+    "team-sizing": {
+      "value": 28,
+      "max": 28,
+      "commit": "1845dc7",
+      "date": "2026-10-03"
     }
   }
 }

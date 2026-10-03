@@ -1,6 +1,6 @@
 # Team composition: the number of agents depends on the task
 
-Status: **design, written before code** (stage S3a). Nothing here is built unless a "Built" line says so. The same design, in the
+Status: **design, written before code** (stage S3a); part one is built (IMP-015): the roster, the validator, the signals, the offline composer and `roster` / `team --dry-run`. Part two (the pipeline running a plan) is not. Nothing here is built unless a "Built" line says so. The same design, in the
 form a person following the skill can apply by hand, is in the Dev-Skill repo at `dev-workflow/references/team-composition.md`.
 
 User's rule: *"we won't have constant numbers of 5 agents; we would have more as well, depending on the task."*
@@ -174,6 +174,11 @@ The Overseer already chooses `continue | repair | stop` after each step. Added, 
 - **stop**: as now.
 
 ## Built vs to build
+
+**Built (S3a part one, IMP-015):** `src/team/roster.ts` (19 built-in roles, your own directory, a project roster ignored until trusted, V13), `plan.ts` (V1 to V8, V10 to V12, V15, `appendSteps`, `skipStep`,
+`auditDiffScope`), `signals.ts` (words and paths only, `transitiveImporters`, V14's re-check function), `compose.ts` (offline composer, `finalizePlan`, `chooseFinal`, `composeForEach`, bounded JSON parser), `scan.ts`
+(paths only), and the commands `agent-loop roster` and `agent-loop team "<task>" --dry-run` (exit 2 when no team fits `--cap`). Suites `team-invariants` 500 of 500 and `team-sizing` 28 of 28, with scorer controls.
+**Not built (part two):** everything below this line that touches the pipeline, the store, the events, the UI or the hook chain; V9; V14 and V7 are functions and data today, not yet wired into a run.
 
 - `PHASES` becomes the built-in part of a roster; `PhaseName` widens to a role id string with `BUILTIN_ROLES` kept for the existing UI.
 - Store: additive columns `step_id`, `role`, `instance`, `slice` on `phases`; old databases open unchanged (tested); old rows read as role = name.

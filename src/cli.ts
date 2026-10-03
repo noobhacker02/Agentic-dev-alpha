@@ -17,11 +17,12 @@ import { diagnoseDesktop, doctorExitCode, realProbes, renderDoctor, runDoctor } 
 import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText } from "./lineage.js";
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
 import { roast, roastWithModel, type Habits } from "./roast.js";
+import { rosterCommand, teamCommand, type CommandResult } from "./team/cli-commands.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
 // must never consume the next token just because that token doesn't start with "--".
-const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval", "plain", "desktop"]);
+const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval", "plain", "desktop", "dry-run", "json", "trust-project"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -230,6 +231,15 @@ async function main() {
     return;
   }
 
+  if (cmd === "roster" || cmd === "team") {
+    const args = parseArgs(argv.slice(1));
+    const r: CommandResult = cmd === "roster" ? rosterCommand(args) : teamCommand(args);
+    if (r.out) process.stdout.write(r.out);
+    if (r.err) process.stderr.write(r.err);
+    process.exitCode = r.code;
+    return;
+  }
+
   if (cmd !== "run") {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
@@ -238,6 +248,8 @@ Usage:
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
   agent-loop doctor [--dir <workDir>] [--data-dir <path>] [--desktop]
   agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
+  agent-loop roster [--dir <workDir>] [--trust-project] [--json]
+  agent-loop team "<task>" --dry-run [--dir <workDir>] [--cap <n>] [--trust-project] [--json]
 
   --dir            Working directory the agents operate in (default: ./agent-loop-workspace, created if missing)
   --port           Port for the live event/approval UI (default: 4173)
@@ -278,6 +290,14 @@ Usage:
                    branches, which agent wrote which files (only writes that succeeded), cost and prompts per
                    attempt. Read-only, rebuilt from the run's stored events; --run takes an id, a unique
                    prefix, or "latest". Every run also writes lineage.md and lineage.json next to its report.
+
+  roster           Who can be on a team: the built-in roles (what each may use and write, how many, whether it can be
+                   skipped), then your own roles from ~/.agent-loop/roster (or $AGENT_LOOP_HOME), then every definition
+                   that was refused or ignored and why. A roster inside the project is ignored until --trust-project.
+
+  team             Shows the team a task would get, without running anything: each member, why it is there, and why
+                   the team is this size. Offline: no model, no network. Reads the PATHS in --dir, never the text inside
+                   the files. Exits 2 when no team fits --cap (default 12). Running a composed team comes later.
 
   insights         Self-analysis over every run ever recorded against a --dir's audit database:
                    which phases get repaired most, total and per-phase cost, and which "don't ask

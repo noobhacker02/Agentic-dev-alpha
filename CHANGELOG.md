@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **The team a task gets is decided by code, and `agent-loop roster` and `agent-loop team "<task>" --dry-run` show it without running anything** (S3a part one; `docs/TEAM-COMPOSITION.md`,
+  `docs/IMPROVEMENTS.md` IMP-015). A roster of 19 built-in roles as data (what each may use and write, how many, whether it can be skipped), your own roles from `~/.agent-loop/roster`, a project roster
+  ignored until `--trust-project`, nothing able to redefine a built-in role. A plan validator for the floor and the caps (verifier per builder in a fresh session, gatekeeper last, mandatory security and
+  migration reviewers by signal, a cap of 12, slices that cannot overlap, no cycles, an item cap that is the user's), signals read from the task's words and the repository's PATHS (never the text inside its
+  files), and an offline composer that lands tiny tasks at three agents and sensitive multi-module ones at seven or more. `team --dry-run` prints each member, why it is there and why the team is this
+  size; exit 2 when no team fits `--cap`. Benchmarks `team-invariants` 500 of 500 and `team-sizing` 28 of 28 (full marks because suite and code were written together; the scorer controls show they can
+  fail); 68 mutants on the data layer with none alive, 40 on the commands with one equivalent. Not built yet: running a composed team (`--team`, events, store, lineage, UI), V9.
+  Committing it exposed a bug in the secret scanner (a `devskill:allow` marker past column 200 of a line was ignored); fixed in the Dev-Skill scanner (SKILL-012) and the copy in `.githooks/check_staged.py`.
 - **`inspect` sees iframes and open shadow roots, says what it could not read, and does not offer fields a person cannot see** (S1b, adversary finding A10; `docs/BROWSER-AGENT.md` section 4c,
   `docs/IMPROVEMENTS.md` IMP-014). Before, `inspect` listed one field of four on a page with an iframe and a shadow root (and `fill` wrote into the one it had not listed). Now one walk covers the main
   document, nested open shadow roots and every readable frame, cross-origin ones included, with one 60-ref budget; lines end `frame="name"` and `in-shadow-root`; frame text is read; a "Not listed, and why"

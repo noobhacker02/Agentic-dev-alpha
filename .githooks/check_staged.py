@@ -263,7 +263,7 @@ def check_diff(diff_text, get_full_content=None):
                 value = m.groupdict().get("value") or m.group(0)
                 if PLACEHOLDER_RE.search(value):
                     continue
-            findings.append(("SECRET", display_file, lineno, label, content.strip()[:200]))
+            findings.append(("SECRET", display_file, lineno, label, content.strip()))
 
         exempt_as_prose = False
         if file and MARKDOWN_FILE_RE.search(file) and get_full_content is not None and lineno is not None:
@@ -282,11 +282,11 @@ def check_diff(diff_text, get_full_content=None):
                 nxt = next_line_by_pos.get((file, lineno + 1), "")
                 if re.match(r"(?i)^\s*WHERE\b", nxt):
                     continue  # guarded on the next line — a real multi-line statement, not a hole
-            findings.append(("DESTRUCTIVE", display_file, lineno, label, content.strip()[:200]))
+            findings.append(("DESTRUCTIVE", display_file, lineno, label, content.strip()))
 
         for check, label in SHELL_DESTRUCTIVE_CHECKS:
             if check(content):
-                findings.append(("DESTRUCTIVE", display_file, lineno, label, content.strip()[:200]))
+                findings.append(("DESTRUCTIVE", display_file, lineno, label, content.strip()))
     return findings
 
 
@@ -383,7 +383,8 @@ def print_report(findings):
             loc = f"{file}:{lineno}" if lineno else file
             print(f"    - {loc} — {label}")
             if snippet and category not in ("ENV_FILE", "SCAN_ERROR"):
-                print(f"        {snippet}")
+                # The finding keeps the whole line (the allow marker may sit at its end); only the display is cut.
+                print(f"        {snippet[:200]}{' ...' if len(snippet) > 200 else ''}")
         print()
     print(
         "Fix the underlying issue (remove the secret/file and rotate any real credential, or "

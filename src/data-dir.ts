@@ -15,11 +15,16 @@ import { basename, join, resolve } from "node:path";
  */
 export function resolveDataDir(workDir: string, override?: string): string {
   if (override) return resolve(override);
-  const home = process.env.AGENT_LOOP_HOME || join(homedir(), ".agent-loop");
+  const home = agentLoopHome();
   const absWorkDir = resolve(workDir);
   const hash = createHash("sha256").update(absWorkDir).digest("hex").slice(0, 16);
   const label = sanitize(basename(absWorkDir)) || "run";
   return join(home, "runs", `${label}-${hash}`);
+}
+
+/** The user's own agent-loop directory: `~/.agent-loop`, or `$AGENT_LOOP_HOME`. Outside every project, so what lives here (the audit databases, your roster) is not something a project can write. */
+export function agentLoopHome(): string {
+  return process.env.AGENT_LOOP_HOME || join(homedir(), ".agent-loop");
 }
 
 function sanitize(name: string): string {

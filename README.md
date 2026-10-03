@@ -323,6 +323,19 @@ which files (only writes that succeeded), and cost and prompts per attempt. Read
 stored events. The page has the same tree behind the **tree** button, and every run leaves `lineage.md` and
 `lineage.json` next to its report. See [`docs/LINEAGE.md`](docs/LINEAGE.md).
 
+### `agent-loop roster` and `agent-loop team`
+
+```bash
+node dist/cli.js roster [--dir <workDir>] [--trust-project] [--json]
+node dist/cli.js team "<task>" --dry-run [--dir <workDir>] [--cap <n>] [--trust-project] [--json]
+```
+
+Show who can be on a team and which team a task would get, **without running anything** (offline: no model, no network). `roster` lists the 19 built-in roles (what each may use and write, how many, whether it
+can be skipped), then your own from `~/.agent-loop/roster`, then every definition that was refused or ignored and why; a roster inside the project is ignored until you pass `--trust-project`. `team` prints each
+member with the reason it is there, and why the team is this size: tiny tasks get three agents, anything touching authentication gets a security reviewer that cannot be dropped, a read-only question gets one.
+The signals come from the task's words and the repository's file *names*, never the text inside the files. It exits 2 when no team fits `--cap` (default 12). Running a composed team is not built yet (S3a part
+two). See [`docs/TEAM-COMPOSITION.md`](docs/TEAM-COMPOSITION.md).
+
 ## Browser Agent
 
 Phases can drive a real, headless Chromium instance through 18 tools (`src/browser-tools.ts`), registered
