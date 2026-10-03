@@ -17,6 +17,12 @@
       "max": null,
       "commit": "7138e1b",
       "date": "2026-10-02"
+    },
+    "form-coverage": {
+      "value": 1,
+      "max": 8,
+      "commit": "646cdcb",
+      "date": "2026-10-03"
     }
   }
 }

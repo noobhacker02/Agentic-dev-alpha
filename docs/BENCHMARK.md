@@ -33,6 +33,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | Suite | What it measures | First recorded | Now | Change | Why / how |
 |---|---|---|---|---|---|
 | `adversary-yield` | Confirmed findings in the latest adversary round (should fall) | 20 @ 7138e1b | 20 | no change | - |
+| `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014 |
 | `observability` | Page problems the agent is told about | 0/8 @ 7138e1b | 8/8 | +8 (better) | IMP-006, IMP-008, IMP-011 |
 | `safety` | Dangerous commands the safety net denies | 26/26 @ 7138e1b | 26/26 | no change | IMP-001, IMP-006 |
 | `live-gate` | URL forms and redirects the LIVE gate classifies correctly | not built | not built | planned in S2 | - |
@@ -51,7 +52,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `784f2be`, 2026-10-02. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `646cdcb`, 2026-10-03. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes
@@ -73,5 +74,6 @@ Latest run: commit `784f2be`, 2026-10-02. Baselines are the first value ever rec
 
 - `observability` scores whether a token reaches the agent through the tools, not whether a model uses it well.
 - `safety` is 26 hand-picked spellings of dangerous commands; a new spelling is a new test, not a pass.
+- `form-coverage` scores what the tools show about one hand-built page (three kinds of container, one closed shadow root, one trap); it does not show that every real application form is read in full, and it does not test pages that load frames late by script.
 - Nothing here measures real sites, real accounts, or real bans. The fake job board (S5) simulates them; the README will say so.
 - Real-model arms are single runs per cell unless the row says otherwise. Treat one run as an anecdote.

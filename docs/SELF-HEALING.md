@@ -51,6 +51,8 @@ pauses** (flush the ledger, finish or park the current item, write the goal's pr
 | Session expired vs sign-in verification | Plain login form: ask for `login`. Checkpoint or verification page: an account signal, pause, do not re-login | planned (S4) |
 | A redirect hop or request off the list | Refused at the gate, the navigation fails with a named refusal, the item parks and asks once | **built** (TEST mode) |
 | Page error, 404, dialog, download, crash | Told to the agent as notices; dialogs dismissed, downloads refused | **built** |
+| A form the reader cannot fully read (a frame still loading or failed, more than 20 frames, a closed shadow root, a frame nobody can see that holds fields) | Said in a "Not listed, and why" block; the agent inspects again or asks; never silent | **built** (S1b) |
+| A text field a person cannot see (opacity 0, 1px, off the page): a bot trap | Not offered, named as not visible to a person, `fill` refuses it, the agent tells the user | **built** (S1b) |
 | Model refusal or garbage | One stricter retry, then skip the item | planned |
 | Overseer call throws or is rate-limited | Park the item with the reason; the queue moves on; start-up reconciles `running` items | planned (S4) |
 | Crash or kill mid-item | Resume from the ledger; an `intended` item is verified before any retry; cannot verify: park and ask | planned (S4) |
@@ -82,3 +84,5 @@ pauses** (flush the ledger, finish or park the current item, write the goal's pr
 | New tests were written and run on Linux only, and CI on the other two systems was read late | 2 | Before pushing a test, list what it assumes about the OS (paths, loopback order, line endings, timers); read CI on all three systems after every push |
 | Listened for events on the page only, so what a popup said while loading was lost | 1 (found under CPU load) | Listen at the context level too, adopt the unknown page, dedupe by event object; test with a stand-in that speaks first |
 | Pushed a fix while the full local suite was still running, and it carried a bug of mine (a doc line a test parses) | 1 (cost a red CI run; the user noticed) | Do not push until the full suite has passed locally; edit machine-read lines (`Covers ... commit:`) only in their format |
+| Passed a string of page-side source to Playwright's `evaluate` and expected it to be called (a string is an expression: the function came back, never called, and the code read `undefined`) | 1 (S1b) | Build a real function in Node with `new Function` from the shared source text; run the real browser once before trusting it |
+| Counted a token in the visible text and in the ref lines together, so a count of fields came out doubled | 1 (S1b) | Count the thing the claim is about (ref lines), not every occurrence of the word |

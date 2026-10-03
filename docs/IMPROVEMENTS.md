@@ -261,3 +261,26 @@ come from those documents, not from a re-run.
 - **Suites:** none
 - **Skill impact:** SKILL-009 (a new test lists what it assumes about the OS: loopback order, path roots, line endings, timers; fixed pauses become waits for the state).
 - **Follow-ups:** read CI for all three systems after every push, and record the result in HANDOFF "what is verified"; a `test:scope` case on a real Windows drive path once a Windows machine is at hand.
+
+## IMP-014 · 2026-10-03 · `inspect` sees iframes and shadow roots, says what it could not read, and does not offer fields a person cannot see (S1b, adversary A10)
+- **Problem:** adversary round 1 (A10) ran `inspect` on a page with a main-frame field, a same-origin iframe form and an open-shadow-root field: it listed one field of four, `fill` by selector wrote into the
+  shadow-root field it had not listed, and a selector into the iframe waited out the 5 s action timeout. Measuring the fix first (the new `form-coverage` suite, baseline taken on the unmodified build `646cdcb`)
+  showed a second fault: a text field with `opacity:0`, the classic bot trap, was listed as an ordinary field with a ref, and `fill` answered "Filled #trap-9". Baseline **1 of 8** (only the main-frame field).
+- **Why it matters:** every check that will be built on this reader (the pre-submit form diff, the job-id check, the hidden-text check) would report "no mismatch" for questions it never saw, a green check
+  because nothing was inspected; Greenhouse's standard embed is exactly an iframe. And a script that fills a field no person can see is what form builders use to ban bots.
+- **Change (how):** `src/browser-tools.ts`. One field walk per page: the main document, every open shadow root (nested), and every readable frame (cross-origin too: the browser reads what a page's scripts cannot),
+  sharing the 60-ref budget; lines end `frame="name"` and `in-shadow-root`. Frame text is added to `inspect` and `text`. A "Not listed, and why" block reports a frame still loading (up to 1.5 s of waiting; "has
+  not navigated to its src yet" is detected separately from the lifecycle, because a child frame's empty first document counts as loaded), a frame that did not load or could not be read (named, the rest of the page
+  still listed), frames over the 20-frame limit, a frame nobody can see that holds fields, and custom elements that may hold a closed shadow root. Text fields with opacity 0, a box of 1px or less or a position off
+  the page are named and given no ref, and `fill` refuses them (and `display:none` and `type=hidden` ones); checkboxes, selects and buttons are not judged. A selector that matches nothing in the main document but
+  matches inside a frame fails at once with a pointer to the ref. Page-side code is shared as text between the walk, the frame check and the fill guard and turned into real functions in Node.
+- **Measured:** `form-coverage` **1 of 8 to 8 of 8**. `test/browser-frames.mjs`, 14 checks in a real browser plus stand-in frames, failed on the old build at the first new assertion; **17 mutants** (no shadow walk, no
+  frames, each hiding rule, fill guard off, selector hint off, closed roots not counted, budget per frame, unquoted frame label, hidden frames read, labelledby from the document, no frame cap, no loaded-frame check,
+  frame text off, unreadable frame throws, traps still offered) all killed; the first run left one alive (the not-navigated branch, which the real browser only shows for an instant), which became check 14 with stand-in
+  frames; run five times, three of them under 4 CPU hogs. Scorer controls in `test/bench-suites.mjs` (miss on silence and on echoed page text; lenient, text-matching and source-echo scorers caught).
+- **Cost / trade-off:** `inspect` can take up to 1.5 s longer when a frame is still loading, and costs a round trip per frame (at most 60 looked at, 20 read) and a scan of every element (capped at 100,000 a frame);
+  a form that really needs an opacity-0 or 1px text field (an OTP input drawn over styled boxes) now needs the user; the prompt gained five lines; refusals are by geometry and style only.
+- **Suites:** form-coverage
+- **Skill impact:** SKILL-010 (lesson 26: a reader that cannot see part of the thing says what it could not see).
+- **Follow-ups:** the form diff itself (S5); a closed shadow root stays unreadable by design (reported, not solved); a covered or clipped field still counts as visible; a hidden checkbox or select used as a trap is not judged;
+  `press` can still focus a hidden field by ref (one key at a time; no guard yet); a frame a script injects after `inspect` is not listed until the next one.

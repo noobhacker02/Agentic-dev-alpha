@@ -18,7 +18,7 @@ closed yet; open items are listed in the handoff.
 | A7 | high | SPEC | facts get disclosure classes; `post-offer-only` and `never-autofill` fields always park; threat B9 added (scam posting) | fake-board scenario "SSN and bank details on a normal posting": S5 |
 | A8 | medium | SPEC | demographic and attestation answers are stored with a scope (employer only by default); threat B10 added; the old B4 test asserted the leak as success and was rewritten | second employer's demographic page parks again: S5 |
 | A9 | medium | SPEC | challenge text is read only where the site speaks (title, status, URL, banner); non-2xx/3xx statuses outside an allowlist, including 999, count; per-locale lists; threats A9, A10 added | negative control (posting body with every trigger phrase does not pause) and a 999 + German checkpoint case: S4 |
-| A10 | high | SCHEDULED | new stage S1b: `inspect` and the form walk descend into open shadow roots and frames, and report what they cannot read as unverifiable | page with a main-frame field, an iframe form and a shadow-root field lists all three; `fill` on an invisible field refused: S1b |
+| A10 | high | FIXED (S1b) | `inspect` and the field walk descend into open shadow roots and every readable frame (same- and cross-origin) under one ref budget; frame text is read; what could not be read (a frame still loading, one that failed, more than 20, a closed shadow root) is reported as *not listed, and why*; text fields a person cannot see are named and not offered, and `fill` refuses them; a selector into a frame says so and points at the ref | `test/browser-frames.mjs` (14 checks; failed on the old build at the first new assertion; 17 mutants killed) and benchmark `form-coverage` 1 to 8 of 8: IMP-014 |
 | A11 | medium | SPEC | "site" means platform through a host map; a global cap exists; ledger time is UTC plus a monotonic sequence; the sleep-across-midnight, time-zone and clock-step cases are specified | fake-clock tests: S4 |
 | A12 | medium | SPEC | repair target = the builder that owns the file in the finding; re-run set = its downstream closure; a split is re-validated through V8 | S3a |
 | A13 | medium | FIXED | baselines are checked against git history and need a logged reason to change; a corrupt baseline stops the runner; the change column compares rates; freshness fails closed in CI (IMP-011) | `test/bench-integrity.mjs` |
@@ -36,7 +36,7 @@ closed yet; open items are listed in the handoff.
 |---|---|
 | FIXED in code this round | 5 (A1 for file tools, A2, A13, A14, A19) |
 | Design changed, test comes with its stage | 14 (A3, A4, A5, A6, A7, A8, A9, A11, A12, A15, A16, A17, A18, A20) |
-| Scheduled as a code stage | 1 (A10) |
+| Scheduled as a code stage, since built | 1 (A10, built in S1b) |
 | Rejected | 0 |
 
 ## What the round taught about the process

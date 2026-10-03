@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **`inspect` sees iframes and open shadow roots, says what it could not read, and does not offer fields a person cannot see** (S1b, adversary finding A10; `docs/BROWSER-AGENT.md` section 4c,
+  `docs/IMPROVEMENTS.md` IMP-014). Before, `inspect` listed one field of four on a page with an iframe and a shadow root (and `fill` wrote into the one it had not listed). Now one walk covers the main
+  document, nested open shadow roots and every readable frame, cross-origin ones included, with one 60-ref budget; lines end `frame="name"` and `in-shadow-root`; frame text is read; a "Not listed, and why"
+  block names a frame still loading, one that failed, more than 20, a hidden frame holding fields, and custom elements that may hold a closed shadow root. Text fields with opacity 0, a 1px box or a position
+  off the page (the classic bot trap) are named and not offered, and `fill` refuses them. A selector into a frame fails at once and points at the ref. Benchmark `form-coverage` 1 of 8 to 8 of 8; 14 checks
+  in a real browser, 17 mutants killed. Building it found that a string passed to Playwright's `evaluate` is an expression (the function came back uncalled), that a child frame's empty first document counts as
+  loaded, and that a frame has no name until it commits.
 - **The browser tools now tell the agent what the page did** (S1; `docs/BROWSER-AGENT.md` section 4b, `docs/IMPROVEMENTS.md` IMP-008). Every tool
   result ends with the problems that are new since the last one: an uncaught exception, a console error or warning, a response of 400 or above
   with its status, a request our own localhost-only rule blocked, a dialog (dismissed and reported), a download (refused and reported), a crash.

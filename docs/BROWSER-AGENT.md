@@ -59,7 +59,11 @@ Each element line looks like this:
 [s4e3] button "Save" id="save-btn"
 [s4e7] combobox "Color" id="color" value="Red" options=["Red","Green","Blue"]
 [s4e9] textbox "Password" id="pw" value="(hidden)"
+[s4e12] spinbutton "Years of experience" id="years" value="" frame="grnhse_iframe"
+[s4e14] textbox "Shadow field" id="shadowfield" value="" in-shadow-root
 ```
+
+A line ends with `frame="<name>"` when the element is inside an iframe (the frame's name or id, or where it loaded from) and `in-shadow-root` when it is inside an open shadow root. See section 4c.
 
 A ref is `s<snapshot>e<n>`. The snapshot number never repeats within a session, so an old ref can't
 collide with a new one on any tab.
@@ -191,13 +195,36 @@ How it stays safe and small:
 
 Measured by the benchmark: `observability` went from 0 of 8 to 8 of 8 ([`BENCHMARK.md`](BENCHMARK.md), [`IMPROVEMENTS.md`](IMPROVEMENTS.md) IMP-008).
 
+## 4c. Reading the whole page: frames, shadow roots and fields nobody can see
+
+Adversary round 1 (finding A10) showed `inspect` listed one field of four on a page with an iframe and a shadow root, while `fill` by selector wrote into the shadow-root field it had not
+listed. Any check built on that reader (a form diff, a job-id check, a hidden-text check) would have passed because nothing was inspected. Since S1b (IMP-014):
+
+- **One walk, one budget.** `inspect` walks the main document, every open shadow root (nested ones too, in document order) and every readable frame, same-origin or cross-origin (the browser
+  can read both; a page's own scripts cannot, and the [network gate](#4-the-local-only-boundary) already decided what a frame may load). The 60-ref budget is shared; the surplus is counted.
+  Refs into a frame or a shadow root work with `click`, `fill`, `select_option`, `hover`, `press` and `scroll` like any other.
+- **Frame text is read too.** `inspect`'s visible text and the `text` tool include the text of each readable frame under `[frame "name"]`, bounded (1,000 characters a frame, 3,000 in all in `inspect`).
+- **What could not be read is said**, in a "Not listed, and why" block after the elements: a frame still loading (inspect waits up to 1.5 s for frames, then says so and asks you to inspect again), a
+  frame that did not load, a frame whose read failed (named, with the reason; the rest of the page is still listed), more than 20 frames (the rest counted), a frame nobody can see that holds form fields,
+  and custom elements that may hold a **closed** shadow root (a script cannot look inside one; this is a heuristic: a defined custom element with no children and no open root).
+- **Fields a person cannot see are named, not offered.** A text field or text area with opacity 0 (itself or an ancestor), a box of 1px or less, or a position outside the page is listed under "Not visible to a person"
+  with its id, name and reason, and is **not given a ref**. `fill` refuses such a field (and `display:none` and `type=hidden` ones) with "not visible to a person": form builders use exactly these fields to catch
+  bots, and a refusal costs the agent one message. Checkboxes, radios, selects and buttons are not judged (custom-styled controls hide the real input behind a label as a matter of course), and `display:none` fields are
+  not reported (a multi-step form has many). This is a safety rule, not an evasion: it makes the agent *less* like a bot, never more.
+- **A selector cannot reach into a frame**, and now says so at once: "`#years` is inside an iframe (frame "grnhse_iframe"), which selectors cannot reach. Call inspect and use the ref of that element." (Selectors
+  still reach open shadow roots; Playwright pierces them.)
+
+Measured by the benchmark: `form-coverage` went from 1 of 8 to 8 of 8 ([`BENCHMARK.md`](BENCHMARK.md), [`IMPROVEMENTS.md`](IMPROVEMENTS.md) IMP-014).
+
 ## 5. Limits
 
 | Limit | Value | Why |
 |---|---|---|
 | Screenshots per session | 50 | Disk-fill DoS from a looping phase |
 | Tabs per session | 10 | A renderer and a video per popup otherwise |
-| Refs per `inspect` | 60, plus a count of the rest | A page with thousands of links shouldn't flood the transcript |
+| Refs per `inspect` | 60 across the page and its frames, plus a count of the rest | A page with thousands of links shouldn't flood the transcript |
+| Frames read per `inspect` | 20 (60 looked at), plus a count of the rest; 1.5 s to wait for frames still loading | A page of ad frames cannot stall the reader |
+| Frame text in `inspect` | 1,000 characters a frame, 3,000 in all | The same reason as the page text |
 | `wait` | 30 s | |
 | Notices per result / kept / bus events | 8 / 200 / 300 | A noisy page cannot flood the transcript, the buffer or the event store |
 | Notice text | 200 characters | Page-controlled text stays short |
@@ -224,4 +251,7 @@ and the web UI label each call by what it acted on: `browser.click(s2e5)`,
   Chromium resolve an arbitrary hostname (for example via `<link rel="dns-prefetch">`), which could
   leak a few bytes through DNS. The request that would follow the lookup is blocked.
 - **Dialogs are dismissed, not answered.** The agent is told what a dialog said, but cannot choose to accept it (a "Discard changes?" confirm always reads `false`). Letting it decide needs the page held open until it answers.
-- **Only the main frame is inspected.** Elements inside iframes don't get refs yet; use a selector.
+- **Closed shadow roots cannot be read.** A script cannot look inside one, so their fields are not listed; `inspect` says a custom element *may* hold one (a heuristic, so it can be wrong in both directions).
+- **Frames are read once per `inspect`.** A frame that navigates afterwards makes its refs stale (the usual stale-ref message); inspect again. A frame injected by a script after `inspect` is not listed until the next one.
+- **The "person could not see it" test is geometry and style only** (display, visibility, opacity, size, position). A field covered by another element, clipped by a scroll container or hidden by `clip-path` still counts as visible.
+- **Text-field traps only.** A visually hidden checkbox or select is listed like any other; if a form uses those as bot traps, this reader does not know.

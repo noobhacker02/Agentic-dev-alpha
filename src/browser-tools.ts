@@ -14,7 +14,7 @@
  * actions tied to a screenshot's `snapshotId`, tabs, and hover/select/scroll. Refs and snapshotIds are
  * both "fail closed": when the page they describe has moved on, they're rejected, never re-resolved.
  */
-import { chromium, type Browser, type BrowserContext, type ElementHandle, type Locator, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type ElementHandle, type Frame, type Locator, type Page } from "playwright-core";
 import { existsSync, readdirSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -129,6 +129,15 @@ const MAX_TABS_PER_SESSION = 10;
 /** How many refs one `inspect` hands out. Enough for a real form or toolbar; a page with thousands of
  * links gets the first ones plus a count, not a transcript-flooding list. */
 const MAX_REFS_PER_SNAPSHOT = 60;
+
+/** Frames read by one `inspect` (and looked at when a selector finds nothing), the most frames looked at before giving up, and how long inspect waits in all for frames that are
+ * still loading. The rest are counted, never silently dropped. */
+const MAX_FRAMES_READ = 20;
+const MAX_FRAMES_CONSIDERED = 60;
+const FRAME_LOAD_WAIT_MS = 1500;
+/** Characters of frame text shown in inspect's "Visible text", in all, and for one frame. */
+const MAX_FRAME_TEXT_TOTAL = 3000;
+const MAX_FRAME_TEXT_EACH = 1000;
 
 /** What a page did that the agent should hear about. The page controls every character of the text, so it is cleaned and bounded on the way
  * in and labelled as data on the way out. */
@@ -662,6 +671,8 @@ interface ElementDescription {
   checked: boolean | null;
   options: string[] | null;
   disabled: boolean;
+  /** In a shadow root rather than the document itself. */
+  shadow: boolean;
 }
 
 /** Runs inside the page, once per element handle -- so each ref line is computed from exactly the
@@ -684,9 +695,12 @@ function describeElementInPage(el: any): ElementDescription {
     : el.isContentEditable ? "textbox"
     : "generic";
   const doc = el.ownerDocument;
+  // An id is looked up in the tree the element lives in: inside a shadow root that is the root, not the document.
+  const root = typeof el.getRootNode === "function" ? el.getRootNode() : doc;
+  const byId = (id: string) => (typeof root.getElementById === "function" ? root.getElementById(id) : doc.getElementById(id));
   const labelledBy = el.getAttribute("aria-labelledby");
   const fromIds = labelledBy
-    ? String(labelledBy).split(/\s+/).map((id: string) => doc.getElementById(id)?.textContent ?? "").join(" ")
+    ? String(labelledBy).split(/\s+/).map((id: string) => byId(id)?.textContent ?? "").join(" ")
     : "";
   const fromLabels = el.labels && el.labels.length ? Array.from(el.labels as ArrayLike<any>).map((l) => l.textContent).join(" ") : "";
   const isFormField = tag === "input" || tag === "textarea" || tag === "select";
@@ -708,10 +722,11 @@ function describeElementInPage(el: any): ElementDescription {
     checked: tag === "input" && (type === "checkbox" || type === "radio") ? Boolean(el.checked) : null,
     options: tag === "select" ? Array.from(el.options as ArrayLike<any>).slice(0, 12).map((o: any) => String(o.label || o.text)) : null,
     disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+    shadow: root !== doc,
   };
 }
 
-function formatRefLine(ref: string, d: ElementDescription): string {
+function formatRefLine(ref: string, d: ElementDescription, frame?: string): string {
   // Role goes in bare, so it's cut to identifier characters; everything else is JSON-quoted, so page
   // text can't close a quote and forge a second "[s1e2] button ..." entry on the same line.
   const parts = [`[${ref}]`, String(d.role).replace(/[^\w-]/g, "").slice(0, 30) || "generic", JSON.stringify(cleanText(d.name, 80))];
@@ -720,57 +735,256 @@ function formatRefLine(ref: string, d: ElementDescription): string {
   if (d.checked !== null) parts.push(d.checked ? "checked" : "unchecked");
   if (d.options) parts.push(`options=${JSON.stringify(d.options.map((o) => cleanText(o, 40)))}`);
   if (d.disabled) parts.push("disabled");
+  // Where it lives, last, and quoted like every other piece of page text (a frame's name is the page's own).
+  if (frame) parts.push(`frame=${JSON.stringify(frame)}`);
+  if (d.shadow) parts.push("in-shadow-root");
   return parts.join(" ");
+}
+
+/**
+ * Plain JavaScript, not TypeScript: it is pasted as text into the functions that run inside pages, so that one definition decides what "a person could see this" means for the
+ * field walk, the frame check and the fill guard (a function can only be sent to a page whole). Returns null when a person could see the element, else a short reason.
+ * Opacity 0 (on the element or any ancestor), a box of 1px or less, and a position outside the document are how pages hide a field from people and leave it for scripts: a
+ * bot that fills it is a bot, and form builders use exactly that to tell them apart.
+ */
+const HUMAN_PROBLEM_SRC = `
+function humanProblem(el) {
+  const doc = el.ownerDocument, win = doc.defaultView;
+  if (!el.getClientRects().length) return "not displayed";
+  if (typeof el.checkVisibility === "function") {
+    if (!el.checkVisibility({ visibilityProperty: true, checkVisibilityCSS: true })) return "visibility hidden";
+    if (!el.checkVisibility({ opacityProperty: true, checkOpacity: true })) return "opacity 0";
+  }
+  const r = el.getBoundingClientRect();
+  if (r.width <= 1 || r.height <= 1) return "1px or smaller";
+  const de = doc.documentElement, sx = win.scrollX, sy = win.scrollY;
+  if (r.right + sx <= 0 || r.bottom + sy <= 0 || r.left + sx >= Math.max(de.scrollWidth, win.innerWidth) || r.top + sy >= Math.max(de.scrollHeight, win.innerHeight)) return "offscreen";
+  return null;
+}`;
+
+/** Runs inside one frame: every interactive element in the document and in every open shadow root under it, in document order, split into the ones to offer and the text
+ * fields a person could not see; plus a count of custom elements that may hold a closed shadow root (a script cannot look inside one). */
+const COLLECT_SRC = `({ selector, max }) => {
+  ${HUMAN_PROBLEM_SRC}
+  const doc = globalThis.document;
+  const els = [], hidden = [];
+  let total = 0, hiddenTotal = 0, closed = 0, scanned = 0;
+  const textual = (el) => {
+    if (el.tagName === "TEXTAREA") return true;
+    if (el.tagName !== "INPUT") return false;
+    return !["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color", "hidden"].includes(String(el.type).toLowerCase());
+  };
+  const walk = (root) => {
+    for (const el of root.querySelectorAll("*")) {
+      if (++scanned > 100000) return;
+      if (el.matches(selector) && !(el.tagName === "INPUT" && String(el.type).toLowerCase() === "hidden")) {
+        const shown = typeof el.checkVisibility === "function" ? el.checkVisibility({ visibilityProperty: true }) : el.getClientRects().length > 0;
+        if (shown) {
+          const problem = textual(el) ? humanProblem(el) : null;
+          if (problem) {
+            hiddenTotal += 1;
+            if (hidden.length < 8) hidden.push({ kind: el.tagName === "TEXTAREA" ? "text area" : "text field", id: String(el.id || "").slice(0, 60), name: String(el.getAttribute("name") || "").slice(0, 60), why: problem });
+          } else {
+            total += 1;
+            if (els.length < max) els.push(el);
+          }
+        }
+      }
+      if (el.shadowRoot) walk(el.shadowRoot);
+      else if (el.localName.indexOf("-") > 0 && el.childElementCount === 0 && el.getClientRects().length && doc.defaultView.customElements && doc.defaultView.customElements.get(el.localName)) closed += 1;
+    }
+  };
+  walk(doc);
+  return { els, total, hidden, hiddenTotal, closed };
+}`;
+
+/** Runs inside a page on the element a fill is about to write to: why a person could not have typed there, or null. Only text fields are judged: a checkbox hidden behind a
+ * styled label is ordinary, a text field nobody can see is not. */
+const FILL_GUARD_SRC = `(el) => {
+  ${HUMAN_PROBLEM_SRC}
+  const type = String(el.type || "").toLowerCase();
+  if (el.tagName === "INPUT" && type === "hidden") return "a hidden input";
+  const textual = el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "reset", "image", "file", "range", "color"].includes(type));
+  return textual ? humanProblem(el) : null;
+}`;
+
+const FRAME_VISIBLE_SRC = `(el) => {
+  ${HUMAN_PROBLEM_SRC}
+  return { visible: humanProblem(el) === null, src: String(el.getAttribute("src") || ""), srcdoc: el.hasAttribute("srcdoc"), name: String(el.getAttribute("name") || el.id || "") };
+}`;
+const FRAME_HOLDS_FIELDS_SRC = `() => !!document.querySelector("input:not([type=hidden]), textarea, select")`;
+
+/** Playwright runs a string as an expression and ignores the argument, so each piece of page-side source above becomes a real function here (built in this process, never in a
+ * page: the page's own content-security policy does not apply to it), which Playwright sends as text and calls with the argument. */
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const pageFunction = (src: string): ((...args: any[]) => any) => new Function(`return (${src});`)() as (...args: any[]) => any;
+const collectInPage = pageFunction(COLLECT_SRC);
+const fillGuardInPage = pageFunction(FILL_GUARD_SRC);
+const frameVisibleInPage = pageFunction(FRAME_VISIBLE_SRC);
+const frameHoldsFieldsInPage = pageFunction(FRAME_HOLDS_FIELDS_SRC);
+
+interface FrameInfo {
+  frame: Frame;
+  /** The frame's name (or id, or where it loaded from), cleaned: it is the page's own text. */
+  label: string;
+}
+const frameLabel = (f: Frame, elementName = ""): string => {
+  const url = f.url();
+  return cleanText(elementName || f.name() || (url && url !== "about:blank" ? safeUrl(url) : "") || "(unnamed)", 60);
+};
+const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
+
+/**
+ * The frames of a page that are worth reading: loaded (inspect waits a moment for ones still loading, then says so), visible to a person (a frame nobody can see is not part of the
+ * form, but if it holds fields that is said), and no more than MAX_FRAMES_READ (the rest are counted). Cross-origin frames are included: the browser can read them, which a page's
+ * own scripts cannot, and the network gate already decided what any frame may load.
+ */
+async function readableFrames(page: Page, framesIn?: Frame[]): Promise<{ frames: FrameInfo[]; notes: string[] }> {
+  const main = page.mainFrame();
+  const all = (framesIn ?? page.frames()).filter((f) => f !== main && !f.isDetached());
+  const notes: string[] = [];
+  const frames: FrameInfo[] = [];
+  const deadline = Date.now() + FRAME_LOAD_WAIT_MS;
+  let hiddenWithFields = 0;
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  for (const f of all.slice(0, MAX_FRAMES_CONSIDERED)) {
+    let visible = true;
+    let src = "";
+    let srcdoc = false;
+    let elementName = "";
+    try {
+      const el = await f.frameElement();
+      try {
+        const judged = (await el.evaluate(frameVisibleInPage)) as { visible: boolean; src: string; srcdoc: boolean; name: string };
+        visible = Boolean(judged.visible);
+        src = judged.src;
+        srcdoc = judged.srcdoc;
+        elementName = judged.name;
+      } finally { await el.dispose().catch(() => {}); }
+    } catch { /* no element to judge it by: read it */ }
+    const label = frameLabel(f, elementName);
+    if (!visible) {
+      if (await f.evaluate(frameHoldsFieldsInPage).catch(() => false)) hiddenWithFields += 1;
+      continue;
+    }
+    // Loaded? A child frame starts as an empty document that the browser already counts as loaded, so "has it loaded" is asked two ways: its lifecycle, and whether it has gone
+    // where its src points (an iframe with a src that is still at about:blank has not navigated yet). Wait for both, briefly and together, then say so.
+    const notNavigated = () => !srcdoc && src !== "" && !/^(about:blank|javascript:)/i.test(src) && /^(about:blank)?$/i.test(f.url());
+    try {
+      await f.waitForLoadState("domcontentloaded", { timeout: Math.max(1, deadline - Date.now()) });
+      while (notNavigated() && Date.now() < deadline) await sleep(50);
+      if (notNavigated()) throw new Error("still at about:blank");
+    } catch {
+      notes.push(`frame ${JSON.stringify(label)} is still loading: its fields are not listed yet. Call inspect again in a moment.`);
+      continue;
+    }
+    if (/^chrome-error:/i.test(f.url())) {
+      notes.push(`frame ${JSON.stringify(label)} did not load (the browser could not fetch ${JSON.stringify(cleanText(safeUrl(src), 80))}: blocked by a network rule, or unreachable).`);
+      continue;
+    }
+    frames.push({ frame: f, label });
+  }
+  const skipped = Math.max(0, frames.length - MAX_FRAMES_READ) + Math.max(0, all.length - MAX_FRAMES_CONSIDERED);
+  frames.length = Math.min(frames.length, MAX_FRAMES_READ);
+  if (skipped) notes.push(`${skipped} more ${plural(skipped, "frame was", "frames were")} not read (the limit is ${MAX_FRAMES_READ}).`);
+  if (hiddenWithFields) notes.push(`${hiddenWithFields} ${plural(hiddenWithFields, "frame is", "frames are")} not visible on the page but ${plural(hiddenWithFields, "holds", "hold")} form fields: not read.`);
+  return { frames, notes };
+}
+
+/** What the agent reads of the frames, so a form whose questions sit in an iframe is not a form with no text: a bounded piece of each frame's visible text. */
+async function frameTexts(frames: FrameInfo[]): Promise<Array<{ label: string; text: string }>> {
+  const out: Array<{ label: string; text: string }> = [];
+  let left = MAX_FRAME_TEXT_TOTAL;
+  for (const f of frames) {
+    if (left <= 0) break;
+    const raw = await f.frame.evaluate(() => (globalThis as any).document?.body?.innerText ?? "").catch(() => "");
+    const text = stripTerminalControlBytes(String(raw)).trim().slice(0, Math.min(MAX_FRAME_TEXT_EACH, left));
+    if (!text) continue;
+    left -= text.length;
+    out.push({ label: f.label, text });
+  }
+  return out;
+}
+const frameHeading = (label: string): string => `[frame ${JSON.stringify(label)}]`;
+
+interface SnapshotResult {
+  lines: string[];
+  total: number;
+  matched: number;
+  /** What was not listed, and why: frames that could not be read, closed shadow roots, fields a person cannot see. */
+  notes: string[];
+  frames: FrameInfo[];
 }
 
 /** Replaces the session's refs with a fresh set for the active tab. Refs are `s<snapshot>e<n>`, and
  * the snapshot number never repeats within a session, so a ref from any earlier inspect -- on this
- * tab or another -- can never collide with a current one. */
-async function takeRefSnapshot(session: BrowserSession, tab: BrowserTab, query?: string): Promise<{ lines: string[]; total: number; matched: number }> {
+ * tab or another -- can never collide with a current one. The walk covers the main frame, every
+ * readable frame and every open shadow root, with one budget (MAX_REFS_PER_SNAPSHOT) for the page. */
+async function takeRefSnapshot(session: BrowserSession, tab: BrowserTab, query?: string, framesOverride?: Frame[]): Promise<SnapshotResult> {
   disposeRefs(session);
-  const found = await tab.page.evaluateHandle(
-    ({ selector, max }) => {
-      const doc = (globalThis as any).document;
-      const els: unknown[] = [];
-      let total = 0;
-      for (const el of doc.querySelectorAll(selector)) {
-        if (el.tagName === "INPUT" && String(el.type).toLowerCase() === "hidden") continue;
-        const visible = typeof el.checkVisibility === "function" ? el.checkVisibility({ visibilityProperty: true }) : el.getClientRects().length > 0;
-        if (!visible) continue;
-        total += 1;
-        if (els.length < max) els.push(el);
-      }
-      return { els, total };
-    },
-    { selector: INTERACTIVE_SELECTOR, max: MAX_REFS_PER_SNAPSHOT }
-  );
-  const total = Number(await (await found.getProperty("total")).jsonValue()) || 0;
-  const props = await (await found.getProperty("els")).getProperties();
-  await found.dispose();
+  const readable = await readableFrames(tab.page, framesOverride);
+  const notes = [...readable.notes];
+  const targets: Array<{ frame: Frame; label?: string }> = [{ frame: tab.page.mainFrame() }, ...readable.frames.map((f) => ({ frame: f.frame, label: f.label }))];
   const snap: RefSnapshot = { id: ++session.snapshotCounter, tabId: tab.id, navGen: tab.navGen, handles: new Map() };
   const lines: string[] = [];
-  let matched = 0;
-  const ordered = [...props].filter(([k]) => /^\d+$/.test(k)).sort((a, b) => Number(a[0]) - Number(b[0]));
-  for (const [, handle] of ordered) {
-    const el = handle.asElement();
-    if (!el) {
-      await handle.dispose();
+  const unseen: string[] = [];
+  let total = 0, matched = 0, collected = 0, closed = 0, hiddenTotal = 0;
+  for (const t of targets) {
+    let found;
+    try {
+      found = await t.frame.evaluateHandle(collectInPage, { selector: INTERACTIVE_SELECTOR, max: Math.max(0, MAX_REFS_PER_SNAPSHOT - collected) });
+    } catch (err) {
+      if (!t.label) throw err; // the main frame failing is an error; a frame failing is a note, and the rest of the page is still listed
+      notes.push(`frame ${JSON.stringify(t.label)} could not be read (${cleanText(err instanceof Error ? err.message : String(err), 80)}).`);
       continue;
     }
-    const d = await el.evaluate(describeElementInPage).catch(
-      (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false })
-    );
-    if (query && !`${d.role} ${d.name} ${d.id}`.toLowerCase().includes(query)) {
-      await handle.dispose();
-      continue;
+    const num = async (name: string): Promise<number> => Number(await (await found.getProperty(name)).jsonValue()) || 0;
+    total += await num("total");
+    closed += await num("closed");
+    hiddenTotal += await num("hiddenTotal");
+    const hidden = (await (await found.getProperty("hidden")).jsonValue()) as Array<{ kind: string; id: string; name: string; why: string }>;
+    for (const hf of hidden) {
+      if (unseen.length >= 5) break;
+      unseen.push(`hidden ${hf.kind}${hf.id ? ` id=${JSON.stringify(cleanText(hf.id, 40))}` : ""}${hf.name ? ` name=${JSON.stringify(cleanText(hf.name, 40))}` : ""} (${hf.why})${t.label ? ` in frame ${JSON.stringify(t.label)}` : ""}`);
     }
-    matched += 1;
-    const ref = `s${snap.id}e${snap.handles.size + 1}`;
-    snap.handles.set(ref, el);
-    lines.push(formatRefLine(ref, d));
+    const props = await (await found.getProperty("els")).getProperties();
+    await found.dispose();
+    const ordered = [...props].filter(([k]) => /^\d+$/.test(k)).sort((a, b) => Number(a[0]) - Number(b[0]));
+    for (const [, handle] of ordered) {
+      collected += 1;
+      const el = handle.asElement();
+      if (!el) {
+        await handle.dispose();
+        continue;
+      }
+      const d = await el.evaluate(describeElementInPage).catch(
+        (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false, shadow: false })
+      );
+      if (query && !`${d.role} ${d.name} ${d.id}`.toLowerCase().includes(query)) {
+        await handle.dispose();
+        continue;
+      }
+      matched += 1;
+      const ref = `s${snap.id}e${snap.handles.size + 1}`;
+      snap.handles.set(ref, el);
+      lines.push(formatRefLine(ref, d, t.label));
+    }
+  }
+  if (closed) notes.push(`${closed} custom ${plural(closed, "element may hold a closed shadow root, so its fields cannot", "elements may hold a closed shadow root, so their fields cannot")} be listed.`);
+  if (hiddenTotal) {
+    const more = hiddenTotal > unseen.length ? `\n    (+${hiddenTotal - unseen.length} more)` : "";
+    notes.push(`Not visible to a person, so not listed (pages use fields like these to catch bots; do not fill them, and tell the user if the form seems to need one):\n    ${unseen.join("\n    ")}${more}`);
   }
   session.refs = snap;
-  return { lines, total, matched };
+  return { lines, total, matched, notes, frames: readable.frames };
+}
+
+/** For tests only: the field walk on a real page, optionally over a chosen list of frames (a stand-in frame whose evaluation fails, say). */
+export async function __testSnapshot(page: Page, frames?: Frame[]): Promise<SnapshotResult> {
+  const session = { snapshotCounter: 0 } as unknown as BrowserSession;
+  const result = await takeRefSnapshot(session, { id: "t1", page, navGen: 0 } as unknown as BrowserTab, undefined, frames);
+  disposeRefs(session);
+  return result;
 }
 
 function resolveRef(session: BrowserSession, ref: string): ElementHandle {
@@ -799,18 +1013,51 @@ interface TargetArgs {
 
 /** A ref or a CSS selector, never both. Refs resolve to the exact element inspect described; a
  * selector is re-queried each time, which is what existing callers expect. */
-function resolveTarget(session: BrowserSession, args: TargetArgs): { label: string; el: ElementHandle | Locator; isRef: boolean } {
+function resolveTarget(session: BrowserSession, args: TargetArgs): Target {
   if (args.ref && args.selector) throw new Error("Pass either ref or selector, not both.");
   if (args.ref) return { label: args.ref, el: resolveRef(session, args.ref), isRef: true };
-  if (args.selector) return { label: args.selector, el: session.page.locator(args.selector), isRef: false };
+  if (args.selector) {
+    const selector = args.selector;
+    return { label: selector, el: session.page.locator(selector), isRef: false, precheck: () => selectorInFrameHint(session, selector) };
+  }
   throw new Error("Pass a ref from inspect (like s1e3) or a CSS selector.");
+}
+
+interface Target {
+  label: string;
+  el: ElementHandle | Locator;
+  isRef: boolean;
+  /** Runs before a selector is acted on: a chance to say something more useful than a timeout. */
+  precheck?: () => Promise<void>;
+}
+
+/** A selector is looked up in the page's main document (and, as the browser does, in its open shadow roots), never inside a frame. When it matches nothing there but does match
+ * inside a frame, waiting out the action timeout and reporting "element not found" would send the agent in circles: say where the element is and what to use. */
+async function selectorInFrameHint(session: BrowserSession, selector: string): Promise<void> {
+  const page = activeTab(session).page;
+  if ((await page.locator(selector).count()) > 0) return;
+  for (const f of page.frames().slice(0, MAX_FRAMES_CONSIDERED)) {
+    if (f === page.mainFrame() || f.isDetached()) continue;
+    const n = await f.locator(selector).count().catch(() => 0);
+    if (n > 0) throw new Error(`"${cleanText(selector, 60)}" is inside an iframe (frame ${JSON.stringify(frameLabel(f))}), which selectors cannot reach. Call inspect and use the ref of that element.`);
+  }
+}
+
+/** Fill writes only where a person could type: a text field that is not visible to one (opacity 0, a box of 1px, outside the page, display:none) is how forms catch bots, and
+ * a refusal costs the agent one message while a fill can cost the user their account. Checkboxes, selects and the like are not judged here. */
+async function refuseTextFieldNobodyCanSee(el: ElementHandle | Locator, label: string): Promise<void> {
+  const reason: string | null = "evaluate" in el && "click" in el && "waitFor" in el
+    ? await (el as Locator).evaluate(fillGuardInPage, undefined, { timeout: 5000 })
+    : await (el as ElementHandle).evaluate(fillGuardInPage);
+  if (reason) throw new Error(`Refused: ${label} is not visible to a person (${reason}). Pages use fields like that to catch bots, so it is not filled. If the form seems to need it, tell the user.`);
 }
 
 /** Runs an action on a target, turning "that element is gone" into the same stale-ref advice the ref
  * checks give. A handle to a node the page removed (or a document that navigated away) can't be
  * clicked -- Playwright refuses -- but its raw error doesn't tell the model what to do next. */
-async function onTarget<T>(t: { label: string; el: ElementHandle | Locator; isRef: boolean }, fn: (el: ElementHandle | Locator) => Promise<T>): Promise<T> {
+async function onTarget<T>(t: Target, fn: (el: ElementHandle | Locator) => Promise<T>): Promise<T> {
   try {
+    await t.precheck?.();
     return await fn(t.el);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -992,16 +1239,19 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         const tab = activeTab(session);
         const url = tab.page.url();
         const title = cleanText(await tab.page.title(), 200);
-        const text = (await tab.page.locator("body").innerText().catch(() => "")).slice(0, 3000);
-        const { lines, total, matched } = await takeRefSnapshot(session, tab, query?.trim() ? query.trim().toLowerCase() : undefined);
+        const mainText = (await tab.page.locator("body").innerText().catch(() => "")).slice(0, 3000);
+        const { lines, total, matched, notes, frames } = await takeRefSnapshot(session, tab, query?.trim() ? query.trim().toLowerCase() : undefined);
+        const inFrames = await frameTexts(frames);
+        const text = mainText + inFrames.map((f) => `\n\n${frameHeading(f.label)}\n${f.text}`).join("");
         const filtered = query?.trim() ? ` matching "${cleanText(query, 40)}"` : "";
         const more = total > lines.length ? `\n(${total - lines.length} more elements not shown${query?.trim() ? `: ${total - matched} did not match, ${matched - lines.length} matching were over the limit` : " -- scroll, or use query or a selector"})` : "";
-        const blank = !text.trim() && total === 0 ? "\nNote: the page has no visible text and no interactive elements (it may be blank, still loading, or have failed to render)." : "";
+        const blank = !text.trim() && total === 0 && !notes.length ? "\nNote: the page has no visible text and no interactive elements (it may be blank, still loading, or have failed to render)." : "";
         return {
           text:
             `URL: ${url}\nTitle: ${title}\nTab: ${tab.id} (${session.tabs.length} open)${blank}\n\n` +
             `Visible text (truncated):\n${text}\n\n` +
-            `Interactive elements${filtered} (snapshot s${session.refs!.id}):\n${lines.join("\n") || "(none)"}${more}`,
+            `Interactive elements${filtered} (snapshot s${session.refs!.id}):\n${lines.join("\n") || "(none)"}${more}` +
+            (notes.length ? `\n\nNot listed, and why:\n${notes.map((n) => `- ${n}`).join("\n")}` : ""),
         };
       })
   );
@@ -1028,6 +1278,11 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
           full = await onTarget(target, (el) => (el as ElementHandle).evaluate((n: any) => String(n.innerText ?? n.textContent ?? "")));
         } else {
           full = await tab.page.locator("body").innerText().catch(() => "");
+          // The frames' text follows the page's own, each under a heading that says which frame it came from.
+          for (const f of (await readableFrames(tab.page)).frames) {
+            const inner = await f.frame.evaluate(() => (globalThis as any).document?.body?.innerText ?? "").catch(() => "");
+            if (String(inner).trim()) full += `\n\n${frameHeading(f.label)}\n${inner}`;
+          }
         }
         const clean = stripTerminalControlBytes(full).replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "");
         const total = clean.length;
@@ -1105,7 +1360,10 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
       textTool("fill", { ref, selector, value }, async () => {
         const session = requireSession();
         const target = resolveTarget(session, { ref, selector });
-        await onTarget(target, (el) => el.fill(value, { timeout: 5000 }));
+        await onTarget(target, async (el) => {
+          await refuseTextFieldNobodyCanSee(el, target.label);
+          return el.fill(value, { timeout: 5000 });
+        });
         return { text: `Filled ${target.label}` };
       })
   );
