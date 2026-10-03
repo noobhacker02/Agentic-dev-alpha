@@ -6,7 +6,8 @@ single place that says what was asked, what was decided, where things are, what 
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
 Updated: 2026-10-03T06:18:50Z
-Covers agent-loop commit: d3aefdc (plus the CI-fix commit that follows it; see IMP-013)
+Covers agent-loop commit: d3aefdc
+The CI-fix commit after it (IMP-013) is not named here: a commit cannot contain its own hash.
 Covers Dev-Skill commit: 5778718
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
