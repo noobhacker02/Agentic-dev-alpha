@@ -5,9 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-03T06:18:50Z
-Covers agent-loop commit: d3aefdc
-The CI-fix commit after it (IMP-013) is not named here: a commit cannot contain its own hash.
+Updated: 2026-10-03T07:20:52Z
+Covers agent-loop commit: fa48f4e
 Covers Dev-Skill commit: 5778718
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
@@ -155,11 +154,10 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
-1. **CI was red on all three systems (784f2be, 818775c, d3aefdc); the fixes are IMP-013 and are on the commit after d3aefdc.** What was seen and what was not: the gate's
-   first-address-only connect (Linux and Windows `test:net-gate`) is reproduced and fixed with a test that fails on the old gate; the Windows CRLF failure of `test:bench-table` is
-   reproduced and fixed; the Windows path-root bug (`test:scope`, `test:safety`) and the macOS `test:ui-mascot` and Windows `test:stop` timing races are **not reproduced here** and
-   are confirmed or refuted only by CI on the new commit. **First thing to do:** read the Actions runs for that commit (`gh api repos/noobhacker02/Agentic-dev-alpha/actions/runs`, then
-   `mcp__github__get_job_logs` for any failed job) and fix what is still red before starting S1b. Do not claim green until all three systems are read.
+1. **CI is green on all three systems at agent-loop `fa48f4e`** (Tests on Linux; Cross-platform on macOS and Windows; read from the Actions API after the push, and the full local suite passed 48 of 48 on the same tree
+   first). It took four rounds (IMP-013): the gate's first-address-only connect, the Windows path root and CRLF checkouts, a popup's first error lost under load (a real bug), and a wall-clock burst test that
+   macOS failed twice in different ways (now a mocked-timer rule test plus a no-loss browser test). Still unproven, and said so in IMP-013: the Windows path-root fix has only CI behind it, and the burst lull
+   change (60 to 120 ms) is a hardening, not a measured fix. **Rule that came out of it:** do not push until the full suite has passed locally, and read all three systems after every push.
 2. **S1b**, test first: a page with a main-frame field, an iframe form and a shadow-root field; `inspect` must list all three, say when it cannot read one, and
    `fill` on a field `inspect` cannot see must be refused. Mutation-check. Log it (IMP-012) with the number it moved.
 3. Run **adversary round 2** (a new fresh-context agent, titles of round 1's findings as the only history) against the *code* built so far (gate, hooks, notices,
