@@ -12,7 +12,7 @@ import { isInside } from "../path-canon.js";
 import { runPhase } from "../phases.js";
 import { overseerDecide, boundRepairTarget } from "../overseer.js";
 import type { OverseerDecision, PhaseVerdict, PipelineConfig, RunRecord, TeamPlanStep } from "../types.js";
-import { validatePlan, slicePrefixes, type TeamStep } from "./plan.js";
+import { validatePlan, skipStep, slicePrefixes, type TeamPlan, type TeamStep, type ValidationContext } from "./plan.js";
 import type { RoleDef } from "./roster.js";
 import { changedBetween, snapshotTree, type TreeSnapshot } from "./changes.js";
 import { decideWrite } from "./write-scope.js";
@@ -74,21 +74,51 @@ function saveReport(workDir: string, step: TeamStep, role: RoleDef, attempt: num
 
 const skippedVerdict = (reason: string): PhaseVerdict => ({ completed: true, outcome: "pass", headline: "Skipped", details: reason, concerns: [], blockingFindings: [] });
 
+export interface SkipJudgement {
+  /** The plan without the steps that were skipped (the plan it was given when none were). */
+  plan: TeamPlan;
+  skipped: Array<{ id: string; role: string; reason: string }>;
+  /** One line for each role the planner named that could not be skipped, with the rule that said so. */
+  refused: string[];
+}
+
+/**
+ * What a planner's "skip these roles" is worth: each role it names is looked for among the steps that have not run, and every one found goes through the same V12 rule as any skip (a role that can never be skipped,
+ * one a signal made mandatory, a step the plan did not mark as skippable). Pure: nothing changes until the run applies the result. A name that is no waiting step is refused, so a role that already ran, was already
+ * skipped or is not on the team cannot be "skipped" into the record.
+ */
+export function judgeSkips(plan: TeamPlan, pending: string[], roles: string[], reason: string, ctx: ValidationContext): SkipJudgement {
+  let cur = plan;
+  const skipped: SkipJudgement["skipped"] = [], refused: string[] = [];
+  for (const rid of [...new Set(roles)]) {
+    const ids = pending.filter((id) => cur.steps.find((s) => s.id === id)?.role === rid);
+    if (!ids.length) { refused.push(`${rid}: no step of that role is waiting`); continue; }
+    for (const id of ids) {
+      const r = skipStep(cur, id, reason, ctx);
+      if (r.plan && r.skipped) { cur = r.plan; skipped.push(r.skipped); }
+      else refused.push(`${rid}: ${r.violations[0]?.message ?? "refused"}`);
+    }
+  }
+  return { plan: cur, skipped, refused };
+}
+
 export async function runTeamPlan(ctx: TeamRunContext): Promise<RunRecord["status"]> {
   const { run, config, bus, store } = ctx;
-  const { plan, roster } = config.team;
+  const { roster } = config.team;
+  let plan = config.team.plan;
   const control = config.control;
   const now = () => new Date().toISOString();
   const rosterById = new Map(roster.map((r) => [r.id, r]));
   const stop = (reasoning: string, role = plan.steps[0]?.role ?? "planner", ref: { stepId?: string } = {}) =>
     bus.emitEvent({ type: "overseer-decision", runId: run.id, phase: role, decision: { action: "stop", reasoning }, ts: now(), ...(ref.stepId ? { stepId: ref.stepId, role } : {}) });
 
-  const validation = validatePlan(plan, { roster, writes: plan.steps.some((s) => (rosterById.get(s.role)?.writeScope ?? "none") !== "none"), workDir: config.workDir });
+  const vctx: ValidationContext = { roster, writes: plan.steps.some((s) => (rosterById.get(s.role)?.writeScope ?? "none") !== "none"), workDir: config.workDir, ...(config.team.required ? { required: config.team.required } : {}) };
+  const validation = validatePlan(plan, vctx);
   if (!validation.ok) {
     stop(`The team plan was refused before any step ran: ${validation.violations.slice(0, 5).map((v) => `${v.rule}: ${v.message}`).join(" | ")}`);
     return "failed";
   }
-  const order = [...validation.order];
+  let order = [...validation.order];
   const byId = new Map(plan.steps.map((s) => [s.id, s]));
   const allPrefixes = plan.steps.flatMap((s) => (s.slice ? slicePrefixes(s.slice, config.workDir) : []));
   const teamSteps = (): TeamPlanStep[] =>
@@ -216,9 +246,33 @@ export async function runTeamPlan(ctx: TeamRunContext): Promise<RunRecord["statu
     if (decision.action === "continue" && verdict.outcome !== "pass") {
       decision = { action: "repair", repairTarget: step.id, reasoning: `${decision.reasoning} (overridden: the pipeline requires outcome "pass" to continue past a step; got "${verdict.outcome}")` };
     }
+    // The planner may ask to skip steps that have not run. Judged here, applied only when the run goes on past the planner: a failing planner's suggestion is never acted on.
+    let judged: SkipJudgement | undefined;
+    if (decision.action === "continue" && role.id === "planner" && verdict.suggestedSkip?.length) {
+      judged = judgeSkips(plan, order.slice(idx + 1), verdict.suggestedSkip, `the planner suggested it for this task: ${verdict.headline}`, vctx);
+      const notes = [
+        ...(judged.skipped.length ? [`skipping ${judged.skipped.map((s) => `${s.id} (${s.role})`).join(", ")} on the planner's suggestion`] : []),
+        ...(judged.refused.length ? [`skip refused: ${judged.refused.join(" | ")}`.slice(0, 600)] : []),
+      ];
+      if (notes.length) decision = { ...decision, reasoning: `${decision.reasoning} (${notes.join("; ")})` };
+    }
     bus.emitEvent({ type: "overseer-decision", runId: run.id, phase: role.id, decision, ts: now(), ...ref });
 
     if (decision.action === "continue") {
+      if (judged) {
+        // Recorded like any step (start and end, its id and role), with no model session; whatever waited for it waits for what it waited for (the plan's own rewiring).
+        for (const sk of judged.skipped) {
+          const skRef = { stepId: sk.id, role: sk.role, ...(byId.get(sk.id)?.item ? { item: byId.get(sk.id)!.item } : {}) };
+          const rec = store.startPhase(run.id, sk.role, 1, skRef);
+          const sv = skippedVerdict(`Skipped on the planner's suggestion (step ${step.id}): ${sk.reason}`);
+          bus.emitEvent({ type: "phase-start", runId: run.id, phase: sk.role, attempt: 1, ts: now(), ...skRef });
+          store.finishPhase(rec.id, sv);
+          bus.emitEvent({ type: "phase-end", runId: run.id, phase: sk.role, attempt: 1, verdict: sv, ts: now(), ...skRef });
+        }
+        const gone = new Set(judged.skipped.map((s) => s.id));
+        plan = judged.plan;
+        order = order.filter((id) => !gone.has(id));
+      }
       idx += 1;
       retryFeedback = undefined;
       continue;

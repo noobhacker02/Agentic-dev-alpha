@@ -9,7 +9,7 @@ import { loadTeamRoster, MAX_CAP, type ParsedArgs } from "./cli-commands.js";
 import { composeOffline, finalizePlan, type ComposeResult } from "./compose.js";
 import { DEFAULT_CAP } from "./plan.js";
 import { scanRepoPaths } from "./scan.js";
-import { computeSignals } from "./signals.js";
+import { computeSignals, requiredRoles } from "./signals.js";
 
 const MAX_PLAN_BYTES = 200_000;
 const clean = (s: unknown, n = 300): string => stripTerminalControlBytes(String(s ?? "")).replace(/\s+/g, " ").trim().slice(0, n);
@@ -79,7 +79,7 @@ export function resolveTeamOption(args: ParsedArgs, ctx: { task: string; workDir
   const plan = result.plan;
   const parts = plan.steps.map((s) => `${s.id} ${s.role}${s.slice ? ` (${clean(s.slice.name, 30)})` : ""}`);
   return {
-    team: { plan, roster: roster.roles, source },
+    team: { plan, roster: roster.roles, source, required: requiredRoles(signals) },
     maxRepairs: Math.max(20, plan.steps.length * 3),
     summary: [`Team (${source}): ${plan.steps.length} steps: ${parts.join(", ")}`],
     notes: result.changes.map((c) => clean(c)),

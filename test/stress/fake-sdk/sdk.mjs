@@ -89,6 +89,8 @@ export function query({ prompt, options }) {
     };
     if (sc === "trivial-skip" && phase === "planner") verdict.suggestedSkip = ["test-designer"];
     if (process.env.FAKE_REPORT) verdict.report = process.env.FAKE_REPORT; // a document the step produced (team steps may carry one)
+    // FAKE_SUGGESTED_SKIP: a JSON map from role to the role ids that step suggests skipping, on every call of that role (the five-phase `trivial-skip` scenario does the same for the built-in planner).
+    if (process.env.FAKE_SUGGESTED_SKIP) { const m = JSON.parse(process.env.FAKE_SUGGESTED_SKIP)[phase]; if (m) verdict.suggestedSkip = m; }
     text = "done\n```json\n" + JSON.stringify(verdict) + "\n```";
   }
   // A fixed, uniform cost per call (whether worker or Overseer) so cost-tracking across a real

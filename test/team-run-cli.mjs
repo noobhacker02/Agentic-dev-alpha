@@ -63,6 +63,10 @@ const opt = (args, task = "add a docstring to the users module") => resolveTeamO
   // a read-only task needs no builder
   const ro = opt({ team: "auto" }, "explain how the users module works");
   assert.ok(ro.team && !ro.team.plan.steps.some((s) => s.role === "builder"), "a read-only task got a builder");
+  // the roles a signal made mandatory travel with the team: the engine refuses to skip them (V12) and insists on them (V4)
+  assert.deepStrictEqual(ro.team.required, [], "a read-only task has no mandatory role");
+  const sec = opt({ team: "auto" }, "add password login with auth tokens to src/api");
+  assert.ok(sec.team && sec.team.required.includes("security-reviewer") && sec.team.plan.steps.some((s) => s.role === "security-reviewer"), `a security task's mandatory role was not passed on: ${JSON.stringify(sec.team?.required)}`);
   console.log("[ok] --team auto is the offline composer's team for the task and the project's paths, with the floor, a repair budget that grows with the team, and a summary line");
 }
 
