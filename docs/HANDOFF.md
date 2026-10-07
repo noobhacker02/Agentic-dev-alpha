@@ -161,7 +161,7 @@ when its latest adversary round has no open confirmed finding at medium or above
    `test:improvements-log`, `test:bench-table`, `test:handoff`.
 2. The Dev-Skill repo is pushed (`df00698`: lessons 28 and 29, SKILL-013 to SKILL-016, the compaction redactor, the scanner-copies test).
 3. **Needs you (a decision, nothing blocks on it):** the compaction summaries in `docs/handoff/compactions/` are committed by `checkpoint` to a public repository. The redactor is fixed (SKILL-015) and found nothing in the three
-   summaries saved so far; the newest summary is deliberately left untracked. Say whether to keep committing them (they are lossy digests of the whole session), to ignore the directory, or to keep them local.
+   summaries saved so far; the newest summary (`20261007T051726Z-auto.md`) was run through the fixed redactor (0 lines changed) and committed like the two before it. Say whether to keep committing them (they are lossy digests of the whole session), to ignore the directory, or to keep them local.
 4. Then **S3a part two** (task #101: `--team auto|fixed5|<file>`, events with `stepId`/`role`/`item`, store columns, lineage identity, variable-length stepper, Overseer append/split/skip, diff-scope audit, V14 and V7 wiring),
    then an adversary round on it; then S2, S3, S4, S5, S5b, S6, S6b, S7 in the spec's order. Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
 
