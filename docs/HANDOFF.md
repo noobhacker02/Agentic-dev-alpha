@@ -5,8 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-07T18:25:00Z
-Covers agent-loop commit: e469c62
+Updated: 2026-10-07T18:20:03Z
+Covers agent-loop commit: b126b6e
 Covers Dev-Skill commit: 7c92fc7
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something

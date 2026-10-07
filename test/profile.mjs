@@ -4,9 +4,10 @@
 //   npm run build && npm run test:profile
 import assert from "node:assert";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, chownSync, lchownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync, unlinkSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, lchownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync, unlinkSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { siteName, prepareProfile, acquireProfileLock, clearChromiumLeftovers, processStartTime, isPidAlive } from "../dist/profile.js";
 
 const posix = process.platform !== "win32";
@@ -365,8 +366,13 @@ if (process.platform === "linux") {
 // 15. Things only another user can show: a directory we cannot look into, and a live process that is not ours (run as the user "nobody" when this is root)
 if (posix) {
   const nobody = 65534;
+  // The child runs as another user, who may not be able to read this checkout (a scratch directory under /root, say): it imports a copy of the module (it needs nothing but Node's own modules) from a directory anyone can read.
+  const shared = scratch();
+  chmodSync(shared, 0o755);
+  copyFileSync(new URL("../dist/profile.js", import.meta.url), join(shared, "profile.mjs"));
+  chmodSync(join(shared, "profile.mjs"), 0o644);
   const asOther = (body) => {
-    const mod = new URL("../dist/profile.js", import.meta.url).href;
+    const mod = pathToFileURL(join(shared, "profile.mjs")).href;
     const drop = process.getuid() === 0 ? `process.setgid(${nobody}); process.setuid(${nobody});` : "";
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", `${drop}\nconst P = await import(${JSON.stringify(mod)});\n${body}`], { encoding: "utf8" });
     return JSON.parse(out.trim().split("\n").pop());
