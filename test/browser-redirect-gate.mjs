@@ -52,7 +52,7 @@ const sessions = new BrowserSessionManager();
 const h = __testHandlers({ runId: "rg", bus, sessions, artifactDir: mkdtempSync(join(tmpdir(), "rg-art-")) });
 const call = async (name, args = {}) => { try { const r = await h[name].handler(args, {}); return { text: r.content.map((c) => c.text ?? "").join("\n"), isError: !!r.isError }; } catch (e) { return { text: "THREW " + e.message, isError: true }; } };
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
-const fresh = async () => { await sessions.close("rg", bus, "completed").catch(() => {}); decoyHits.length = 0; };
+const fresh = async () => { await sessions.close("rg", bus, "completed").catch(() => {}); decoyHits.length = 0; events.length = 0; };
 
 try {
   // Control 1: the decoy records what reaches it (so an empty list below means something).
@@ -102,6 +102,11 @@ try {
     assert.deepStrictEqual(decoyHits, [], `${name}: the off-list host received ${JSON.stringify(decoyHits)}`);
     assert.ok(/blocked|refused|not allowed|not on the allowed list/i.test(shown), `${name}: the agent was not told anything was refused:\n${shown.slice(0, 1800)}`);
     assert.ok(!/SECRET-COOKIE|hunter2|secret-body/.test(shown), `${name}: a secret appeared in what the agent was shown`);
+    // A refused page load is told to the agent once: by the gate when the request showed it was a page's, and by the response when it did not, never both.
+    if (/^(30\d|three hops)/.test(name)) {
+      const told = events.filter((e) => e.type === "browser-notice" && e.kind === "blocked" && /127\.0\.0\.2/.test(e.text));
+      assert.strictEqual(told.length, 1, `${name}: the refusal was told ${told.length} times: ${JSON.stringify(told.map((e) => e.text))}`);
+    }
   }
   console.log(`[ok] ${attacks.length} ways of reaching an off-list host through a redirect or a browser-made request: the decoy received nothing, and the agent was told each time`);
 

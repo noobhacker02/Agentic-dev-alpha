@@ -30,6 +30,13 @@ const server = createServer((req, res) => {
     if (u.pathname === "/s.js") { res.writeHead(200, { "content-type": "text/javascript" }); return res.end("document.body.insertAdjacentHTML('beforeend','<p>CDN-SCRIPT-RAN</p>')"); }
   }
   if (host === "ads.example") { res.writeHead(200, { "content-type": "image/png" }); return res.end(PNG); }
+  if (host === "evil.example" && u.pathname === "/stall") {
+    // headers and the first of the page arrive (the browser commits and the title is known), then nothing for a while: the load a redirect landing interrupts
+    res.writeHead(200, { "content-type": "text/html" });
+    res.write("<!doctype html><title>EVIL-TITLE</title><h1>EVIL-PAGE-TEXT</h1>");
+    setTimeout(() => res.end("<p>done</p>"), 4000).unref();
+    return;
+  }
   if (host === "evil.example") return html(res, "EVIL-TITLE", "<h1>EVIL-PAGE-TEXT</h1>");
   if (host === "ats.example") return html(res, "ATS", "<h1>ATS-FORM-TEXT</h1>");
   if (host === "internal.example") return html(res, "INTERNAL", "<h1>INTERNAL-TEXT</h1>");
@@ -183,11 +190,12 @@ try {
 
   // 4. A server-side redirect cannot be stopped before the browser follows it (the browser's interception sees only the first URL): the request is made, and the agent is shown nothing of the page it lands on
   {
-    for (const [name, path] of [["302", `/r?to=${encodeURIComponent(E() + "/landed")}`], ["a chain of three", "/chain"]]) {
+    for (const [name, path] of [["302", `/r?to=${encodeURIComponent(E() + "/landed")}`], ["a chain of three", "/chain"], ["a page that stalls while it loads", `/r?to=${encodeURIComponent(E() + "/stall")}`]]) {
       await fresh();
       const o = await call("open", { url: J(path) });
       await settle(400);
       assert.ok(o.isError && /redirect/i.test(o.text) && /evil\.example/.test(o.text) && /allowances list/.test(o.text), `${name}: the agent was not told the page redirected off the list:\n${o.text}`);
+      assert.ok(/Error: Refused: the page redirected to evil\.example:\d+\//.test(o.text), `${name}: the refusal itself (not only a notice after it) does not say where the page landed:\n${o.text}`);
       assert.ok(seen("evil.example").length >= 1, `${name}: control: the redirect was expected to reach the host (the request is made; the content is what is withheld)`);
       noEvilShown(`${name} redirect`);
       const i = await call("inspect");
