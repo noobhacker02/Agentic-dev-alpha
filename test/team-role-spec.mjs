@@ -79,6 +79,8 @@ const steps = BUILTIN_ROSTER.filter((r) => r.kind !== "meta" && r.kind !== "moni
   assert.ok(b.systemPrompt.includes(byId.builder.when), "the reason the role exists is not in its prompt");
   assert.ok(b.systemPrompt.includes("src/api") && b.systemPrompt.includes("src/shared/api-types") && /only inside/i.test(b.systemPrompt), `a builder is not told its slice: ${b.systemPrompt.slice(0, 600)}`);
   assert.ok(b.systemPrompt.includes(VERDICT_INSTRUCTIONS.trim().slice(0, 80)) && b.systemPrompt.includes('"outcome"'), "the verdict instructions are missing");
+  assert.ok(/"report" field/.test(b.systemPrompt) && /8000 characters/.test(b.systemPrompt) && b.systemPrompt.indexOf('"report" field') > b.systemPrompt.indexOf('"outcome"'), "a team step is not told that its document goes in the report field after the verdict shape");
+  assert.ok(!/"report" field/.test(VERDICT_INSTRUCTIONS), "the built-in phases' shared verdict text mentions a report they cannot have");
   const readerWithSlice = roleSpec(byId["security-reviewer"], { id: "s6", role: "security-reviewer", why: "w", slice });
   assert.ok(!/may write/i.test(readerWithSlice.systemPrompt), "a read-only role was told it may write somewhere");
   const noSlice = roleSpec(byId.builder);

@@ -316,7 +316,7 @@ ${MAX_ACTIONS_PER_SESSION} input actions in a run.`;
     }
   }
 
-  return parseVerdict(lastAssistantText, opts.phase);
+  return parseVerdict(lastAssistantText, opts.phase, { team: team !== undefined });
 }
 
 function summarizeToolResult(content: unknown): string {
@@ -338,7 +338,15 @@ function summarizeToolResult(content: unknown): string {
  * values. Anything that doesn't validate becomes "inconclusive", never "pass" — an unparseable or
  * malformed verdict is a reason to stop and look, not a green light to continue.
  */
-function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
+const MAX_REPORT = 20_000;
+/** A report is model text that will be saved to a file and read by other steps: control bytes (but not newlines or tabs) removed, trimmed, cut. */
+const cleanReport = (raw: unknown): string | undefined => {
+  if (typeof raw !== "string") return undefined;
+  return raw.replace(/\r/g, "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "").trim().slice(0, MAX_REPORT);
+};
+
+/** `team` is a step of a composed team: it may carry a report, and its skip suggestion names role ids (the engine decides what may be skipped); a built-in phase keeps the allow-list. */
+export function parseVerdict(text: string, phase: PhaseName, opts: { team?: boolean } = {}): PhaseVerdict {
   const match = text.match(/```json\s*([\s\S]*?)```/);
   if (match) {
     try {
@@ -350,8 +358,11 @@ function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
         typeof parsed.headline === "string"
       ) {
         const suggestedSkip = Array.isArray(parsed.suggestedSkip)
-          ? parsed.suggestedSkip.filter((p: unknown): p is PhaseName => (SKIPPABLE_PHASES as readonly string[]).includes(String(p)))
+          ? opts.team
+            ? parsed.suggestedSkip.filter((p: unknown): p is string => typeof p === "string" && /^[a-z][a-z0-9-]{0,40}$/.test(p)).slice(0, 8)
+            : parsed.suggestedSkip.filter((p: unknown): p is PhaseName => (SKIPPABLE_PHASES as readonly string[]).includes(String(p)))
           : undefined;
+        const report = opts.team ? cleanReport(parsed.report) : undefined;
         return {
           completed: parsed.completed,
           outcome: parsed.outcome,
@@ -360,6 +371,7 @@ function parseVerdict(text: string, phase: PhaseName): PhaseVerdict {
           concerns: Array.isArray(parsed.concerns) ? parsed.concerns.map(String) : [],
           blockingFindings: Array.isArray(parsed.blockingFindings) ? parsed.blockingFindings.map(String) : [],
           ...(suggestedSkip?.length ? { suggestedSkip } : {}),
+          ...(report ? { report } : {}),
         };
       }
     } catch {

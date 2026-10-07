@@ -82,6 +82,8 @@ export interface PhaseVerdict {
   /** Planner-only: phases this trivial task doesn't need. Validated against SKIPPABLE_PHASES by
    * pipeline code, not trusted as-is -- see runPipeline. Absent or empty for every other phase. */
   suggestedSkip?: PhaseName[];
+  /** Team steps only: the document the step's role produced (a plan, a test design, findings, a review), as markdown. Read-only roles write no files, so the pipeline saves it for the steps after it (src/team/run-plan.ts). */
+  report?: string;
 }
 
 /**

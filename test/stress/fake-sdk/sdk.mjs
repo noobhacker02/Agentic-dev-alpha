@@ -67,6 +67,7 @@ export function query({ prompt, options }) {
       blockingFindings: fail ? ["hardcoded cloud credential in src/app.js"] : [],
     };
     if (sc === "trivial-skip" && phase === "planner") verdict.suggestedSkip = ["test-designer"];
+    if (process.env.FAKE_REPORT) verdict.report = process.env.FAKE_REPORT; // a document the step produced (team steps may carry one)
     text = "done\n```json\n" + JSON.stringify(verdict) + "\n```";
   }
   // A fixed, uniform cost per call (whether worker or Overseer) so cost-tracking across a real

@@ -28,9 +28,9 @@ async function go({ phase, team, calls = [], withBrowser = false, desktop, requi
   process.env.FAKE_HOOKS_LOG = log;
   process.env.FAKE_TOOL_CALLS = JSON.stringify(calls);
   writeFileSync(log, "");
-  await runPhase({ runId: run.id, phase, attempt: 1, task: "build the thing", workDir: work, priorSummaries: "", bus, store, requireApproval, team, ...(desktop ? { desktop } : {}), ...(withBrowser ? { browser: { sessions, artifactDir: join(root, "art") } } : {}) });
+  const verdict = await runPhase({ runId: run.id, phase, attempt: 1, task: "build the thing", workDir: work, priorSummaries: "", bus, store, requireApproval, team, ...(desktop ? { desktop } : {}), ...(withBrowser ? { browser: { sessions, artifactDir: join(root, "art") } } : {}) });
   const lines = readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  return { head: lines[0], decisions: lines.slice(1).map((l) => [l.call.tool, l.decision]), reasons: lines.slice(1).map((l) => l.reason) };
+  return { verdict, head: lines[0], decisions: lines.slice(1).map((l) => [l.call.tool, l.decision]), reasons: lines.slice(1).map((l) => l.reason) };
 }
 // with approval on, every request is answered "deny" at once and recorded: what was asked is what was not auto-approved
 bus.on("event", (e) => { if (e.type === "approval-request") { asked.push(e.toolName); bus.resolveApproval(e.requestId, { decision: "deny", reason: "test" }); } });
@@ -126,6 +126,18 @@ const slice = (name, ...paths) => ({ name, paths });
   const planner = await go({ phase: "planner", withBrowser: true });
   assert.deepStrictEqual(planner.head.mcp, [], "the built-in planner was given the browser");
   console.log("[ok] the built-in planner has no browser even when the run has one");
+}
+
+// 4e. A team step's report comes back with its verdict; a built-in phase's does not
+{
+  process.env.FAKE_REPORT = "# The plan\n\n1. do the thing";
+  try {
+    const team = await go({ phase: "planner", team: { role: role("planner"), step: { id: "s2", role: "planner", why: "w" } } });
+    assert.strictEqual(team.verdict.report, "# The plan\n\n1. do the thing", "a team step's report did not reach its verdict");
+    const legacy = await go({ phase: "planner" });
+    assert.strictEqual(legacy.verdict.report, undefined, "a built-in phase's verdict carried a report");
+  } finally { delete process.env.FAKE_REPORT; }
+  console.log("[ok] a team step's report reaches its verdict through runPhase, and a built-in phase's does not carry one");
 }
 
 // 5. The built-in phases are untouched: their own tools, four hooks, no write scope, their own words
