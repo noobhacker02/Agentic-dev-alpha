@@ -18,6 +18,7 @@ import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText 
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
 import { roast, roastWithModel, type Habits } from "./roast.js";
 import { rosterCommand, teamCommand, type CommandResult } from "./team/cli-commands.js";
+import { resolveTeamOption } from "./team/cli-run.js";
 import { installFatalHandlers } from "./fatal.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
@@ -246,6 +247,7 @@ async function main() {
 
 Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark] [--plain] [--max-cost <usd>]
+         [--team auto|fixed5|<plan.json>] [--cap <n>] [--trust-project]
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
   agent-loop doctor [--dir <workDir>] [--data-dir <path>] [--desktop]
   agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
@@ -273,6 +275,14 @@ Usage:
                    spent. Checked after each phase attempt and Overseer call, so a single long step can pass it.
                    Ctrl-C and the page's Stop button end a run the same way; a second Ctrl-C quits at once.
 
+  --team           Who does the work. fixed5 (the default) is the five phases in order, as always. auto lets the offline
+                   composer pick a team for the task from the paths in --dir (never the text inside the files): a planner,
+                   builders on their own slices, a verifier for each, the reviewers the task calls for, a gatekeeper last. A
+                   file is a plan you wrote (JSON; agent-loop team ... --json shows the shape): the same checks apply and
+                   the missing floor (a verifier per builder, a gatekeeper) is added and said. --cap limits the team's size
+                   (default 12). A plan that is refused ends the command before anything starts (exit 2). Each step may
+                   change only what its role may, and the project is compared with how it was after every step.
+
   --plain          Start the page with every cartoon off: the cat, pixel icons and cursors, the dinosaur
                    game and sound (or $AGENT_LOOP_PLAIN=1). The page's "cartoons" button, the ? window
                    and ?plain=1 on its address do the same in the browser. Nothing else changes.
@@ -298,7 +308,7 @@ Usage:
 
   team             Shows the team a task would get, without running anything: each member, why it is there, and why
                    the team is this size. Offline: no model, no network. Reads the PATHS in --dir, never the text inside
-                   the files. Exits 2 when no team fits --cap (default 12). Running a composed team comes later.
+                   the files. Exits 2 when no team fits --cap (default 12). To run a composed team: agent-loop run ... --team auto.
 
   insights         Self-analysis over every run ever recorded against a --dir's audit database:
                    which phases get repaired most, total and per-phase cost, and which "don't ask
@@ -347,6 +357,12 @@ Usage:
 
   const workDir = resolve(String(args.dir ?? "./agent-loop-workspace"));
   mkdirSync(workDir, { recursive: true });
+  // The team for this run (--team auto|fixed5|<plan file>): decided, or refused, before a data directory, a database or a model exists.
+  const teamOpt = resolveTeamOption(args, { task, workDir });
+  if (teamOpt.error) {
+    console.error(`Error: ${teamOpt.error.message}`);
+    process.exit(teamOpt.error.code);
+  }
   const dataDirOverride = typeof args["data-dir"] === "string" ? args["data-dir"] : process.env.AGENT_LOOP_DATA_DIR;
   const dataDir = resolveDataDir(workDir, dataDirOverride);
   mkdirSync(dataDir, { recursive: true });
@@ -354,7 +370,7 @@ Usage:
   const port = parseNonNegativeInt(args.port, "port", 4173);
   const requireApproval = !args["no-approval"];
   const maxRetriesPerPhase = parseNonNegativeInt(args["max-retries"], "max-retries", 2);
-  const maxTotalRepairs = parseNonNegativeInt(args["max-repairs"], "max-repairs", PHASES.length * 4);
+  const maxTotalRepairs = parseNonNegativeInt(args["max-repairs"], "max-repairs", teamOpt.maxRepairs ?? PHASES.length * 4);
   const browser = !!args.browser;
   const browserArtifactDir = join(dataDir, "browser-artifacts");
   const maxCost = parseMaxCost(args["max-cost"]);
@@ -444,8 +460,10 @@ Usage:
   });
   const startedAt = Date.now();
 
+  for (const line of [...teamOpt.summary, ...teamOpt.notes.map((n) => `  ${n}`)]) console.log(line);
+  if (teamOpt.team) console.log(`  repair budget: ${maxTotalRepairs}`);
   const run = await runPipeline(
-    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir, desktop, control },
+    { task, workDir, requireApproval, strictApproval: !!args["strict-approval"], maxRetriesPerPhase, maxTotalRepairs, uiPort: port, browser, browserArtifactDir, desktop, control, ...(teamOpt.team ? { team: teamOpt.team } : {}) },
     bus,
     store
   );

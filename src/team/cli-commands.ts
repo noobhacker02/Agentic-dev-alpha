@@ -17,15 +17,20 @@ export interface CommandResult {
   code: number;
 }
 
-const MAX_CAP = 50;
+export const MAX_CAP = 50;
 /** JSON.stringify leaves C1 control characters (U+0080 to U+009F) as they are, and some terminals act on them: every string goes through the same filter as the text output. */
 const toJson = (body: unknown): string => `${JSON.stringify(body, (_k, v: unknown) => (typeof v === "string" ? stripTerminalControlBytes(v) : v), 2)}\n`;
 const clean = (s: unknown, n = 300): string => stripTerminalControlBytes(String(s ?? "")).replace(/\s+/g, " ").trim().slice(0, n);
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
+/** The roster for a project directory: the built-in roles, the user's own, and (only with --trust-project) the project's. One definition for `roster`, `team` and `run --team`. */
+export function loadTeamRoster(dir: string, trustProject: boolean): LoadedRoster {
+  return loadRoster({ userDir: join(agentLoopHome(), "roster"), projectDir: join(dir, ".agent-loop", "roster"), trustProject });
+}
+
 function loadFor(args: ParsedArgs): { dir: string; roster: LoadedRoster } {
   const dir = resolve(typeof args.dir === "string" ? args.dir : "./agent-loop-workspace");
-  return { dir, roster: loadRoster({ userDir: join(agentLoopHome(), "roster"), projectDir: join(dir, ".agent-loop", "roster"), trustProject: args["trust-project"] === true }) };
+  return { dir, roster: loadTeamRoster(dir, args["trust-project"] === true) };
 }
 
 const roleLine = (r: RoleDef): string => {
@@ -85,7 +90,7 @@ export function teamCommand(args: ParsedArgs): CommandResult {
     if (!Number.isInteger(n) || n < 1 || n > MAX_CAP) return { out: "", err: `Error: --cap needs a whole number from 1 to ${MAX_CAP} (got ${typeof args.cap === "string" ? `"${clean(args.cap, 20)}"` : "nothing"}).\n`, code: 1 };
     cap = n;
   }
-  if (args["dry-run"] !== true) return { out: "", err: "Error: agent-loop team only shows the team for now. Add --dry-run: running a composed team comes with the pipeline integration, and nothing here starts an agent.\n", code: 1 };
+  if (args["dry-run"] !== true) return { out: "", err: "Error: agent-loop team only shows the team. Add --dry-run, or run it with: agent-loop run \"<task>\" --team auto. Nothing here starts an agent.\n", code: 1 };
 
   const { dir, roster } = loadFor(args);
   const signals = computeSignals(task, { files: scanRepoPaths(dir) });
