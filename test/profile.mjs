@@ -3,11 +3,11 @@
 // taken from a live holder). No browser here: the directory rules, the lock, and what is done about the files Chromium leaves behind.
 //   npm run build && npm run test:profile
 import assert from "node:assert";
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync, unlinkSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { chmodSync, chownSync, lchownSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, utimesSync, writeFileSync, unlinkSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { siteName, prepareProfile, acquireProfileLock, clearChromiumLeftovers, processStartTime } from "../dist/profile.js";
+import { siteName, prepareProfile, acquireProfileLock, clearChromiumLeftovers, processStartTime, isPidAlive } from "../dist/profile.js";
 
 const posix = process.platform !== "win32";
 const scratch = () => mkdtempSync(join(tmpdir(), "profile-"));
@@ -38,7 +38,23 @@ const mode = (p) => lstatSync(p).mode & 0o777;
     assert.ok(prepareProfile({ home, site: "linkedin" }).ok && mode(join(home, "profiles")) === 0o700, "the profiles directory was left readable by others");
   }
   assert.ok(!prepareProfile({ home, site: "../escape" }).ok && !prepareProfile({ home, site: "Linked In" }).ok);
-  console.log("[ok] a profile is <home>/profiles/<site>, made 0700 (and tightened if it was not), the same on the second call; a bad site name is refused");
+  if (posix) {
+    // readable by the group alone, or by the world alone, is still readable
+    for (const loose of [0o750, 0o705, 0o770, 0o707, 0o755]) {
+      chmodSync(r.dir, loose); chmodSync(join(home, "profiles"), loose);
+      assert.ok(prepareProfile({ home, site: "linkedin" }).ok && mode(r.dir) === 0o700 && mode(join(home, "profiles")) === 0o700, `a ${loose.toString(8)} directory was not tightened`);
+    }
+    // a home that does not exist yet is made private too
+    const fresh = join(scratch(), "not-yet", "agent-home");
+    assert.ok(prepareProfile({ home: fresh, site: "linkedin" }).ok);
+    assert.strictEqual(mode(fresh), 0o700, "a new agent-loop home was left readable by others");
+    // a umask that takes away the owner's own write bit must not leave an unusable directory
+    const home2 = scratch(), before = process.umask(0o277);
+    try { assert.ok(prepareProfile({ home: home2, site: "linkedin" }).ok); } finally { process.umask(before); }
+    assert.strictEqual(mode(join(home2, "profiles")), 0o700, "a strict umask left the profiles directory unusable");
+    assert.strictEqual(mode(join(home2, "profiles", "linkedin")), 0o700, "a strict umask left the profile directory unusable");
+  }
+  console.log("[ok] a profile is <home>/profiles/<site>, made 0700 (and tightened if group- or world-readable), the same on the second call; a bad site name is refused");
 }
 
 // 3. It is never inside the project or the working directory, and never contains them
@@ -60,6 +76,22 @@ const mode = (p) => lstatSync(p).mode & 0o777;
   const lookalike = prepareProfile({ home: join(base, "work-home"), site: "linkedin", forbidden: [work] });
   assert.ok(lookalike.ok, "a sibling whose name only starts like the working directory was refused");
   console.log("[ok] a profile inside the repository or the working directory is refused, so is one that would contain a forbidden path; a sibling that only shares a name prefix is fine");
+  // the profile directory itself, or the profiles directory, named as forbidden; and a forbidden directory named through a link
+  const exact = prepareProfile({ home: join(base, "home3"), site: "linkedin" });
+  assert.ok(exact.ok);
+  const same = prepareProfile({ home: join(base, "home3"), site: "linkedin", forbidden: [exact.dir] });
+  assert.ok(!same.ok && /inside/i.test(same.error), `the profile directory named as forbidden was accepted: ${JSON.stringify(same)}`);
+  const alias = join(base, "alias-of-repo");
+  symlinkSync(repo, alias);
+  const viaLink = prepareProfile({ home: join(repo, ".home-through-link"), site: "linkedin", forbidden: [alias] });
+  assert.ok(!viaLink.ok && /inside/i.test(viaLink.error), `a forbidden directory named through a link was not resolved: ${JSON.stringify(viaLink)}`);
+  // a directory whose own name starts with two dots is still a child, not a way out of its parent
+  for (const name of ["..sneaky", "..", ".. x"].filter((n) => n !== "..")) {
+    const dotted = prepareProfile({ home: join(repo, name), site: "linkedin", forbidden: [repo] });
+    assert.ok(!dotted.ok && /inside/i.test(dotted.error), `a home named "${name}" inside the repository was accepted: ${JSON.stringify(dotted)}`);
+    const dottedAbove = prepareProfile({ home: base, site: "linkedin", forbidden: [join(base, "profiles", "linkedin", name)] });
+    assert.ok(!dottedAbove.ok && /contain/i.test(dottedAbove.error), `a forbidden "${name}" under the profile was not noticed: ${JSON.stringify(dottedAbove)}`);
+  }
 }
 
 // 4. Not through a link: a symlinked profiles directory or site directory is a way to steal or plant a profile
@@ -206,4 +238,163 @@ if (posix) {
   assert.ok(hostname().length > 0);
   console.log("[ok] a process's start time can be read, is stable, and is absent for a process that is not there");
 }
+
+// 10. The lock file's holder record must be whole: a record missing its pid, host or nonce, or with the wrong type, is a broken file, never a holder to trust
+{
+  const dir = scratch();
+  const lock = join(dir, "typed.lock");
+  const env = (pid) => ({ pid, host: "h1", isAlive: () => true, startOf: () => "s", now: () => new Date(lstatSync(lock).mtimeMs + 1000) });
+  const whole = { pid: 1001, start: "s", host: "h1", nonce: "n-n-n-n-n-n-n-n-n", since: "t" };
+  writeFileSync(lock, JSON.stringify(whole));
+  const control = acquireProfileLock(lock, env(1002));
+  assert.ok(!control.ok && /in use by pid 1001/.test(control.error), `control: ${JSON.stringify(control)}`);
+  for (const [name, broken] of [["no pid", { ...whole, pid: undefined }], ["pid as text", { ...whole, pid: "1001" }], ["no host", { ...whole, host: undefined }], ["host as a number", { ...whole, host: 7 }], ["no nonce", { ...whole, nonce: undefined }], ["nonce as a number", { ...whole, nonce: 7 }], ["an array", [1001, "h1", "n"]], ["null", null]]) {
+    writeFileSync(lock, JSON.stringify(broken));
+    const r = acquireProfileLock(lock, env(1002));
+    assert.ok(!r.ok && /being written/.test(r.error) && r.holder === undefined, `${name}: a record that is not whole was trusted as a holder: ${JSON.stringify(r)}`);
+  }
+  console.log("[ok] a lock record missing its pid, host or nonce, or with the wrong types, is treated as a file still being written, never as a holder");
+}
+
+// 11. Nothing is left beside the lock: the temporary file is removed whether the lock was won or lost
+{
+  const dir = scratch();
+  const lock = join(dir, "tidy.lock");
+  const env = (pid) => ({ pid, host: "h1", isAlive: () => true, startOf: () => "s" });
+  const a = acquireProfileLock(lock, env(1001));
+  assert.ok(a.ok);
+  assert.deepStrictEqual(readdirSync(dir), ["tidy.lock"], "a temporary file was left beside a won lock");
+  assert.ok(!acquireProfileLock(lock, env(1002)).ok);
+  assert.deepStrictEqual(readdirSync(dir), ["tidy.lock"], "a temporary file was left beside a lost lock");
+  a.release();
+  assert.deepStrictEqual(readdirSync(dir), [], "release left files behind");
+  // a lock that cannot be created is a refusal that says why, not a crash
+  const nowhere = acquireProfileLock(join(dir, "no-such-directory", "x.lock"), env(1003));
+  assert.ok(!nowhere.ok && /lock could not be created \(ENOENT\)/.test(nowhere.error) && !/hard links/.test(nowhere.error), JSON.stringify(nowhere));
+  assert.deepStrictEqual(readdirSync(dir), [], "a failed lock left files behind");
+  console.log("[ok] winning or losing the lock leaves no temporary file behind");
+}
+
+// 12. Recovering a stale lock: two processes that both found it stale must not both end up holding the profile
+{
+  const dir = scratch();
+  const lock = join(dir, "recover.lock");
+  const dead = (p) => p !== 1001;
+  const env = (pid, extra = {}) => ({ pid, host: "h1", isAlive: dead, startOf: (p) => `start-of-${p}`, ...extra });
+  const plant = () => { try { unlinkSync(lock); } catch { /* none */ } writeFileSync(lock, JSON.stringify({ pid: 1001, start: "start-of-1001", host: "h1", nonce: "dead-holders-nonce-0000", since: "t" })); };
+
+  // (a) B recovers and wins between A reading the stale lock and A removing it: A must not remove B's fresh lock
+  plant();
+  let b;
+  const a = acquireProfileLock(lock, env(1002, { between: (stage) => { if (stage === "stale-found" && !b) b = acquireProfileLock(lock, env(1003)); } }));
+  assert.ok(b?.ok, `B could not recover the stale lock: ${JSON.stringify(b)}`);
+  assert.ok(!a.ok && a.holder?.pid === 1003 && /in use by pid 1003/.test(a.error), `A removed the lock B had just taken: ${JSON.stringify(a)}`);
+  b.release();
+
+  // (b) while A is inside the recovery (mutex held, about to remove the stale lock), B cannot start one of its own
+  plant();
+  let inner; let innerMs = 0;
+  const a2 = acquireProfileLock(lock, env(1002, { now: () => new Date(), between: (stage) => { if (stage === "before-remove" && !inner) { const t = Date.now(); inner = acquireProfileLock(lock, env(1003, { now: () => new Date() })); innerMs = Date.now() - t; } } }));
+  assert.ok(inner && !inner.ok && /kept changing/.test(inner.error), `a second recovery ran inside the first: ${JSON.stringify(inner)}`);
+  assert.ok(innerMs >= 150, `the second recovery did not wait for the first (${innerMs} ms)`);
+  assert.ok(a2.ok && a2.staleRecovered?.pid === 1001, `A did not finish its recovery: ${JSON.stringify(a2)}`);
+  a2.release();
+
+  // (c) a recovery mutex left by a process that died: waited on while fresh, cleared once old
+  plant();
+  const mutex = `${lock}.recovering`;
+  mkdirSync(mutex);
+  const start = Date.now();
+  const blocked = acquireProfileLock(lock, env(1002, { now: () => new Date() }));
+  assert.ok(!blocked.ok && /kept changing/.test(blocked.error), `a fresh recovery mutex was ignored: ${JSON.stringify(blocked)}`);
+  assert.ok(Date.now() - start >= 150, "a held recovery mutex was not waited on");
+  assert.ok(existsSync(mutex), "a fresh recovery mutex was removed");
+  const old = new Date(Date.now() - 120_000);
+  utimesSync(mutex, old, old);
+  const cleared = acquireProfileLock(lock, env(1002, { now: () => new Date() }));
+  assert.ok(cleared.ok && cleared.staleRecovered?.pid === 1001, `an old recovery mutex blocked the profile for ever: ${JSON.stringify(cleared)}`);
+  assert.ok(!existsSync(mutex), "the recovery mutex was left behind");
+  cleared.release();
+  console.log("[ok] recovering a stale lock is serialised: a second recoverer neither removes the winner's fresh lock nor runs beside the first, and a mutex left by a dead recoverer is waited on, then cleared");
+}
+
+// 13. Real start times tell processes apart, and a reused pid is recovered without stand-ins
+{
+  const idle = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  try {
+    await new Promise((r) => setTimeout(r, 300));
+    const mine = processStartTime(process.pid), theirs = processStartTime(idle.pid);
+    assert.ok(typeof theirs === "string" && theirs.length > 3);
+    assert.notStrictEqual(theirs, mine, "two different processes have the same start time");
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "1", `${idle.pid}`, null, undefined]) assert.strictEqual(processStartTime(bad), undefined, `a start time was invented for ${String(bad)}`);
+    if (process.platform === "linux") {
+      const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      assert.ok(mine.startsWith(`${boot}:`), `the start time does not carry the boot id, so a reboot could repeat it: ${mine}`);
+    }
+    // a lock written by a process that has since been replaced by another with the same pid: alive, but not the holder
+    const lock = join(scratch(), "reuse.lock");
+    const record = (start) => writeFileSync(lock, JSON.stringify({ pid: idle.pid, start, host: hostname(), nonce: "nonce-nonce-nonce-nonce", since: "t" }));
+    record(mine);
+    const taken = acquireProfileLock(lock);
+    assert.ok(taken.ok && taken.staleRecovered?.pid === idle.pid, `a live pid whose start time is not the recorded one kept the lock: ${JSON.stringify(taken)}`);
+    taken.release();
+    record(theirs);
+    const held = acquireProfileLock(lock);
+    assert.ok(!held.ok && held.holder?.pid === idle.pid, `the real holder lost its lock: ${JSON.stringify(held)}`);
+  } finally { idle.kill(); }
+  console.log("[ok] real start times differ between processes and carry the boot id; a lock whose pid is alive but whose start time differs is recovered, and one whose start time matches is held");
+}
+
+// 14. A process's start time does not change when it renames itself, even to a name with spaces and brackets (the kernel prints the name between brackets)
+if (process.platform === "linux") {
+  const child = spawn(process.execPath, ["-e", `process.stdin.on("data", () => { process.title = "x) (y z 1 2 3"; console.log("renamed"); }); console.log("ready"); setInterval(() => {}, 1000);`], { stdio: ["pipe", "pipe", "ignore"] });
+  const lines = []; let wake;
+  child.stdout.on("data", (d) => { lines.push(...String(d).split("\n").filter(Boolean)); wake?.(); });
+  const next = () => new Promise((resolve) => { const check = () => (lines.length ? resolve(lines.shift()) : (wake = check)); check(); });
+  try {
+    assert.strictEqual(await next(), "ready");
+    const before = processStartTime(child.pid);
+    child.stdin.write("go\n");
+    assert.strictEqual(await next(), "renamed");
+    assert.ok(readFileSync(`/proc/${child.pid}/stat`, "utf8").includes("(x) (y z"), "the test could not give the process a name with a bracket");
+    assert.strictEqual(processStartTime(child.pid), before, "a process's start time changed when its name did");
+  } finally { child.kill(); }
+  console.log("[ok] the start time is read past the process name, however many spaces and brackets it holds");
+}
+
+// 15. Things only another user can show: a directory we cannot look into, and a live process that is not ours (run as the user "nobody" when this is root)
+if (posix) {
+  const nobody = 65534;
+  const asOther = (body) => {
+    const mod = new URL("../dist/profile.js", import.meta.url).href;
+    const drop = process.getuid() === 0 ? `process.setgid(${nobody}); process.setuid(${nobody});` : "";
+    const out = execFileSync(process.execPath, ["--input-type=module", "-e", `${drop}\nconst P = await import(${JSON.stringify(mod)});\n${body}`], { encoding: "utf8" });
+    return JSON.parse(out.trim().split("\n").pop());
+  };
+  const give = (p) => { if (process.getuid() === 0) chownSync(p, nobody, nobody); };
+  const give2 = (p) => { if (process.getuid() === 0) lchownSync(p, nobody, nobody); };
+  const home = scratch();
+  chmodSync(home, 0o755); give(home);
+  mkdirSync(join(home, "profiles"), { mode: 0o700 }); give(join(home, "profiles"));
+  chmodSync(join(home, "profiles"), 0o000);
+  try {
+    const r = asOther(`console.log(JSON.stringify(P.prepareProfile({ home: ${JSON.stringify(home)}, site: "linkedin" })));`);
+    assert.ok(r.ok === false && /cannot be (read|created) \((EACCES|EPERM)\)/.test(r.error), `a profiles directory we could not look into was not reported: ${JSON.stringify(r)}`);
+  } finally { chmodSync(join(home, "profiles"), 0o700); }
+  // Chromium's leftovers in a directory we may not write to: a refusal that names the file, not a crash
+  const stuck = scratch();
+  chmodSync(stuck, 0o755); give(stuck);
+  symlinkSync("somewhere-else-9", join(stuck, "SingletonLock"));
+  give2(join(stuck, "SingletonLock"));
+  chmodSync(stuck, 0o555);
+  try {
+    const c = asOther(`console.log(JSON.stringify(P.clearChromiumLeftovers(${JSON.stringify(stuck)}, { host: "somewhere-else", isAlive: () => false })));`);
+    assert.ok(c.ok === false && /leftover SingletonLock.*could not be removed \((EACCES|EPERM)\)/.test(c.error), `a leftover that could not be removed was not reported: ${JSON.stringify(c)}`);
+  } finally { chmodSync(stuck, 0o755); }
+  const alive = asOther(`console.log(JSON.stringify({ init: P.isPidAlive(1), own: P.isPidAlive(process.pid), gone: P.isPidAlive(${2 ** 22 + 12345}) }));`);
+  assert.deepStrictEqual(alive, { init: true, own: true, gone: false }, `liveness of a process that belongs to someone else: ${JSON.stringify(alive)}`);
+  assert.strictEqual(isPidAlive(process.pid), true);
+  console.log("[ok] a directory the user cannot look into is reported, not assumed fine; a live process owned by someone else counts as alive");
+}
+
 console.log("\nALL PROFILE TESTS PASSED");

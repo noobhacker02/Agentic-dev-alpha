@@ -4,7 +4,7 @@
 //   npm run build && npm run test:login
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert";
@@ -32,6 +32,11 @@ const server = createServer((req, res) => {
     req.on("end", () => { res.writeHead(302, { location: "/account", "set-cookie": `sid=${SESSION}; Path=/; HttpOnly; Max-Age=86400` }); res.end(); });
     return;
   }
+  if (req.url === "/file.bin") { res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="file.bin"' }); return res.end("DATA".repeat(64)); }
+  if (req.url === "/dl") return page("Download", `<a id="dl" href="/file.bin">get the file</a>`);
+  if (req.url === "/sw.js") { res.writeHead(200, { "content-type": "application/javascript" }); return res.end("self.addEventListener('install', () => self.skipWaiting()); self.addEventListener('activate', (e) => e.waitUntil(clients.claim())); self.addEventListener('fetch', (e) => e.respondWith(new Response('FROM-SW')));"); }
+  if (req.url === "/data") return page("Data", "FROM-SERVER");
+  if (req.url === "/swpage") return page("SW", `<script>window.sw = "pending"; navigator.serviceWorker.register("/sw.js").then(() => { window.sw = "registered"; }, (e) => { window.sw = "refused:" + e.name; });</script>`);
   if (req.url === "/account") return page("Account", cookie.includes(`sid=${SESSION}`) ? "<h1>Welcome back, noob</h1>" : "<h1>Please sign in</h1>");
   if (req.url === "/login") return page("Sign in", `<form method="post" action="/login"><input id="user" name="user"><input id="pw" name="pw" type="password"><button id="go">Sign in</button></form>`);
   return page("Home", "<h1>Home</h1>");
@@ -171,6 +176,147 @@ try {
     assert.ok(!existsSync(join(h3, "profiles")), "a refused login made a profiles directory");
     console.log("[ok] the command line says what is missing (a site, the allowances file, the platform, a safe file mode, a value for --url, a login page on the list) and opens nothing");
   }
+  // 7. What the mutation check found missing (IMP-028)
+  {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // Servers are closed asynchronously, so count after a moment (earlier sections' gates may still be closing)
+    const count = () => process._getActiveHandles().filter((h) => h?.constructor?.name === "Server").length;
+    const servers = async () => { await sleep(400); return count(); };
+    const loginDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith("agent-loop-login-")).sort();
+
+    // 7a. With no --url, the login page is the platform's first domain
+    const denied = parseAllowances({ allow: ["example.com"], deny: ["a.example.com"], platforms: { demo: ["a.example.com"] } });
+    assert.ok(denied.ok, JSON.stringify(denied));
+    const noUrl = await runLogin({ ...base, allowances: denied.value, site: "demo", home: scratch(), drive: async () => { throw new Error("a window opened"); } });
+    assert.ok(!noUrl.ok && /login page https:\/\/a\.example\.com\/ cannot be opened/.test(noUrl.error), `no --url did not start from the platform's first domain: ${JSON.stringify(noUrl)}`);
+
+    // 7b. Error text is cut and made plain ASCII before it is shown
+    const long = await runLogin({ ...base, site: "x".repeat(300) + "\u001b[2J‮é", home: scratch() });
+    assert.ok(!long.ok && long.error.length < 260 && /^[\x20-\x7e]*$/.test(long.error), `an error held more than it should: ${JSON.stringify(long.error)}`);
+    const accented = await runLogin({ ...base, site: "café", home: scratch() });
+    assert.ok(!accented.ok && /^[\x20-\x7e]*$/.test(accented.error) && /caf\?/.test(accented.error), JSON.stringify(accented));
+
+    // 7c. A Chromium that says the profile is in use on another computer is believed, by the login and by a session, and neither leaves the lock
+    for (const who of ["login", "session"]) {
+      const h = scratch();
+      const prepared = (await import("../dist/profile.js")).prepareProfile({ home: h, site: "demo" });
+      assert.ok(prepared.ok);
+      if (posix) {
+        for (const n of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) symlinkSync(n === "SingletonLock" ? "elsewhere-host-4242" : "/nonexistent-singleton-target", join(prepared.dir, n));
+        if (who === "login") {
+          const r = await runLogin({ ...base, site: "demo", home: h, url: L("/login"), drive: async () => { throw new Error("a window opened on a profile in use elsewhere"); } });
+          assert.ok(!r.ok && /in use on elsewhere-host/.test(r.error), `login: ${JSON.stringify(r)}`);
+        } else {
+          const sessions = new BrowserSessionManager({ policy: liveBrowserPolicy(allowances, { isPublic, resolve, extraPorts: [P] }), profile: { site: "demo", home: h } });
+          await assert.rejects(() => sessions.getOrCreate("elsewhere", new EventBus()), /profile was refused.*in use on elsewhere-host/);
+        }
+        assert.ok(!existsSync(join(h, "profiles", "demo.lock")), `${who}: the refusal left the profile locked`);
+      }
+    }
+
+    // 7d. A profile that is inside a directory the agents work in is refused by a session as well as by the login
+    {
+      const outer = scratch();
+      const sessions = new BrowserSessionManager({ policy: liveBrowserPolicy(allowances, { isPublic, resolve, extraPorts: [P] }), profile: { site: "demo", home: join(outer, "home"), forbidden: [outer] } });
+      await assert.rejects(() => sessions.getOrCreate("inside", new EventBus()), /profile was refused.*inside/);
+      assert.ok(!existsSync(join(outer, "home", "profiles", "demo.lock")), "a refused session left a lock");
+    }
+
+    // 7e. A browser that cannot start is a plain refusal, and it leaves nothing behind: no lock, no open gate, no temporary directory
+    {
+      const saved = process.env.AGENT_LOOP_CHROME_PATH;
+      process.env.AGENT_LOOP_CHROME_PATH = join(tmpdir(), "no-such-chromium-binary");
+      try {
+        const h = scratch();
+        const handlesBefore = await servers(), dirsBefore = loginDirs();
+        const r = await runLogin({ ...base, site: "demo", home: h, url: L("/login"), drive: async () => {} });
+        assert.ok(!r.ok && /login window could not be opened/.test(r.error), `a browser that could not start was reported as a login: ${JSON.stringify(r)}`);
+        assert.ok(!existsSync(join(h, "profiles", "demo.lock")), "a failed launch left the profile locked");
+        assert.strictEqual(await servers(), handlesBefore, "a failed launch left the network gate open");
+        assert.deepStrictEqual(loginDirs(), dirsBefore, "a failed launch left a temporary directory");
+
+        const h2 = scratch();
+        const sessions = new BrowserSessionManager({ policy: liveBrowserPolicy(allowances, { isPublic, resolve, extraPorts: [P] }), profile: { site: "demo", home: h2 } });
+        const before2 = await servers();
+        await assert.rejects(() => sessions.getOrCreate("nolaunch", new EventBus()), /Could not launch Chromium|no-such-chromium/);
+        assert.ok(!existsSync(join(h2, "profiles", "demo.lock")), "a session whose browser did not start left the profile locked");
+        assert.strictEqual(await servers(), before2, "a session whose browser did not start left its network gate open");
+      } finally { if (saved === undefined) delete process.env.AGENT_LOOP_CHROME_PATH; else process.env.AGENT_LOOP_CHROME_PATH = saved; }
+    }
+
+    // 7f. After a normal login: the gate is closed and the temporary downloads directory is gone; in the window a download is refused
+    {
+      const before = await servers(), dirsBefore = loginDirs();
+      let during = [];
+      const r = await runLogin({
+        ...base, site: "demo", home: scratch(), url: L("/dl"),
+        drive: async ({ page }) => {
+          await page.waitForSelector("#dl", { timeout: 15000 });
+          await page.click("#dl");
+          await sleep(1500);
+          during = loginDirs().filter((d) => !dirsBefore.includes(d)).flatMap((d) => readdirSync(join(tmpdir(), d)));
+        },
+      });
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.deepStrictEqual(during, [], `the login window saved a download: ${during}`);
+      assert.strictEqual(await servers(), before, "the login left its network gate open");
+      assert.deepStrictEqual(loginDirs(), dirsBefore, "the login left its temporary directory behind");
+    }
+
+    // 7g. Ctrl-C closes the window and ends the login cleanly
+    {
+      const ctl = new AbortController();
+      let opened = false;
+      const running = runLogin({ ...base, site: "demo", home: scratch(), url: L("/login"), signal: ctl.signal, say: () => { opened = true; } });
+      for (let i = 0; i < 100 && !opened; i++) await sleep(100);
+      assert.ok(opened, "the login never said it was opening");
+      await sleep(1500);
+      ctl.abort();
+      const r = await Promise.race([running, sleep(20000).then(() => "hung")]);
+      assert.ok(r !== "hung" && r.ok, `Ctrl-C did not end the login: ${JSON.stringify(r)}`);
+    }
+
+    // 7h. A session on the profile: one tab (the one the browser opened, not a second), no service worker, no download kept
+    {
+      const h = scratch();
+      const sessions = new BrowserSessionManager({ profile: { site: "demo", home: h } });
+      const bus = new EventBus();
+      try {
+        const sess = await sessions.getOrCreate("profile-session", bus);
+        assert.strictEqual(sess.context.pages().length, 1, `a profile session opened ${sess.context.pages().length} tabs`);
+        // Playwright's "block" does not make register() fail: it keeps the worker from running. So: a worker that answers every request must not be there, and a fetch must reach the server.
+        await sess.page.goto(`http://127.0.0.1:${P}/swpage`, { waitUntil: "load" });
+        await sess.page.waitForFunction(() => window.sw !== "pending", null, { timeout: 10000 });
+        await sleep(2000);
+        assert.strictEqual(sess.context.serviceWorkers().length, 0, "a service worker is running in a profile session");
+        const body = await sess.page.evaluate(async () => await (await fetch("/data")).text());
+        assert.ok(/FROM-SERVER/.test(body) && !/FROM-SW/.test(body), `a service worker answered a request in a profile session: ${body.slice(0, 80)}`);
+        await sess.page.goto(`http://127.0.0.1:${P}/dl`, { waitUntil: "load" });
+        // The browser refuses downloads itself; cancelling one afterwards loses a race with a small file about one time in six, so click many times: a browser that accepts them leaves a file almost every run, and one that refuses them never does
+        for (let i = 0; i < 20; i++) { await sess.page.click("#dl").catch(() => {}); await sleep(120); }
+        await sleep(1000);
+        assert.deepStrictEqual(readdirSync(sess.downloadsDir), [], "a profile session kept a download");
+      } finally { await sessions.close("profile-session", bus, "completed").catch(() => {}); }
+    }
+
+    // 7i. The command line forbids the working directory and --dir as places for the profile
+    {
+      const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+      const root = fileURLToPath(new URL("..", import.meta.url));
+      const outer = scratch();
+      const home = join(outer, "agent-home");
+      mkdirSync(home, { mode: 0o700 });
+      writeFileSync(join(home, "allowances.json"), JSON.stringify({ allow: ["login.example"], platforms: { demo: ["login.example"] } }), { mode: 0o600 });
+      const run = (cwd, extra) => spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "login", "demo", ...extra], { cwd, encoding: "utf8", timeout: 60000, env: { ...process.env, AGENT_LOOP_HOME: home } });
+      let r = run(outer, []);
+      assert.ok(r.status === 1 && /would be inside/.test(r.stderr), `the working directory was not forbidden: ${r.status} ${r.stderr}`);
+      r = run(root, ["--dir", outer]);
+      assert.ok(r.status === 1 && /would be inside/.test(r.stderr), `--dir was not forbidden: ${r.status} ${r.stderr}`);
+      assert.ok(!existsSync(join(home, "profiles", "demo.lock")), "a refused login left a lock");
+    }
+    console.log("[ok] hardening: the platform's first domain is the default login page; error text is cut and plain; another computer's Chromium lock is believed; a session cannot take a forbidden place; a browser that cannot start leaves no lock, gate or directory; the login window refuses downloads, closes on Ctrl-C and cleans up; a profile session has one tab, no service worker and keeps no download; the command line forbids the working directory and --dir");
+  }
+
   console.log("\nALL LOGIN TESTS PASSED");
 } finally {
   server.close();

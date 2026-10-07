@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const SITE_RE = /^[a-z][a-z0-9-]{0,30}$/;
 /** A lock file that cannot be read is probably being written; it is held this long, and after that it is a broken file. */
@@ -18,9 +18,10 @@ export function siteName(raw: unknown): string | undefined {
   return typeof raw === "string" && SITE_RE.test(raw) ? raw : undefined;
 }
 
+/** Is `child` the same as, or somewhere under, `parent`? A directory whose own name starts with two dots (`..x`) is a child, not a way out; only `..` itself or `..` followed by a separator climbs out. */
 const within = (parent: string, child: string): boolean => {
   const r = relative(parent, child);
-  return r === "" || (!r.startsWith("..") && !isAbsolute(r));
+  return r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r);
 };
 
 const realOrResolved = (p: string): string => {
@@ -99,6 +100,8 @@ export interface LockEnv {
   isAlive?: (pid: number) => boolean;
   startOf?: (pid: number) => string | undefined;
   now?: () => Date;
+  /** Tests only: runs at the two points where another process could step in during a recovery ("stale-found": a stale lock has been read; "before-remove": about to remove it, mutex held). */
+  between?: (stage: "stale-found" | "before-remove") => void;
 }
 
 export type LockResult = { ok: true; release(): void; staleRecovered?: LockHolder } | { ok: false; error: string; holder?: LockHolder };
@@ -162,7 +165,13 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
   const now = env.now ?? (() => new Date());
   const mine: LockHolder = { pid, start: startOf(pid), host, nonce: randomBytes(16).toString("hex"), since: now().toISOString() };
   const tmp = `${lockPath}.${mine.nonce}.tmp`;
-  writeFileSync(tmp, JSON.stringify(mine), { mode: 0o600, flag: "wx" });
+  // A lock that cannot be made (the directory is gone, the disk is read-only, the filesystem has no hard links) is a refusal with a reason, not a crash.
+  const failed = (err: unknown): LockResult => {
+    const code = (err as NodeJS.ErrnoException)?.code ?? "error";
+    const noLinks = ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EMLINK"].includes(code);
+    return { ok: false, error: `the profile's lock could not be created (${code})${noLinks ? "; the agent-loop home must be on a filesystem that supports hard links" : ""}` };
+  };
+  try { writeFileSync(tmp, JSON.stringify(mine), { mode: 0o600, flag: "wx" }); } catch (err) { return failed(err); }
   const release = (): void => {
     const cur = readHolder(lockPath);
     if (cur && cur.nonce === mine.nonce) { try { unlinkSync(lockPath); } catch { /* already gone */ } }
@@ -174,7 +183,7 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
         linkSync(tmp, lockPath);
         return { ok: true, release, ...(recovered ? { staleRecovered: recovered } : {}) };
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") return failed(err);
       }
       const holder = readHolder(lockPath);
       if (!holder) {
@@ -192,6 +201,7 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
         if (!stale) return { ok: false, holder, error: `this profile is in use by pid ${holder.pid} (since ${holder.since}); close that run first` };
         recovered = holder;
       }
+      env.between?.("stale-found");
       // Recovery is done under a small mutex, so two processes that both found the same stale lock cannot each remove the other's fresh one.
       const mutex = `${lockPath}.recovering`;
       let haveMutex = false;
@@ -203,6 +213,7 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
       if (!haveMutex) { sleepMs(50); continue; }
       try {
         const again = readHolder(lockPath);
+        env.between?.("before-remove");
         if ((again?.nonce ?? "") === (holder?.nonce ?? "")) { try { unlinkSync(lockPath); } catch { /* gone already */ } }
       } finally {
         rmSync(mutex, { recursive: true, force: true });
@@ -231,7 +242,9 @@ export function clearChromiumLeftovers(dir: string, env: LockEnv = {}): { ok: tr
     if (otherHost !== host) return { ok: false, error: `Chromium's lock in this profile says it is in use on ${otherHost}; close it there first` };
     if (Number(otherPid) !== pid && alive(Number(otherPid))) return { ok: false, error: `a Chromium process (pid ${otherPid}) is running on this profile; close it first` };
   }
-  for (const n of present) unlinkSync(join(dir, n));
+  for (const n of present) {
+    try { unlinkSync(join(dir, n)); } catch (err) { return { ok: false, error: `Chromium's leftover ${n} in this profile could not be removed (${(err as NodeJS.ErrnoException).code ?? "error"})` }; }
+  }
   return { ok: true, removed: present };
 }
 
