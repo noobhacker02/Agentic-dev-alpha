@@ -1264,9 +1264,8 @@ function instrumented(
     const deadlineMs = opts.toolDeadlineMs ?? TOOL_DEADLINE_MS;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const run = fn();
-      run.catch(() => {}); // a call we gave up on may fail later; nobody is waiting for it
-      result = await Promise.race([run, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ToolDeadline()), deadlineMs); })]);
+      // (Promise.race keeps a handler on `run`, so a call we gave up on that fails later, when its tab is closed, is not an unhandled rejection: no catch of our own is needed)
+      result = await Promise.race([fn(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ToolDeadline()), deadlineMs); })]);
     } catch (err) {
       isError = true;
       if (err instanceof ToolDeadline) {
