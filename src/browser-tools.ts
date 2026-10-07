@@ -25,6 +25,7 @@ import type { EventBus } from "./bus.js";
 import { cleanText, stripTerminalControlBytes } from "./text-safety.js";
 import { startNetGate, type NetGate } from "./net-gate.js";
 import { testPolicy, type BrowserPolicy } from "./browser-policy.js";
+import { acquireProfileLock, clearChromiumLeftovers, prepareProfile } from "./profile.js";
 
 /** The installed playwright-core version doesn't reliably match the pre-installed browser's
  * revision number in every environment, so chromium.launch()'s own resolution can miss it even
@@ -38,12 +39,12 @@ function findSandboxPreinstalledChrome(): string | undefined {
   return existsSync(exe) ? exe : undefined;
 }
 
-async function launchBrowser(downloadsPath: string, proxy: { server: string; username: string; password: string }): Promise<Browser> {  // devskill:allow (a runtime-generated credential or a type, not a secret)
-  // Every request the browser makes, including each hop of a redirect and its own background traffic, goes through the network gate.
+/** Runs a Chromium launch with the binary the user named, else Playwright's own, else a browser the sandbox already has. */
+async function launchChromium<T>(run: (executablePath?: string) => Promise<T>): Promise<T> {
   const explicit = process.env.AGENT_LOOP_CHROME_PATH;
-  if (explicit) return chromium.launch({ executablePath: explicit, headless: true, downloadsPath, proxy });
+  if (explicit) return run(explicit);
   try {
-    return await chromium.launch({ headless: true, downloadsPath, proxy });
+    return await run();
   } catch (err) {
     const fallback = findSandboxPreinstalledChrome();
     if (!fallback) {
@@ -53,8 +54,18 @@ async function launchBrowser(downloadsPath: string, proxy: { server: string; use
           `to an existing Chrome/Chromium binary.`
       );
     }
-    return chromium.launch({ executablePath: fallback, headless: true, downloadsPath, proxy });
+    return run(fallback);
   }
+}
+
+/** A browser that keeps its profile (cookies, local storage) in `userDataDir`, through the same network gate. Used for the agent-only profile and for `agent-loop login`. */
+export function launchPersistent(userDataDir: string, downloadsPath: string, proxy: { server: string; username: string; password: string }, options: Record<string, unknown> = {}, headless = true): Promise<BrowserContext> {  // devskill:allow (a runtime-generated credential or a type, not a secret)
+  return launchChromium((executablePath) => chromium.launchPersistentContext(userDataDir, { ...(executablePath ? { executablePath } : {}), headless, downloadsPath, proxy, ...options }));
+}
+
+async function launchBrowser(downloadsPath: string, proxy: { server: string; username: string; password: string }): Promise<Browser> {  // devskill:allow (a runtime-generated credential or a type, not a secret)
+  // Every request the browser makes, including each hop of a redirect and its own background traffic, goes through the network gate.
+  return launchChromium((executablePath) => chromium.launch({ ...(executablePath ? { executablePath } : {}), headless: true, downloadsPath, proxy }));
 }
 
 /** One open tab. `navGen` counts main-frame navigations, so a ref or snapshotId taken at one
@@ -92,7 +103,10 @@ interface ShotSnapshot {
 
 interface BrowserSession {
   browserSessionId: string;
-  browser: Browser;
+  /** Null for a persistent profile: closing its context closes the browser. */
+  browser: Browser | null;
+  /** Gives the agent-only profile's lock back. Set when the session uses a profile. */
+  releaseProfile?: () => void;
   context: BrowserContext;
   /** The active tab's page. */
   page: Page;
@@ -547,7 +561,7 @@ export class BrowserSessionManager {
 
   /** `videoDirFor`, when given, records the whole browser session as a .webm in that run's artifact
    * directory -- a watchable record of what the agent actually did to the app, not just its claims. */
-  constructor(private opts: { videoDirFor?: (runId: string) => string; policy?: BrowserPolicy } = {}) {
+  constructor(private opts: { videoDirFor?: (runId: string) => string; policy?: BrowserPolicy; profile?: { site: string; home: string; forbidden?: string[] } } = {}) {
     this.policy = opts.policy ?? testPolicy;
   }
 
@@ -560,25 +574,44 @@ export class BrowserSessionManager {
     const downloadsDir = mkdtempSync(join(tmpdir(), "agent-loop-downloads-"));
     const policy = this.policy;
     const gate = await startNetGate({ policy: policy.gate, resolve: policy.resolve });
-    let browser: Browser;
-    try {
-      browser = await launchBrowser(downloadsDir, { server: `http://127.0.0.1:${gate.port}`, username: gate.username, password: gate.password });  // devskill:allow (a runtime-generated credential or a type, not a secret)
-    } catch (err) {
-      await gate.close().catch(() => {});
-      throw err;
-    }
     const videoDir = this.opts.videoDirFor?.(runId);
     if (videoDir) mkdirSync(videoDir, { recursive: true });
-    const context = await browser.newContext({
+    const proxy = { server: `http://127.0.0.1:${gate.port}`, username: gate.username, password: gate.password };  // devskill:allow (a runtime-generated credential or a type, not a secret)
+    const contextOptions = {
       viewport: { width: 1280, height: 800 },
       // Playwright's own docs: route() doesn't see requests a service worker answers, and they
       // recommend blocking service workers whenever request interception matters. It does here.
-      serviceWorkers: "block",
+      serviceWorkers: "block" as const,
       // Refuse downloads in the browser itself. Cancelling one after the fact raced with a small file finishing first (about 1 test run in 6
       // left it on disk); the `download` event still fires, so the agent is still told.
       acceptDownloads: false,
       ...(videoDir ? { recordVideo: { dir: videoDir, size: { width: 1280, height: 800 } } } : {}),
-    });
+    };
+    // With a profile the browser keeps its cookies in the agent-only directory: prepared (0700, not a link, not inside the project), locked against a second user, and cleared of what a dead Chromium left. Without one, a fresh private context.
+    let browser: Browser | null = null;
+    let context: BrowserContext;
+    let releaseProfile: (() => void) | undefined;
+    try {
+      const wanted = this.opts.profile;
+      if (wanted) {
+        const prepared = prepareProfile(wanted);
+        if (!prepared.ok) throw new Error(`The browser profile was refused: ${prepared.error}`);
+        const lock = acquireProfileLock(prepared.lockPath);
+        if (!lock.ok) throw new Error(`The browser profile was refused: ${lock.error}`);
+        releaseProfile = lock.release;
+        const left = clearChromiumLeftovers(prepared.dir);
+        if (!left.ok) throw new Error(`The browser profile was refused: ${left.error}`);
+        context = await launchPersistent(prepared.dir, downloadsDir, proxy, contextOptions);
+        browser = context.browser();
+      } else {
+        browser = await launchBrowser(downloadsDir, proxy);
+        context = await browser.newContext(contextOptions);
+      }
+    } catch (err) {
+      releaseProfile?.();
+      await gate.close().catch(() => {});
+      throw err;
+    }
     await context.addInitScript(DISABLE_WEBRTC_SCRIPT);
     const sessionRef: { current?: BrowserSession } = {};
     // Enforced at the network-request level, not just on open()'s own argument: a page loaded from
@@ -612,7 +645,7 @@ export class BrowserSessionManager {
         void ws.close({ code: 1008, reason: "Blocked: only localhost or 127.0.0.1 WebSockets are allowed" }).catch(() => {});
       }
     );
-    const page = await context.newPage();
+    const page = this.opts.profile ? (context.pages()[0] ?? (await context.newPage())) : await context.newPage();
     const session: BrowserSession = {
       browserSessionId: randomUUID(),
       browser,
@@ -628,6 +661,7 @@ export class BrowserSessionManager {
       refusedTabs: 0,
       notices: { entries: [], seq: 0, dropped: 0, logLines: 0, busEvents: 0, activity: 0 },
       downloadsDir,
+      releaseProfile,
       gate,
       policy,
       blockReasons: new Map(),
@@ -731,12 +765,13 @@ export class BrowserSessionManager {
       } catch (err) {
         console.error(`agent-loop: could not save the browser session video for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
       }
-      await session.browser.close();
+      await session.browser?.close();
     } catch (err) {
       console.error(`agent-loop: error closing the browser session for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       try { rmSync(session.downloadsDir, { recursive: true, force: true }); } catch { /* best effort: it should be empty anyway */ }
       try { await session.gate.close(); } catch { /* best effort */ }
+      try { session.releaseProfile?.(); } catch { /* best effort */ }
       bus.emitEvent({
         type: "browser-session-ended",
         runId,
