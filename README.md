@@ -242,7 +242,7 @@ Everything runs on Linux, macOS and Windows with Node 22.5+. The results below a
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 71 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `a035a87` (70 suites; one is new since, its CI result is not read yet) |
+| **Linux** | All 73 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `a035a87` (70 suites; one is new since, its CI result is not read yet) |
 | **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `a035a87` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 70). One suite added since; its CI is not read yet |
 | **Windows** (`windows-latest`) | The same | **68 of 70 at `a035a87`; red.** `test:team-run-cli` (an absolute `--import` path, fixed and now scanned for by `test:windows-imports`) and `test:ui-plain` (`mascot.js` apparently did not load; cause not established, the harness now names failed loads). Last green: `a1da2ae`. The fix commit's CI is not read yet |
 
@@ -406,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 71 suites, none of which calls a model (what CI runs)
+npm test                          # all 73 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 
