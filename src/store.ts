@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { PHASES } from "./types.js";
-import type { AgentEvent, PhaseName, PhaseRecord, PhaseVerdict, RunRecord, TrustedDecision } from "./types.js";
+import type { AgentEvent, PhaseName, PhaseRecord, PhaseVerdict, RunRecord, StepRef, TrustedDecision } from "./types.js";
 import { ABANDONED_AFTER_MS, emptyHabits, QUICK_MS, type Habits } from "./habits.js";
 
 /** A stored payload as an object, or `{}` when the row is not JSON or not an object: a report over the audit log must not die on one bad row. */
@@ -49,7 +49,10 @@ export class Store {
         started_at TEXT NOT NULL,
         finished_at TEXT,
         summary TEXT,
-        verdict_json TEXT
+        verdict_json TEXT,
+        step_id TEXT,
+        role TEXT,
+        item TEXT
       );
 
       CREATE TABLE IF NOT EXISTS events (
@@ -79,6 +82,9 @@ export class Store {
         recorded_at TEXT NOT NULL
       );
     `);
+    // A database made before the team was composed has no step identity on its phase rows (adversary A3): add the columns, leave every old row alone. An old row reads as role = name, no step, no item.
+    const have = new Set((this.db.prepare("PRAGMA table_info(phases)").all() as Array<{ name: string }>).map((c) => c.name));
+    for (const col of ["step_id", "role", "item"]) if (!have.has(col)) this.db.exec(`ALTER TABLE phases ADD COLUMN ${col} TEXT`);
   }
 
   createRun(task: string, workDir: string): RunRecord {
@@ -101,7 +107,7 @@ export class Store {
     this.db.prepare("UPDATE runs SET status = ? WHERE id = ?").run(status, runId);
   }
 
-  startPhase(runId: string, name: PhaseName, attempt: number): PhaseRecord {
+  startPhase(runId: string, name: PhaseName, attempt: number, step: StepRef = {}): PhaseRecord {
     const phase: PhaseRecord = {
       id: randomUUID(),
       runId,
@@ -112,12 +118,15 @@ export class Store {
       finishedAt: null,
       summary: null,
       verdict: null,
+      ...(step.stepId ? { stepId: step.stepId } : {}),
+      role: step.role ?? name,
+      ...(step.item ? { item: step.item } : {}),
     };
     this.db
       .prepare(
-        "INSERT INTO phases (id, run_id, name, attempt, status, started_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO phases (id, run_id, name, attempt, status, started_at, step_id, role, item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
       )
-      .run(phase.id, phase.runId, phase.name, phase.attempt, phase.status, phase.startedAt);
+      .run(phase.id, phase.runId, phase.name, phase.attempt, phase.status, phase.startedAt, phase.stepId ?? null, phase.role ?? name, phase.item ?? null);
     return phase;
   }
 
@@ -154,13 +163,14 @@ export class Store {
   }
 
   /** Short indexed summaries only — this is what the Overseer reads, never full transcripts. */
-  getPhaseSummaries(runId: string): Array<{ name: PhaseName; attempt: number; status: string; summary: string | null }> {
+  getPhaseSummaries(runId: string): Array<{ name: PhaseName; attempt: number; status: string; summary: string | null; stepId?: string; item?: string }> {
     const rows = this.db
       .prepare(
-        "SELECT name, attempt, status, summary FROM phases WHERE run_id = ? ORDER BY started_at ASC"
+        "SELECT name, attempt, status, summary, step_id AS stepId, item FROM phases WHERE run_id = ? ORDER BY started_at ASC"
       )
-      .all(runId) as Array<{ name: PhaseName; attempt: number; status: string; summary: string | null }>;
-    return rows;
+      .all(runId) as Array<{ name: PhaseName; attempt: number; status: string; summary: string | null; stepId: string | null; item: string | null }>;
+    // a row from before the team was composed has no step: it reads as the role alone
+    return rows.map(({ stepId, item, ...r }) => ({ ...r, ...(stepId ? { stepId } : {}), ...(item ? { item } : {}) }));
   }
 
   logEvent(runId: string, phase: string | null, type: string, payload: unknown) {
@@ -223,7 +233,7 @@ export class Store {
     // was repaired at least once. Aggregated across every run, not just the latest.
     const phaseRows = this.db
       .prepare(
-        `SELECT name, MAX(attempt) as maxAttempt FROM phases GROUP BY run_id, name`
+        `SELECT name, MAX(attempt) as maxAttempt FROM phases GROUP BY run_id, COALESCE(item, ''), COALESCE(step_id, name), name`
       )
       .all() as Array<{ name: PhaseName; maxAttempt: number }>;
     const phaseStats = new Map<string, { runs: number; repaired: number; totalAttempts: number }>();
@@ -359,7 +369,7 @@ export class Store {
     h.rulesCreated = answerRules.size;
     h.rulesNeverReused = [...answerRules].filter((r) => !reusedRules.has(r)).length;
 
-    const phaseRows = this.db.prepare("SELECT name, MAX(attempt) AS maxAttempt FROM phases GROUP BY run_id, name").all() as Array<{ name: string; maxAttempt: number }>;
+    const phaseRows = this.db.prepare("SELECT name, MAX(attempt) AS maxAttempt FROM phases GROUP BY run_id, COALESCE(item, ''), COALESCE(step_id, name), name").all() as Array<{ name: string; maxAttempt: number }>;
     for (const p of phaseRows) if (p.maxAttempt > 1 && (PHASES as readonly string[]).includes(p.name)) h.repairedRunsByPhase[p.name as PhaseName] = (h.repairedRunsByPhase[p.name as PhaseName] ?? 0) + 1;
 
     const dk = this.desktopInsights();

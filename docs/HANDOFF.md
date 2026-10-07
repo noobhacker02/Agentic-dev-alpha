@@ -5,9 +5,9 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-07T07:19:57Z
-Covers agent-loop commit: 2df56d3
-Covers Dev-Skill commit: df00698
+Updated: 2026-10-07T10:20:00Z
+Covers agent-loop commit: b083bc7
+Covers Dev-Skill commit: 4219845
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
 else, this paragraph is wrong and should be corrected.
@@ -143,7 +143,7 @@ when its latest adversary round has no open confirmed finding at medium or above
 | S1 browser observability + network gate | **built, attacked twice** (`observability` 0 to 8 of 8; the redirect decoy gets 0 of 16; symlink walk closed). Adversary round 2 (31 findings, `docs/adversary/round-02-triage.md`): batches 2 to 6 are fixed in code (IMP-016, IMP-017, IMP-018), the rest wait for S2, S4, S5. `browser-honesty` 0 to 11 of 11. |
 | S1b read what is really on the page (frames, shadow DOM, unverifiable fields) | **built** (IMP-014; adversary A10 closed; `form-coverage` 1 to 8 of 8; `test:browser-frames` 14 checks, 17 mutants killed). The form *diff* is S5. CI green on all three systems at `916e776`. |
 | S2 LIVE mode (allowances on the gate, profile, login handoff, gated upload with destination check) | not started |
-| S3a team composition core (roster, composer, validator, lineage identity, post-build gate) | **part one built** (IMP-015: roster, plan validator V1 to V8 V10 to V12 V15, signals, offline composer, `roster` and `team --dry-run`; suites `team-invariants` 500/500, `team-sizing` 28/28). **Part two not built**: wiring into the pipeline, store, events, UI, hook chain (task #101). |
+| S3a team composition core (roster, composer, validator, lineage identity, post-build gate) | **part one built** (IMP-015: roster, plan validator V1 to V8 V10 to V12 V15, signals, offline composer, `roster` and `team --dry-run`; suites `team-invariants` 500/500, `team-sizing` 28/28). **Part two, increment 2.1 built (IMP-020: the identity of a unit of work in the types, the lineage, the store and the insights; `test:team-identity`; pending its full-suite run, push and CI). Increments 2.2a to 2.2d not built**: wiring into the pipeline, store, events, UI, hook chain (task #101). |
 | S3 Haiku router, flow registry, `agent-loop do` | not started |
 | S4 watchdog, queue, ledger, governor (V9/G9), minimal Needs-you store and CLI | not started |
 | S5 job-apply flow, fake job board, red team | not started |
@@ -154,14 +154,15 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
-1. **CI is green on all three systems at agent-loop `2df56d3`** (Tests on Linux; Cross-platform on macOS and Windows; read from the Actions API; the full local suite had passed 60 of 60 plus `pipeline_logic.sh` on that exact commit first).
-   It took two pushes: at `fe92cb0` Linux and macOS were green and Windows failed only the new re-measuring `test:bench-table` (the three child scripts of `browser-honesty` imported the build by an absolute Windows path, and
-   `file-hooks` has 241 rows there against 242); both are fixed in `2df56d3`. Round 2 batches 2 to 6 are therefore done and CI-confirmed (IMP-016, IMP-017, IMP-018; Dev-Skill `df00698`).
-   **Rule that came out of it, again:** a full suite that passes on Linux says nothing about a test written on Linux; read all three systems after every push.
+1. **CI is green on all three systems at agent-loop `b083bc7`** (Tests on Linux; macOS; Windows; read from the Actions API after the push), and the full local suite had passed on that exact commit first: 61 of 61 plus `pipeline_logic.sh`, in a fresh worktree with `CI=1`.
+   The run on its parent `790771e` had failed twice (`test:browser-popup-storm` and, through the benchmark, `test:bench-table` with `browser-honesty` at 10 of 11) because a fixed 2 s wait ended in the middle of a popup storm on a loaded machine and the browser dropped a call;
+   that is IMP-019 (reads are asked again once, an action is never repeated, the message says what happened, the test waits for the page's own end signal). Dev-Skill `4219845` (SKILL-017, lesson 30) is pushed; its repository registers no workflow run for a branch push, so it is confirmed by its four local test files only.
+   **Rule that came out of it:** a test that touches timing is run under four busy loops and counted over six runs before it is called stable, and "passes alone, fails in the full suite" is read as load first.
 2. **Needs you (a decision, nothing blocks on it):** the compaction summaries in `docs/handoff/compactions/` are committed to a public repository (`checkpoint` stages them). The redactor is fixed (SKILL-015) and changed 0 lines of the
    three summaries saved so far, so all three are committed. Say whether to keep committing them (they are lossy digests of whole sessions), to ignore the directory, or to keep them local.
-3. **S3a part two** (task #101), the next build: `--team auto|fixed5|<file>`, events with `stepId`/`role`/`item`, store columns, lineage identity, variable-length stepper, Overseer append/split/skip, diff-scope audit, V14 and V7 wiring,
-   then an adversary round (a new agent) on it. Then S2, S3, S4, S5, S5b, S6, S6b, S7 in the spec's order. Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
+3. **S3a part two** (task #101), in four increments. **2.1 is done in the working tree, committed locally next** (IMP-020: identity of a unit of work; run its full suite on the exact commit, push, read CI on all three systems). Then **2.2a** role specs for non-built-in roles and the write-scope hook (V7/V8),
+   **2.2b** the plan-driven pipeline loop (`--team auto|fixed5|<file>`, the `team-plan` event, repair by step id, V14 re-check, the planner skipping a step; `fixed5` stays the legacy code path), **2.2c** the variable-length stepper and the terminal and persona for unknown roles, **2.2d** the benchmark rows, a mutation check on the whole stage, and an adversary round (a new agent).
+   Then S2, S3, S4, S5, S5b, S6, S6b, S7 in the spec's order. Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
 4. Adversary round 3 (a new fresh-context agent) after S3a part two, not before: round 2's findings are fixed or scheduled by stage.
 
 ## Verified and not verified
@@ -181,6 +182,8 @@ Verified this session (by running; the CI items by reading the Actions API):
 
 - **CI green on Linux, macOS and Windows at agent-loop `2df56d3`**, including the new `test:fatal`, `test:browser-popup-storm`, `test:browser-hang`, `test:checkpoint` and the re-measuring `test:bench-table`, and Windows `test:bash-readonly` after the `ASK` filter (it had failed at `ecc83f2`). `test:ui-plain` passed on macOS again (its one failure at `f10a830` is still unexplained).
 - Local full suite: 60 of 60 plus `pipeline_logic.sh` on `fe92cb0` and again on `2df56d3`, each in a fresh worktree with `CI=1`.
+- **CI green on Linux, macOS and Windows at agent-loop `b083bc7`** (IMP-019), and the local full suite 61 of 61 plus `pipeline_logic.sh` on that exact commit. Mutation check of the dropped-call handling: 11 mutants, 0 survivors. The identity layer (IMP-020): 41 mutants, 3 survivors (2 equivalent, 1 call-site line that 2.2b exercises). The suite run on the identity commit and its CI are **not yet read** (see Next step).
+- Under four busy loops the first `inspect` after a 30-popup storm returned the browser's raw "Resulting promise was garbage collected" in 4 of 6 runs before IMP-019; after it, 5 of 6 answered (the retry) and the sixth said plainly that the call was dropped twice. `test:browser-popup-storm` passed 3 of 3 under the same load.
 - Mutation checks: 66 mutants on the browser, gate and fatal code (16 first-pass survivors, all accounted for in IMP-017: 8 closed by new assertions and killed on rerun, 1 redundant line deleted, 7 equivalent or redundant layers or an unexercised guard, named), 29 on `checkpoint` and 14 on the baseline check, 0 survivors.
 - Benchmark `browser-honesty` 0 of 11 on the old build `ecc83f2` in every run since the popup scenario was made harsher, 11 of 11 now; `observability` and `form-coverage` baselines unchanged under the stricter scorers (0 of 8 at `7138e1b`, 1 of 8 at `646cdcb`).
 - Dev-Skill: `tests/handoff_hook_test.py` (3 mutants), `improvement_log_test.py` (16 entries), `scanner_copies_test.py`, `bench_skill_test.py`, `tests/stress/scan_stress2.py` (9 of 11, its two documented holes). Dev-Skill has no CI beyond the PR gate.

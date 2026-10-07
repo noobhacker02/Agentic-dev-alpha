@@ -7,7 +7,20 @@ export const PHASES = [
   "gatekeeper",
 ] as const;
 
-export type PhaseName = (typeof PHASES)[number];
+/** The five roles of the fixed team (`--team fixed5`, and every run before the team was composed). */
+export type BuiltinPhase = (typeof PHASES)[number];
+/** A role id from the roster (src/team/roster.ts): the five built-in names, and any other role a plan uses (`security-reviewer`, `integrator`, a role from the user's own roster). */
+export type PhaseName = string;
+
+/** Which unit of work an event or a record belongs to (adversary A3): `(item, stepId, attempt)`. All optional: events and rows from before the team was composed carry none, and read as step = role = phase. */
+export interface StepRef {
+  /** The plan's id for the step (`s3`). Two builders on two slices share a role and differ here. */
+  stepId?: string;
+  /** The roster role the step runs as. For the five built-ins it equals `phase`. */
+  role?: string;
+  /** The job id or queue key for item flows (the job-application flow); empty for the dev flow. */
+  item?: string;
+}
 
 /**
  * The only phase a run is ever allowed to skip, and only on the Planner's own suggestion for a
@@ -38,6 +51,10 @@ export interface PhaseRecord {
   finishedAt: string | null;
   summary: string | null;
   verdict: PhaseVerdict | null;
+  /** Identity of the unit of work (A3); absent on rows written before the team was composed. */
+  stepId?: string;
+  role?: string;
+  item?: string;
 }
 
 /**
@@ -99,9 +116,11 @@ export type AgentEvent =
   | { type: "history-trimmed"; runId: string; count: number; ts: string }
   /** Something asked the run to stop (cost cap, Ctrl-C, the Stop button). The reason is written by agent-loop, never by a model. */
   | { type: "stop-requested"; runId: string; reason: string; ts: string }
-  | { type: "phase-start"; runId: string; phase: PhaseName; attempt: number; ts: string }
-  | { type: "phase-end"; runId: string; phase: PhaseName; attempt: number; verdict: PhaseVerdict; ts: string }
-  | { type: "overseer-decision"; runId: string; phase: PhaseName; decision: OverseerDecision; ts: string }
+  | ({ type: "phase-start"; runId: string; phase: PhaseName; attempt: number; ts: string } & StepRef)
+  | ({ type: "phase-end"; runId: string; phase: PhaseName; attempt: number; verdict: PhaseVerdict; ts: string } & StepRef)
+  | ({ type: "overseer-decision"; runId: string; phase: PhaseName; decision: OverseerDecision; ts: string } & StepRef)
+  /** The team this run is going to use, from the composer or the fixed five: every step with its role, what it waits for, the slice it owns and the reason it is there. Emitted once, first. */
+  | { type: "team-plan"; runId: string; source: "fixed5" | "auto" | "file"; steps: TeamPlanStep[]; ts: string }
   | { type: "assistant-text"; runId: string; phase: PhaseName; text: string; ts: string }
   | { type: "thinking"; runId: string; phase: PhaseName; text: string; ts: string }
   | {
@@ -289,6 +308,19 @@ export type AgentEvent =
       path: string;
       ts: string;
     };
+
+/** One step of the plan as the event stream and the UI see it (cleaned and capped by the emitter; see src/team/plan.ts for the validated form). */
+export interface TeamPlanStep {
+  stepId: string;
+  role: string;
+  /** What the step does, by kind: plan, build, check, gate, read, advise. The UI draws any role through this. */
+  kind: string;
+  after: string[];
+  slice?: string;
+  verifies?: string;
+  /** Why the step is in the plan (the role's own reason, or the composer's). */
+  why: string;
+}
 
 export interface ApprovalDecision {
   decision: "allow" | "deny";

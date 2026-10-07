@@ -33,7 +33,8 @@ function readDecisionsLog(workDir: string): string | undefined {
  * independent of that, since this is the actual authority, not a suggestion.
  */
 function isValidRepairTarget(from: PhaseName, target: PhaseName, runPhases: readonly PhaseName[]): boolean {
-  return PHASES.indexOf(target) >= 0 && PHASES.indexOf(target) <= PHASES.indexOf(from) && runPhases.includes(target);
+  const order: readonly string[] = PHASES;
+  return order.indexOf(target) >= 0 && order.indexOf(target) <= order.indexOf(from) && runPhases.includes(target);
 }
 
 /** A phase entry that never actually ran -- recorded so the history/UI stay honest about why it's

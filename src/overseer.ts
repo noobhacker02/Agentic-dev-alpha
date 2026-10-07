@@ -37,6 +37,13 @@ Respond with nothing but a fenced json block:
 \`\`\`
 `;
 
+/** A repair target must be a real step at or before the one that just ran -- never forward, and never something the model made up. An invalid target falls back to the same step. */
+export function boundRepairTarget(target: unknown, current: string, order: readonly string[]): string {
+  const currentIdx = order.indexOf(current);
+  const targetIdx = typeof target === "string" ? order.indexOf(target) : -1;
+  return targetIdx >= 0 && targetIdx <= currentIdx ? (target as string) : current;
+}
+
 export async function overseerDecide(opts: {
   task: string;
   phase: PhaseName;
@@ -53,6 +60,8 @@ export async function overseerDecide(opts: {
   onUsage?: (u: { costUsd: number; turns: number; durationMs: number }) => void;
   /** Aborting it stops this model call at once (the run was stopped). */
   abortController?: AbortController;
+  /** The ids a repair may name, in plan order (a team's step ids). Absent: the five built-in phases. */
+  order?: readonly string[];
 }): Promise<OverseerDecision> {
   const outcome = opts.verdict.outcome;
   if (opts.attempt > opts.maxRetries) {
@@ -130,11 +139,8 @@ Decide: continue, repair, or stop.`;
         return { action: parsed.action, reasoning: String(parsed.reasoning ?? "") };
       }
       if (parsed.action === "repair") {
-        const currentIdx = PHASES.indexOf(opts.phase);
-        const targetIdx = PHASES.indexOf(parsed.repairTarget);
-        // A repair target must be a real phase at or before the one that just ran -- never forward,
-        // and never something the model hallucinated. An invalid target falls back to same-phase.
-        const repairTarget = targetIdx >= 0 && targetIdx <= currentIdx ? parsed.repairTarget : opts.phase;
+        // The order a repair may go back through: the plan's steps when the run has a team, the five built-in phases otherwise.
+        const repairTarget = boundRepairTarget(parsed.repairTarget, opts.phase, opts.order ?? PHASES);
         return {
           action: "repair",
           reasoning: String(parsed.reasoning ?? ""),

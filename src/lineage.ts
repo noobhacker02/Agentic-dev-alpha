@@ -35,8 +35,14 @@ export interface LineageFile {
 }
 
 export interface LineageNode {
+  /** `(item, stepId, attempt)` as one string: `s3#1`, or `job-17:s3#1` in an item flow. Runs from before the team was composed have no step and read `builder#1`. */
   id: string;
+  /** The role the step runs as (for the five built-ins, the phase name). */
   phase: PhaseName;
+  /** The plan's id for the step (adversary A3): two steps of one role differ here. Absent on runs from before the team was composed. */
+  stepId?: string;
+  /** The job id or queue key of an item flow; absent for the dev flow. */
+  item?: string;
   attempt: number;
   /** 0 = moving forward; 1 = a phase being run again after the Overseer sent it back. */
   lane: 0 | 1;
@@ -86,7 +92,7 @@ export interface Lineage {
     files: number;
   };
   /** "Made by": one row per agent. */
-  agents: Array<{ phase: PhaseName; attempts: number; outcomes: string[]; costUsd: number; files: number; toolCalls: number; approvalsAsked: number }>;
+  agents: Array<{ phase: PhaseName; stepId?: string; item?: string; attempts: number; outcomes: string[]; costUsd: number; files: number; toolCalls: number; approvalsAsked: number }>;
   /** Blame-style: for each file, which attempts touched it, in order. */
   files: Array<{ path: string; touches: Array<{ node: string; op: "write" | "edit" }> }>;
   truncated: boolean;
@@ -102,13 +108,25 @@ export function cleanText(x: unknown, max: number): string {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 const num = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) && x >= 0 && x < 1e6 ? x : 0);
-const isPhase = (x: unknown): x is PhaseName => typeof x === "string" && (PHASES as readonly string[]).includes(x);
+/** A role id as the roster spells it (lowercase letters, digits, dashes). The five built-in names and every other role pass; anything else is not a step of this run. */
+const isPhase = (x: unknown): x is PhaseName => typeof x === "string" && /^[a-z][a-z0-9-]{0,40}$/.test(x);
+const isStepId = (x: unknown): x is string => typeof x === "string" && /^[a-z0-9][a-z0-9._-]{0,30}$/i.test(x);
+const cleanItem = (x: unknown): string | undefined => (typeof x === "string" && x ? cleanText(x, 80) || undefined : undefined);
+/** Which unit of work an event is about: the step when it names one, else the role (every event from before the team was composed). `explicit` says which. */
+function stepRef(ev: { phase?: unknown; stepId?: unknown; item?: unknown }): { phase: PhaseName; key: string; explicit: boolean; known: boolean; stepId?: string; item?: string } | undefined {
+  if (!isPhase(ev.phase)) return undefined;
+  const stepId = isStepId(ev.stepId) ? ev.stepId : undefined;
+  const item = cleanItem(ev.item);
+  // A step can only be STARTED by a built-in role or by an event that names its step (every event of a team run does); a phase name with neither is not a step of this run.
+  const known = stepId !== undefined || (PHASES as readonly string[]).includes(ev.phase);
+  return { phase: ev.phase, key: `${item ?? ""}|${stepId ?? ev.phase}`, explicit: stepId !== undefined, known, stepId, item };
+}
 const isOutcome = (x: unknown): x is PhaseOutcome => typeof x === "string" && (PHASE_OUTCOMES as readonly string[]).includes(x);
 const FILE_TOOLS: Record<string, "write" | "edit"> = { Write: "write", Edit: "edit", NotebookEdit: "edit" };
 
-function newNode(phase: PhaseName, attempt: number, ts: string, kind: NodeKind, parent?: string): LineageNode {
+function newNode(phase: PhaseName, attempt: number, ts: string, kind: NodeKind, parent?: string, stepId?: string, item?: string): LineageNode {
   return {
-    id: `${phase}#${attempt}`, phase, attempt, lane: 0, kind, parent, startedAt: ts, outcome: "running", concerns: [], blocking: [], costUsd: 0,
+    id: `${item ? item + ":" : ""}${stepId ?? phase}#${attempt}`, phase, ...(stepId ? { stepId } : {}), ...(item ? { item } : {}), attempt, lane: 0, kind, parent, startedAt: ts, outcome: "running", concerns: [], blocking: [], costUsd: 0,
     approvals: { asked: 0, approved: 0, denied: 0, auto: 0, rulesSaved: 0 }, toolCalls: 0, tools: Object.create(null), files: [], filesMore: 0, failedWrites: 0,
     browserActions: 0, desktopActions: { sent: 0, refused: 0 }, recorded: [],
   };
@@ -123,15 +141,24 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
     agents: [], files: [], truncated: false,
   };
   const byId = new Map<string, LineageNode>();
-  const latestOf = new Map<PhaseName, LineageNode>();
+  const latestOf = new Map<string, LineageNode>(); // by step key (item and step id, or the role for events from before the team was composed)
+  const latestByRole = new Map<PhaseName, LineageNode>();
+  const keyOfNode = new Map<LineageNode, string>();
   const pendingFile = new Map<string, { node: LineageNode; op: "write" | "edit"; path: string }>();
   const requestNode = new Map<string, LineageNode>();
   let current: LineageNode | undefined;
   let lastEnded: LineageNode | undefined;
-  let pendingRepair: { from: LineageNode; target: PhaseName } | undefined;
+  let pendingRepair: { from: LineageNode; target: string } | undefined;
   const fileTouches = new Map<string, Array<{ node: string; op: "write" | "edit" }>>();
 
-  const nodeFor = (phase: unknown): LineageNode | undefined => (isPhase(phase) ? (current?.phase === phase ? current : latestOf.get(phase)) : current);
+  // Steps run one at a time, so an event that names no step (a tool call, an approval) belongs to the step in progress when it is of that role, else to the latest step of the role.
+  const nodeFor = (ev: { phase?: unknown; stepId?: unknown; item?: unknown } | unknown): LineageNode | undefined => {
+    const e = ev && typeof ev === "object" ? (ev as { phase?: unknown; stepId?: unknown; item?: unknown }) : { phase: ev };
+    const ref = stepRef(e);
+    if (!ref) return current;
+    if (ref.explicit ? current && keyOfNode.get(current) === ref.key : current?.phase === ref.phase) return current;
+    return latestOf.get(ref.key) ?? (ref.explicit ? undefined : latestByRole.get(ref.phase));
+  };
 
   for (const ev of events) {
     if (!ev || typeof ev !== "object" || (ev as { runId?: unknown }).runId !== id) continue;
@@ -142,29 +169,33 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
         out.task = cleanText(ev.task, 200);
         break;
       case "phase-start": {
-        if (!isPhase(ev.phase) || !Number.isInteger(ev.attempt) || ev.attempt < 1 || ev.attempt > 999) break;
-        const nid = `${ev.phase}#${ev.attempt}`;
+        const ref = stepRef(ev);
+        if (!ref || !ref.known || !Number.isInteger(ev.attempt) || ev.attempt < 1 || ev.attempt > 999) break;
+        const nid = `${ref.item ? ref.item + ":" : ""}${ref.stepId ?? ref.phase}#${ev.attempt}`;
         let node = byId.get(nid);
         if (!node) {
           if (out.nodes.length >= MAX_NODES) { out.truncated = true; break; }
           let kind: NodeKind, parent: string | undefined;
-          if (pendingRepair) { kind = pendingRepair.target === ev.phase ? "repair" : "handoff"; parent = pendingRepair.from.id; }
-          else if (lastEnded && lastEnded.phase === ev.phase) { kind = "retry"; parent = lastEnded.id; }
+          if (pendingRepair) { kind = pendingRepair.target === ref.phase || pendingRepair.target === ref.stepId ? "repair" : "handoff"; parent = pendingRepair.from.id; }
+          else if (lastEnded && keyOfNode.get(lastEnded) === ref.key) { kind = "retry"; parent = lastEnded.id; }
           else if (lastEnded) { kind = "handoff"; parent = lastEnded.id; }
           else { kind = "root"; }
           pendingRepair = undefined;
-          node = newNode(ev.phase, ev.attempt, ts, kind, parent);
+          node = newNode(ref.phase, ev.attempt, ts, kind, parent, ref.stepId, ref.item);
+          keyOfNode.set(node, ref.key);
           byId.set(nid, node);
           out.nodes.push(node);
           if (parent) out.edges.push({ from: parent, to: nid, kind });
         }
-        latestOf.set(ev.phase, node);
+        latestOf.set(ref.key, node);
+        latestByRole.set(ref.phase, node);
         current = node;
         break;
       }
       case "phase-end": {
-        if (!isPhase(ev.phase)) break;
-        const node = byId.get(`${ev.phase}#${ev.attempt}`) ?? nodeFor(ev.phase);
+        const ref = stepRef(ev);
+        if (!ref || !ref.known) break;
+        const node = byId.get(`${ref.item ? ref.item + ":" : ""}${ref.stepId ?? ref.phase}#${ev.attempt}`) ?? nodeFor(ev);
         if (!node) break;
         node.endedAt = ts;
         const ms = Date.parse(ts) - Date.parse(node.startedAt);
@@ -180,23 +211,23 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
         break;
       }
       case "overseer-decision": {
-        const node = nodeFor(ev.phase);
+        const node = nodeFor(ev);
         const d = ev.decision as { action?: unknown; repairTarget?: unknown; reasoning?: unknown; feedbackForRepair?: unknown } | undefined;
         if (!node || !d || (d.action !== "continue" && d.action !== "repair" && d.action !== "stop")) break;
         node.decision = {
           action: d.action,
-          repairTarget: isPhase(d.repairTarget) ? d.repairTarget : undefined,
+          repairTarget: isPhase(d.repairTarget) || isStepId(d.repairTarget) ? (d.repairTarget as string) : undefined,
           reasoning: cleanText(d.reasoning, 300),
           feedback: d.feedbackForRepair === undefined ? undefined : cleanText(d.feedbackForRepair, 300),
         };
         if (d.action === "repair") {
           out.totals.repairs++;
-          pendingRepair = { from: node, target: isPhase(d.repairTarget) ? d.repairTarget : node.phase };
+          pendingRepair = { from: node, target: isPhase(d.repairTarget) || isStepId(d.repairTarget) ? (d.repairTarget as string) : (node.stepId ?? node.phase) };
         } else pendingRepair = undefined;
         break;
       }
       case "tool-call": {
-        const node = nodeFor(ev.phase);
+        const node = nodeFor(ev);
         if (!node) break;
         out.totals.toolCalls++;
         node.toolCalls++;
@@ -224,7 +255,7 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
         break;
       }
       case "approval-request": {
-        const node = nodeFor(ev.phase);
+        const node = nodeFor(ev);
         if (!node) break;
         node.approvals.asked++;
         out.totals.approvals.asked++;
@@ -232,7 +263,7 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
         break;
       }
       case "approval-resolved": {
-        const node = requestNode.get(ev.requestId) ?? nodeFor(ev.phase);
+        const node = requestNode.get(ev.requestId) ?? nodeFor(ev);
         requestNode.delete(ev.requestId);
         if (!node || ev.auto === true) break;
         if (ev.decision === "allow") { node.approvals.approved++; out.totals.approvals.approved++; }
@@ -241,7 +272,7 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
         break;
       }
       case "approval-auto-allowed": {
-        const node = nodeFor(ev.phase);
+        const node = nodeFor(ev);
         if (!node) break;
         node.approvals.auto++;
         out.totals.approvals.auto++;
@@ -250,7 +281,7 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
       case "usage": {
         const cost = num(ev.costUsd);
         out.totals.costUsd += cost;
-        const node = isPhase(ev.phase) ? nodeFor(ev.phase) : undefined;
+        const node = isPhase(ev.phase) ? nodeFor(ev) : undefined;
         if (node) node.costUsd += cost;
         else out.totals.unattributedCostUsd += cost;
         break;
@@ -264,7 +295,7 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
       case "trusted-decision-recorded": {
         const text = cleanText(ev.text, 300);
         if (out.decisions.length < MAX_DECISIONS) out.decisions.push({ ts, phase: isPhase(ev.phase) ? ev.phase : "planner", text });
-        const node = nodeFor(ev.phase);
+        const node = nodeFor(ev);
         if (node && node.recorded.length < 10) node.recorded.push(text);
         break;
       }
@@ -279,9 +310,12 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
 
   // Lanes: a phase that was already reached is being run again, so it sits in the repair lane until the
   // run gets past where it had got to.
+  // The order a step was first reached in is its place in the plan, whatever the plan is (five built-ins, or any team).
+  const place = new Map<string, number>();
+  for (const n of out.nodes) { const k = keyOfNode.get(n) ?? n.id; if (!place.has(k)) place.set(k, place.size); }
   let frontier = -1;
   for (const n of out.nodes) {
-    const idx = PHASES.indexOf(n.phase);
+    const idx = place.get(keyOfNode.get(n) ?? n.id) ?? 0;
     n.lane = idx <= frontier ? 1 : 0;
     frontier = Math.max(frontier, idx);
   }
@@ -290,11 +324,11 @@ export function buildLineage(events: readonly AgentEvent[], runId?: string): Lin
   const end = out.endedAt ? Date.parse(out.endedAt) : NaN;
   if (Number.isFinite(start) && Number.isFinite(end) && end >= start) out.durationMs = end - start;
 
-  for (const phase of PHASES) {
-    const mine = out.nodes.filter((n) => n.phase === phase);
+  for (const key of place.keys()) {
+    const mine = out.nodes.filter((n) => (keyOfNode.get(n) ?? n.id) === key);
     if (!mine.length) continue;
     out.agents.push({
-      phase, attempts: mine.length, outcomes: mine.map((n) => n.outcome), costUsd: mine.reduce((s, n) => s + n.costUsd, 0),
+      phase: mine[0].phase, ...(mine[0].stepId ? { stepId: mine[0].stepId } : {}), ...(mine[0].item ? { item: mine[0].item } : {}), attempts: mine.length, outcomes: mine.map((n) => n.outcome), costUsd: mine.reduce((s, n) => s + n.costUsd, 0),
       files: new Set(mine.flatMap((n) => n.files.map((f) => f.path))).size, toolCalls: mine.reduce((s, n) => s + n.toolCalls, 0),
       approvalsAsked: mine.reduce((s, n) => s + n.approvals.asked, 0),
     });

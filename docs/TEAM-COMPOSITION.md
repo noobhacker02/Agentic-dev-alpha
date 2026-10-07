@@ -178,12 +178,14 @@ The Overseer already chooses `continue | repair | stop` after each step. Added, 
 **Built (S3a part one, IMP-015):** `src/team/roster.ts` (19 built-in roles, your own directory, a project roster ignored until trusted, V13), `plan.ts` (V1 to V8, V10 to V12, V15, `appendSteps`, `skipStep`,
 `auditDiffScope`), `signals.ts` (words and paths only, `transitiveImporters`, V14's re-check function), `compose.ts` (offline composer, `finalizePlan`, `chooseFinal`, `composeForEach`, bounded JSON parser), `scan.ts`
 (paths only), and the commands `agent-loop roster` and `agent-loop team "<task>" --dry-run` (exit 2 when no team fits `--cap`). Suites `team-invariants` 500 of 500 and `team-sizing` 28 of 28, with scorer controls.
-**Not built (part two):** everything below this line that touches the pipeline, the store, the events, the UI or the hook chain; V9; V14 and V7 are functions and data today, not yet wired into a run.
+**Built (S3a part two, increment 2.1, IMP-020):** the identity of a unit of work. `PhaseName` is a role id (`BuiltinPhase` keeps the five names); `phase-start`, `phase-end` and `overseer-decision` can carry `stepId`, `role` and `item`; a `team-plan` event type exists (not emitted yet);
+`buildLineage` keys a node by `item|stepId` (the role when an event names no step), shows any role that names its step, and orders rows and lanes by the plan; the `phases` table has `step_id`, `role` and `item` columns, added when an old database is opened; the insights and the habits count `(run, item, step)` units;
+`boundRepairTarget` bounds a repair to a plan's step ids. Suite `test:team-identity` (41 mutants, 3 survivors: 2 equivalent, 1 call-site line that 2.2b exercises).
+**Not built (the rest of part two, increments 2.2a to 2.2d):** everything below this line that touches the pipeline loop, the events being emitted, the UI or the hook chain; V9; V14 and V7 are functions and data today, not yet wired into a run.
 
-- `PHASES` becomes the built-in part of a roster; `PhaseName` widens to a role id string with `BUILTIN_ROLES` kept for the existing UI.
-- Store: additive columns `step_id`, `role`, `instance`, `slice` on `phases`; old databases open unchanged (tested); old rows read as role = name.
-- Events gain optional `stepId`, `role`, `instance`. The UI stepper renders the plan's steps (variable length), the lineage tree groups by
-  slice, `insights` counts per role.
+- ~~`PHASES` becomes the built-in part of a roster; `PhaseName` widens to a role id string~~ (built in 2.1: `PhaseName` is a string, `BuiltinPhase` is the five names).
+- ~~Store: additive columns on `phases`; old databases open unchanged; old rows read as role = name~~ (built in 2.1, as `step_id`, `role` and `item`; there is no `instance` or `slice` column: the step id is the instance and the slice is the plan's).
+- ~~Events gain optional `stepId`, `role`, `item`~~ (types built in 2.1; emitted in 2.2b). Still to build: the UI stepper renders the plan's steps (variable length) (2.2c); the lineage tree already follows the plan's order; `insights` count units (built).
 - New commands: `agent-loop roster` (list roles), `agent-loop team "<task>" --dry-run` (print the team and the reason for each member,
   without running), `agent-loop run` gains `--team auto|fixed5|<file>` (default `auto`; `fixed5` reproduces today's behaviour exactly).
 - The job-application flow is the same machinery with a `foreach` over items.
