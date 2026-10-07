@@ -91,6 +91,21 @@ export function query({ prompt, options }) {
         if (!process.env.FAKE_IGNORE_ABORT) ac?.signal.addEventListener("abort", () => { clearTimeout(t); reject(abortError()); }, { once: true });
       });
     }
+    // FAKE_TOOL_CALLS (a JSON array of {tool, input}) with FAKE_HOOKS_LOG: what the real SDK does before a tool runs, in miniature. The step's tool list, MCP servers and system prompt are logged, then every scripted call goes
+    // through the PreToolUse hooks the caller registered (a tool that is not in `tools` does not exist for the model; the first hook that denies stops the call) and the outcome is logged. Off unless both are set.
+    if (!isOverseer && process.env.FAKE_TOOL_CALLS && process.env.FAKE_HOOKS_LOG) {
+      const hooks = options.hooks?.PreToolUse?.[0]?.hooks ?? [];
+      appendFileSync(process.env.FAKE_HOOKS_LOG, JSON.stringify({ n: calls, tools: options.tools, mcp: Object.keys(options.mcpServers ?? {}), mcpTools: Object.fromEntries(Object.entries(options.mcpServers ?? {}).map(([k, v]) => [k, (v.instance?.tools ?? []).map((t) => t.name)])), hookCount: hooks.length, system: options.systemPrompt, prompt }) + "\n");
+      for (const c of JSON.parse(process.env.FAKE_TOOL_CALLS)) {
+        let decision = "allow", reason = "";
+        if (!String(c.tool).startsWith("mcp__") && !(options.tools ?? []).includes(c.tool)) { decision = "no-such-tool"; }
+        else for (const h of hooks) {
+          const out = await h({ hook_event_name: "PreToolUse", tool_name: c.tool, tool_input: c.input, tool_use_id: "fake" }, "fake", { signal: new AbortController().signal });
+          if (out?.hookSpecificOutput?.permissionDecision === "deny") { decision = "deny"; reason = out.hookSpecificOutput.permissionDecisionReason; break; }
+        }
+        appendFileSync(process.env.FAKE_HOOKS_LOG, JSON.stringify({ call: c, decision, reason }) + "\n");
+      }
+    }
     yield { type: "assistant", message: { content: [{ type: "text", text }] } };
     if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, result: true }) + "\n");
     yield { type: "result", total_cost_usd: 0.01, num_turns: 1, duration_ms: 10 };

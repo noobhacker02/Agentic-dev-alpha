@@ -100,6 +100,13 @@ const result = (phase, id) => ({ type: "tool-result", runId: R, phase, toolUseId
   const by = Object.fromEntries(named.nodes.map((n) => [n.id, n]));
   assert.strictEqual(by["s3#1"].decision?.action, "continue", "a decision that names step s3 did not reach s3");
   assert.strictEqual(by["s4#1"].decision, undefined, "a decision that names step s3 went to the builder step in progress (s4)");
+  // a step id need not look like a role id (it may start with a digit or hold a dot): a repair that names it is still a repair of that step, and the decision keeps the name
+  const dotted = buildLineage([
+    start("builder", 1, s("b.1", "builder")), end("builder", 1, "fail", "x", s("b.1", "builder")), decide("builder", "repair", s("b.1", "builder"), { repairTarget: "b.1" }),
+    start("builder", 2, s("b.1", "builder")),
+  ], R);
+  assert.deepStrictEqual(dotted.nodes.map((n) => [n.id, n.kind]), [["b.1#1", "root"], ["b.1#2", "repair"]]);
+  assert.strictEqual(dotted.nodes[0].decision?.repairTarget, "b.1", "the repair's target step id was dropped from the decision");
   // a repair that names no target repairs the failing step itself: another step of the same role that starts next is a hand-off, not that repair
   const own = buildLineage([
     start("builder", 1, s("s4", "builder")), end("builder", 1, "fail", "broke", s("s4", "builder")), decide("builder", "repair", s("s4", "builder")),

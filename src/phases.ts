@@ -7,6 +7,11 @@ import { minimalEnv } from "./env.js";
 import { BrowserSessionManager, createBrowserToolServer } from "./browser-tools.js";
 import { createDesktopToolServer, MAX_ACTIONS_PER_SESSION, type DesktopSession } from "./desktop-tools.js";
 import { PHASE_OUTCOMES, SKIPPABLE_PHASES, type PhaseName, type PhaseVerdict } from "./types.js";
+import { VERDICT_INSTRUCTIONS } from "./team/verdict-text.js";
+import { roleSpec } from "./team/role-spec.js";
+import { createWriteScopeHook } from "./team/write-scope.js";
+import type { RoleDef } from "./team/roster.js";
+import type { TeamStep } from "./team/plan.js";
 
 /** Only these two get browser tools -- they're the phases actually likely to need to exercise a
  * running web app (verifying a UI, checking a rendered page). Giving every phase a live Chromium
@@ -15,38 +20,6 @@ const BROWSER_ENABLED_PHASES: readonly PhaseName[] = ["builder", "verifier"];
 
 /** The same two phases may use the one desktop window, when the human chose one with --desktop-target. */
 const DESKTOP_ENABLED_PHASES: readonly PhaseName[] = ["builder", "verifier"];
-
-const VERDICT_INSTRUCTIONS = `
-When you are done, end your final message with a fenced json block, and nothing after it, in exactly this shape:
-
-\`\`\`json
-{
-  "completed": true,
-  "outcome": "pass",
-  "headline": "one sentence, what you did or why you stopped",
-  "details": "a short paragraph: what you did, what you found, what you produced",
-  "concerns": ["short bullet", "short bullet"],
-  "blockingFindings": []
-}
-\`\`\`
-
-"completed" is whether you finished acting at all (false only if you couldn't do your job — crashed, ran out of
-time, or were blocked before you could even start). It is NOT whether the result is good.
-
-"outcome" is your actual judgment and must be exactly one of:
-  - "pass": you did your job and found nothing that should block this run from proceeding.
-  - "fail": you found a genuine defect in what you reviewed or produced (a failing test, a real bug, a security
-    issue, a plan that doesn't match the task). Put every specific defect in "blockingFindings", not just
-    "concerns" — concerns are for things worth noting that don't need to block anything.
-  - "blocked": you cannot proceed for a reason no retry of your own work can fix — the task is ambiguous or
-    contradictory, or a decision only a human can make is needed. Say exactly what's needed in "blockingFindings".
-  - "inconclusive": you genuinely could not determine pass or fail (couldn't run the tests, couldn't reach a
-    dependency). Never report "pass" when you're actually unsure — say "inconclusive" and explain why in details.
-
-Do not report "pass" just because you finished your turn. A completed review that found a real bug is
-"outcome": "fail", not "pass" — reporting a real problem clearly is your job succeeding at reporting, not grounds
-to call the outcome itself good.
-`;
 
 const PLANNER_SKIP_INSTRUCTIONS = `
 If, and only if, this task is trivial enough that a separate formal test plan would be pure overhead (a one-line
@@ -170,10 +143,18 @@ export interface RunPhaseOptions {
   desktop?: DesktopSession;
   /** Aborting it stops this model session at once (the run was stopped: cost cap, Ctrl-C, the page's Stop button). */
   abortController?: AbortController;
+  /** A step of a composed team: its role and its step. The tools, the words, the browser and desktop access and the write scope all come from the role's definition (src/team/). Absent: one of the five built-in
+   * phases, with its hand-written spec, as always. `allPrefixes` is every slice's prefix, for the integrator. */
+  team?: { role: RoleDef; step: TeamStep; allPrefixes?: string[] };
 }
 
 export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
-  const spec = PHASE_SPECS[opts.phase];
+  const team = opts.team ? { rs: roleSpec(opts.team.role, opts.team.step), ...opts.team } : undefined;
+  const spec: PhaseSpec | undefined = team
+    ? { systemPrompt: team.rs.systemPrompt, tools: team.rs.tools, autoApproveTools: team.rs.autoApproveTools, buildPrompt: (task, prior) => team.rs.buildPrompt(task, prior) }
+    : (PHASE_SPECS as Record<string, PhaseSpec | undefined>)[opts.phase];
+  if (!spec) throw new Error(`"${opts.phase}" is not one of the built-in phases and no team step was given for it`);
+  const writeScopeHook = team ? createWriteScopeHook({ role: team.role.id, writeScope: team.role.writeScope, workDir: opts.workDir, slice: team.step.slice, allPrefixes: team.allPrefixes }) : undefined;
   const safetyHook = createSafetyHook();
   const pathScopeHook = createPathScopeHook(opts.workDir);
   const sensitiveFileHook = createSensitiveFileHook(opts.workDir);
@@ -198,7 +179,8 @@ through the approval UI carries that authority.`;
     userPrompt += `\n\nThis is a retry. Feedback from the Overseer on the previous attempt:\n${opts.retryFeedback}`;
   }
 
-  const browserEnabled = opts.browser && BROWSER_ENABLED_PHASES.includes(opts.phase);
+  const browserEnabled = opts.browser && (team ? team.rs.browser !== "none" : BROWSER_ENABLED_PHASES.includes(opts.phase));
+  const browserReadOnly = team?.rs.browser === "read";
   if (browserEnabled) {
     userPrompt += `\n\nYou have real browser tools (mcp__browser__*) backed by an actual headless Chromium
 instance, useful for exercising a running web app. Only http://localhost or http://127.0.0.1 URLs load, in any
@@ -215,10 +197,11 @@ viewport. inspect also lists fields inside iframes (their line ends frame="name"
 them by ref, a selector cannot reach into a frame. After the list, a "Not listed, and why" block says what inspect could not read
 (a frame still loading, a closed shadow root) and which text fields are not visible to a person: read it before you say a form is
 complete, never fill a field it calls not visible (pages use those to catch bots), and tell the user when a form seems to need one.
-Every browser action goes through the same human-approval flow as Bash or Write.`;
+Every browser action goes through the same human-approval flow as Bash or Write.${browserReadOnly ? `
+You have the page-reading tools only: nothing here clicks, fills, presses a key or chooses an option, because you are checking this page, not using it.` : ""}`;
   }
 
-  const desktopEnabled = opts.desktop && DESKTOP_ENABLED_PHASES.includes(opts.phase);
+  const desktopEnabled = opts.desktop && (team ? team.rs.desktop : DESKTOP_ENABLED_PHASES.includes(opts.phase));
   if (desktopEnabled) {
     userPrompt += `\n\nYou can see and operate exactly one desktop window (${opts.desktop!.describeTarget()}), chosen by the
 human before this run started, through mcp__desktop__* tools. You cannot change which window, and there is no tool
@@ -244,7 +227,7 @@ ${MAX_ACTIONS_PER_SESSION} input actions in a run.`;
       env: minimalEnv(),
       ...(opts.abortController ? { abortController: opts.abortController } : {}),
       hooks: {
-        PreToolUse: [{ hooks: [safetyHook, pathScopeHook, sensitiveFileHook, approvalHook], timeout: 3600 }],
+        PreToolUse: [{ hooks: [safetyHook, pathScopeHook, sensitiveFileHook, ...(writeScopeHook ? [writeScopeHook] : []), approvalHook], timeout: 3600 }],
       },
       ...(browserEnabled || desktopEnabled
         ? {
@@ -256,6 +239,7 @@ ${MAX_ACTIONS_PER_SESSION} input actions in a run.`;
                       bus: opts.bus,
                       sessions: opts.browser!.sessions,
                       artifactDir: opts.browser!.artifactDir,
+                      ...(browserReadOnly ? { readOnly: true } : {}),
                     }),
                   }
                 : {}),

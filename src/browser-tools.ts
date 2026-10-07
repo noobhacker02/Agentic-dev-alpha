@@ -1208,6 +1208,8 @@ export interface CreateBrowserToolServerOptions {
   artifactDir: string;
   /** How long a tool may take before it gives up (default TOOL_DEADLINE_MS). A parameter so a test can use a short one. */
   toolDeadlineMs?: number;
+  /** A checker's browser (docs/TEAM-COMPOSITION.md, "Checkers"): the tools that act on page content are not registered, so the model has nothing to call. */
+  readOnly?: boolean;
 }
 
 /** A tool that is still waiting for a page after this long gives up (A31): a page whose main thread is busy answers nothing, and no timeout of Playwright's covers the calls that wait on it. The
@@ -1841,10 +1843,18 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
   };
 }
 
+/** The tools that act on what a page contains (they click, type, press keys, choose an option). A checker's browser is built without them: it can open, look, read, scroll and wait, and change nothing the page holds. */
+export const BROWSER_ACTING_TOOLS: readonly string[] = ["click", "fill", "press", "select_option", "click_at"];
+
+/** The tools to register: all of them, or without the acting ones for a read-only browser. */
+export function selectBrowserTools<T extends { name: string }>(all: Record<string, T>, readOnly: boolean): T[] {
+  return Object.values(all).filter((t) => !readOnly || !BROWSER_ACTING_TOOLS.includes(t.name));
+}
+
 export function createBrowserToolServer(opts: CreateBrowserToolServerOptions): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: "browser",
     version: "0.1.0",
-    tools: Object.values(__testHandlers(opts)),
+    tools: selectBrowserTools(__testHandlers(opts), opts.readOnly === true),
   });
 }

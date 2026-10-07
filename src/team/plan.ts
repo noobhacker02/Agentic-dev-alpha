@@ -120,11 +120,38 @@ export function slicePrefix(raw: unknown): PrefixResult {
   return { prefix: segs.join("/").normalize("NFC").toLowerCase() };
 }
 
-function reservedReason(prefix: string): string | undefined {
+export function reservedReason(prefix: string): string | undefined {
   const segs = prefix.split("/");
   if (RESERVED_NAMES.has(segs[segs.length - 1])) return segs[segs.length - 1];
   const dir = segs.find((s) => RESERVED_DIRS.has(s));
   return dir;
+}
+
+/** A path inside the project as the scope rules read it: slashes folded, links resolved when there is a project directory, relative to it, lower case, NFC. Undefined for anything that is not a plain
+ * relative path inside the project (absolute, a drive, `..`, empty, or a link that leads out). The one place V8's diff audit and the write-scope hook agree on what "inside" means. */
+export function scopeTarget(raw: string, workDir?: string): string | undefined {
+  const p = String(raw).trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  const segs = p.split("/").filter((x) => x !== "" && x !== ".");
+  if (p.startsWith("/") || /^[a-zA-Z]:/.test(p) || segs.includes("..") || !segs.length) return undefined;
+  let target = segs.join("/").normalize("NFC").toLowerCase();
+  if (workDir) {
+    const real = canonicalPath(join(workDir, p), workDir);
+    const root = canonicalPath(workDir, workDir);
+    if (real !== undefined && root !== undefined) {
+      const rel = relative(root, real).replace(/\\/g, "/");
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined;
+      target = rel.normalize("NFC").toLowerCase();
+    }
+  }
+  return target;
+}
+
+/** Whether a scope target is one of the prefixes or below one (a sibling that merely shares a name prefix is not). */
+export const insidePrefixes = (target: string, prefixes: string[]): boolean => prefixes.some((x) => target === x || target.startsWith(`${x}/`));
+
+/** The prefixes of a slice, as the audit compares them: valid ones only, links resolved when there is a project directory. */
+export function slicePrefixes(slice: { name: string; paths: string[] }, workDir?: string): string[] {
+  return slice.paths.map((p) => slicePrefix(p)).flatMap((r) => ("prefix" in r ? [(realPrefix(r.prefix, workDir) as { prefix: string }).prefix] : []));
 }
 
 /** The prefix after resolving links in the project directory (when there is one), relative to it. */
@@ -353,22 +380,15 @@ export function auditDiffScope(
   slice: { name: string; paths: string[] },
   opts: { workDir?: string; integrator?: boolean; allPrefixes?: string[]; allowShared?: boolean } = {}
 ): { ok: boolean; outside: string[] } {
-  const prefixes = slice.paths.map((p) => slicePrefix(p)).flatMap((r) => ("prefix" in r ? [(realPrefix(r.prefix, opts.workDir) as { prefix: string }).prefix] : []));
+  const prefixes = slicePrefixes(slice, opts.workDir);
   const outside: string[] = [];
   for (const raw of changed) {
-    const p = String(raw).trim().replace(/\\/g, "/").replace(/^\.\//, "");
-    const segs = p.split("/").filter((s) => s !== "" && s !== ".");
+    const target = scopeTarget(raw, opts.workDir);
     let inside = false;
-    if (!p.startsWith("/") && !/^[a-zA-Z]:/.test(p) && !segs.includes("..") && segs.length) {
-      let target = segs.join("/").normalize("NFC").toLowerCase();
-      if (opts.workDir) {
-        const real = canonicalPath(join(opts.workDir, p), opts.workDir);
-        const root = canonicalPath(opts.workDir, opts.workDir);
-        if (real !== undefined && root !== undefined) target = relative(root, real).replace(/\\/g, "/").normalize("NFC").toLowerCase();
-      }
+    if (target !== undefined) {
       const reserved = reservedReason(target) !== undefined;
-      if (opts.integrator) inside = reserved || (opts.allPrefixes ?? []).some((x) => target === x || target.startsWith(`${x}/`));
-      else inside = prefixes.some((x) => target === x || target.startsWith(`${x}/`)) && !reserved;
+      if (opts.integrator) inside = reserved || insidePrefixes(target, opts.allPrefixes ?? []);
+      else inside = insidePrefixes(target, prefixes) && !reserved;
     }
     if (!inside) outside.push(String(raw));
   }
