@@ -24,6 +24,8 @@ export interface BrowserPolicy {
   checkOpen(url: string): { ok: true } | { ok: false; message: string };
   /** A frame has committed to this URL, possibly through a redirect nothing could stop: may the agent be shown it? */
   landing(url: string): Verdict;
+  /** May a file attached on `pageUrl` be sent to `targetUrl`? TEST mode: only to the page's own server. LIVE mode: only to a host on the list that belongs to the same platform as the page (the employer's site, its own subdomains). */
+  destination(pageUrl: string, targetUrl: string): Verdict;
   openDescription: string;
   /** Names the rule in the notice that tells the agent something was blocked. */
   blockedLabel: string;
@@ -41,6 +43,16 @@ const LOCAL_WS_RE = /^wss?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
  */
 const isAllowedLocalUrl = (url: string): boolean => url === "about:blank" || LOCAL_URL_RE.test(url);
 
+/** The origin and host of an http(s) URL, or undefined for anything else (a javascript: or data: address, text that is not a URL). */
+function parseOrigin(url: string): { origin: string; host: string } | undefined {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? { origin: u.origin, host: u.host } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** TEST mode: only http://localhost and http://127.0.0.1, which is what every suite that is not about LIVE mode runs under. */
 export const testPolicy: BrowserPolicy = {
   mode: "test",
@@ -49,6 +61,13 @@ export const testPolicy: BrowserPolicy = {
   allowWebSocket: (url) => LOCAL_WS_RE.test(url),
   checkOpen: (url) => (isAllowedLocalUrl(url) ? { ok: true } : { ok: false, message: `Refused: only http://localhost or http://127.0.0.1 URLs are allowed in this stage, got: ${url}` }),
   landing: () => OK,
+  destination(pageUrl, targetUrl) {
+    const target = parseOrigin(targetUrl);
+    if (!target) return { ok: false, reason: "that is not a web address" };
+    const here = parseOrigin(pageUrl);
+    if (!here || here.origin !== target.origin) return { ok: false, reason: `it goes to ${target.host}, not to the server of the page the file was attached on` };
+    return isAllowedLocalUrl(targetUrl) ? OK : { ok: false, reason: "only localhost and 127.0.0.1 are allowed" };
+  },
   openDescription: "Navigate the active tab to a URL. Only http://localhost or http://127.0.0.1 URLs are allowed.",
   blockedLabel: "the localhost-only rule",
 };
@@ -101,6 +120,13 @@ export function liveBrowserPolicy(a: Allowances, opts: LiveBrowserPolicyOptions 
       if (url === "" || /^(about:|chrome-error:|data:|blob:)/.test(url)) return OK;
       const v = nav(url);
       return v.ok ? OK : { ok: false, reason: v.reason };
+    },
+    destination(pageUrl, targetUrl) {
+      const to = nav(targetUrl);
+      if (!to.ok) return { ok: false, reason: to.reason };
+      const from = nav(pageUrl);
+      if (!from.ok) return { ok: false, reason: `the page the file was attached on is not on the list (${from.reason})` };
+      return to.platform === from.platform ? OK : { ok: false, reason: `it goes to ${to.host} (${to.platform}), not to the site of the page the file was attached on (${from.host}, ${from.platform})` };
     },
     openDescription: "Navigate the active tab to a URL. Only sites on the user's allowances list can be opened; anything else is refused.",
     blockedLabel: "the allowances list",

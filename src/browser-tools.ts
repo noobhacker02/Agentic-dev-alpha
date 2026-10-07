@@ -26,6 +26,7 @@ import { cleanText, stripTerminalControlBytes } from "./text-safety.js";
 import { startNetGate, type NetGate } from "./net-gate.js";
 import { testPolicy, type BrowserPolicy } from "./browser-policy.js";
 import { acquireProfileLock, clearChromiumLeftovers, prepareProfile } from "./profile.js";
+import { NO_UPLOADS, resolveUpload, type Uploads } from "./uploads.js";
 
 /** The installed playwright-core version doesn't reliably match the pre-installed browser's
  * revision number in every environment, so chromium.launch()'s own resolution can miss it even
@@ -77,6 +78,9 @@ interface BrowserTab {
   /** How many times the main frame landed somewhere the policy would not show the agent (a redirect nothing could stop), and where the last one was. */
   blockedLandings: number;
   lastBlockedLanding?: string;
+  /** Set while a designated file is attached to a field on this page: the page it was attached on. Until the page navigates, a request that is not a plain read may go only where `policy.destination` says
+   * (B12: the form's destination can be changed by the page after the check, so the check is repeated on the network). */
+  upload?: { pageUrl: string };
 }
 
 /** The refs from one `inspect`. Each ref maps to a live ElementHandle held here, in this process --
@@ -382,8 +386,10 @@ function watchNetwork(target: { on: (event: string, fn: (arg: any) => void) => u
     if (/\/favicon\.ico$/.test(where)) return;
     const tab = tabOf(req);
     if (/ERR_BLOCKED_BY_CLIENT/.test(err)) {
-      const why = session.blockReasons?.get(req.url());
-      return note(tab.id, "blocked", `blocked by ${session.policy?.blockedLabel ?? "the localhost-only rule"}: ${where}${why ? ` (${cleanText(why, 120)})` : ""}`);
+      const raw = session.blockReasons?.get(req.url());
+      const byUpload = raw?.startsWith(UPLOAD_RULE_TAG) === true;
+      const why = byUpload ? raw!.slice(UPLOAD_RULE_TAG.length) : raw;
+      return note(tab.id, "blocked", `blocked by ${byUpload ? "the upload rule" : (session.policy?.blockedLabel ?? "the localhost-only rule")}: ${where}${why ? ` (${cleanText(why, 200)})` : ""}`);
     }
     // A request that failed just after the gate refused something is, in practice, the request whose redirect or tunnel it refused; the gate
     // has already told the agent which host and why, and "net::ERR_FAILED" on the original URL would only mislead.
@@ -512,9 +518,31 @@ function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined 
     pushNotice(session, tab.id, "blocked", `blocked by ${session.policy.blockedLabel}: the ${main ? "page" : "frame"} landed on ${where} (${cleanText(verdict.reason, 120)}); it was replaced by a blank page and nothing from it is shown`);
     void (main ? page.goto("about:blank") : frame.goto("about:blank")).catch(() => {});
   });
+  // The attached file lives in the document it was attached in. A new document (a form submitted, a link followed) has no such field, so the hold ends when it has loaded; a script that only changes the address (pushState)
+  // does not make a new document, fires no such event, and the hold stays.
+  page.on("domcontentloaded", () => { tab.upload = undefined; });
   page.on("close", () => forgetTab(session, tab));
   watchPage(session, tab);
   return tab;
+}
+
+/** Marks a block reason as the upload rule's, so the notice names that rule and not the allowances list. */
+const UPLOAD_RULE_TAG = "[upload] ";
+
+/** A request that only reads. Everything else (a form post, a PUT, a fetch with a body, a DELETE) can carry a file out. */
+const isPlainRead = (method: string): boolean => method === "GET" || method === "HEAD" || method === "OPTIONS";
+
+/** The page a file is held on, for the tab this request came from or the tab that opened it (a form with a target of its own opens its answer in a new window, which is still the same page's doing). */
+async function uploadHeldFor(session: BrowserSession | undefined, req: { frame(): { page(): Page } }): Promise<{ pageUrl: string } | undefined> {
+  if (!session) return undefined;
+  let page: Page | null;
+  try { page = req.frame().page(); } catch { return undefined; } // a request with no frame (a service worker's) has no page to hold
+  for (let hops = 0; page && hops < 4; hops++) {
+    const tab = session.everTabs.find((t) => t.page === page);
+    if (tab?.upload) return tab.upload;
+    page = await page.opener().catch(() => null);
+  }
+  return undefined;
 }
 
 function forgetTab(session: BrowserSession, tab: BrowserTab): void {
@@ -561,9 +589,13 @@ export class BrowserSessionManager {
 
   /** `videoDirFor`, when given, records the whole browser session as a .webm in that run's artifact
    * directory -- a watchable record of what the agent actually did to the app, not just its claims. */
-  constructor(private opts: { videoDirFor?: (runId: string) => string; policy?: BrowserPolicy; profile?: { site: string; home: string; forbidden?: string[] } } = {}) {
+  constructor(private opts: { videoDirFor?: (runId: string) => string; policy?: BrowserPolicy; profile?: { site: string; home: string; forbidden?: string[] }; uploads?: Uploads } = {}) {
     this.policy = opts.policy ?? testPolicy;
+    this.uploads = opts.uploads ?? NO_UPLOADS;
   }
+
+  /** The files the user designated for upload (none unless the caller passes them): the `upload` tool takes one of these by name. */
+  readonly uploads: Uploads;
 
   /** What every session this manager opens may navigate to: this machine only (TEST mode, the default) or the user's allowances list (LIVE mode). */
   readonly policy: BrowserPolicy;
@@ -625,8 +657,18 @@ export class BrowserSessionManager {
       // Nobody awaits this callback, and a page can close while one of its requests is inside it (a popup that opens and closes itself): Playwright then rejects continue() and
       // abort() with TargetClosedError, an unhandled rejection that ends the process (adversary round 2, A41). There is nothing left to continue or abort.
       try {
-        const url = route.request().url();
-        const verdict = policy.allowRequest(url, { navigation: route.request().isNavigationRequest() });
+        const req = route.request();
+        const url = req.url();
+        let verdict = policy.allowRequest(url, { navigation: req.isNavigationRequest() });
+        // While a designated file is attached on a page, nothing but a plain read may leave that page for another site: the form's destination can be changed by the page after it was checked (B12), and a script can send a file
+        // with fetch as well as a form can. The page's own word about where it sends is not what is trusted; the request is.
+        if (verdict.ok && !isPlainRead(req.method())) {
+          const held = await uploadHeldFor(sessionRef.current, req);
+          if (held) {
+            const to = policy.destination(held.pageUrl, url);
+            if (!to.ok) verdict = { ok: false, reason: `${UPLOAD_RULE_TAG}a file is attached on ${safeUrl(held.pageUrl)}, and this ${req.method()} would send it elsewhere (${to.reason})` };
+          }
+        }
         if (verdict.ok) await route.continue();
         else {
           const reasons = sessionRef.current?.blockReasons;
@@ -810,7 +852,7 @@ function describeElementInPage(el: any): ElementDescription {
   const type = String(el.getAttribute("type") || "text").toLowerCase();
   const inputRoles: Record<string, string> = {
     checkbox: "checkbox", radio: "radio", button: "button", submit: "button", reset: "button", image: "button",
-    range: "slider", search: "searchbox", number: "spinbutton",
+    range: "slider", search: "searchbox", number: "spinbutton", file: "file-input",
   };
   const implicit =
     tag === "a" ? (el.hasAttribute("href") ? "link" : "generic")
@@ -1195,6 +1237,111 @@ async function selectorInFrameHint(session: BrowserSession, selector: string): P
     const n = await f.locator(selector).count().catch(() => 0);
     if (n > 0) throw new Error(`"${cleanText(selector, 60)}" is inside an iframe (frame ${JSON.stringify(frameLabel(f))}), which selectors cannot reach. Call inspect and use the ref of that element.`);
   }
+}
+
+interface FileFieldFacts {
+  isFileInput: boolean;
+  disabled: boolean;
+  inForm: boolean;
+  /** The form's action attribute as written (null if it has none); resolved here, not in the page. */
+  rawAction: string | null;
+  method: string;
+  /** The formaction attribute of each submit or image button that has one, as written. */
+  rawSubmitActions: string[];
+  /** A target other than the form's own window ("_blank", a window name), which would send the answer somewhere the check does not follow. */
+  otherWindow: string;
+  /** The document's base address and its own address, which a relative or an empty action is resolved against. */
+  base: string;
+  docUrl: string;
+}
+
+/** Where a form's action points, resolved the way the browser resolves it: a missing or empty action is the document itself, anything else is relative to the document's base address (a hostile <base> moves it). Done here, with
+ * this process's own URL parser, so a page that has replaced its `URL` cannot answer for itself. An address that does not parse is not a web address. */
+function resolveFormAction(raw: string | null, base: string, docUrl: string): string {
+  try { return new URL(raw === null || raw.trim() === "" ? docUrl : raw, base).href; } catch { return "invalid:"; }
+}
+
+/**
+ * Reads, inside the page that holds a file field, where its form would send the file. It uses the attribute and the browser's own accessors (called on the real prototypes, so a form that holds an input named "action" or
+ * "elements" cannot answer for itself), but it runs in the page's own world: a page that has rewritten those accessors can lie to it. That is why this is the first of two checks; the second is on the network (`uploadHeldFor`).
+ */
+function fileFieldInPage(el: any): FileFieldFacts {
+  const w: any = globalThis;
+  const getter = (C: any, prop: string) => Object.getOwnPropertyDescriptor(C.prototype, prop)?.get;
+  const attr = (node: any, name: string): string | null => w.Element.prototype.getAttribute.call(node, name);
+  const isFile = el.tagName === "INPUT" && getter(w.HTMLInputElement, "type")?.call(el) === "file";
+  const form = isFile ? getter(w.HTMLInputElement, "form")?.call(el) : null;
+  const doc = el.ownerDocument;
+  const rawSubmitActions: string[] = [];
+  let otherWindow = "";
+  if (form) {
+    // `form.elements` leaves out image buttons (the HTML spec excludes them), and an image button can carry its own formaction: find them in the field's own tree and keep the ones that belong to this form.
+    const elements = Array.from(getter(w.HTMLFormElement, "elements")?.call(form) ?? []) as any[];
+    const root = el.getRootNode();
+    const queryAll = Object.getOwnPropertyDescriptor((root instanceof w.ShadowRoot ? w.DocumentFragment : w.Document).prototype, "querySelectorAll")?.value;
+    const images = queryAll ? (Array.from(queryAll.call(root, "input[type=image i]")) as any[]).filter((i) => getter(w.HTMLInputElement, "form")?.call(i) === form) : [];
+    for (const e of [...elements, ...images]) {
+      if (e.tagName !== "BUTTON" && e.tagName !== "INPUT") continue;
+      const type = (attr(e, "type") ?? (e.tagName === "BUTTON" ? "submit" : "text")).toLowerCase();
+      if (type !== "submit" && type !== "image") continue;
+      const fa = attr(e, "formaction");
+      if (fa !== null) rawSubmitActions.push(fa);
+      const ft = attr(e, "formtarget");
+      if (ft && ft.toLowerCase() !== "_self") otherWindow = ft;
+    }
+    const target = attr(form, "target");
+    if (target && target.toLowerCase() !== "_self") otherWindow = target;
+  }
+  return {
+    isFileInput: isFile,
+    disabled: !!el.disabled,
+    inForm: !!form,
+    rawAction: form ? attr(form, "action") : null,
+    method: form ? (attr(form, "method") ?? "get").trim().toLowerCase() : "",
+    rawSubmitActions,
+    otherWindow,
+    base: String(getter(w.Node, "baseURI")?.call(doc) ?? ""),
+    docUrl: String(getter(w.Document, "URL")?.call(doc) ?? ""),
+  };
+}
+
+/** The element a ref or selector names, as a handle (a selector must match exactly one element). */
+async function handleOf(t: Target): Promise<ElementHandle> {
+  if ("elementHandle" in t.el) {
+    const h = await (t.el as Locator).elementHandle({ timeout: 5000 });
+    if (!h) throw new Error(`Refused: ${t.label} matched nothing.`);
+    return h;
+  }
+  return t.el as ElementHandle;
+}
+
+/**
+ * Decides whether a file may be attached to this field, and says where the form sends it. Everything it can see must agree: the field is a file field, enabled, in a form that posts, whose action and each button's own action (formaction) go to the page's own site
+ * (`policy.destination`), in a frame that belongs to the page's site too. A field outside any form (a script sends the file) cannot be checked and is refused. It is run again after the file is attached.
+ */
+async function checkFileField(session: BrowserSession, tab: BrowserTab, handle: ElementHandle): Promise<{ host: string }> {
+  const frame = await handle.ownerFrame();
+  if (!frame) throw new Error("Refused: that field is no longer in a page. Call inspect again.");
+  const pageUrl = tab.page.url();
+  const top = tab.page.mainFrame();
+  for (let f: Frame | null = frame, hops = 0; f && f !== top && hops < 20; f = f.parentFrame(), hops++) {
+    const v = session.policy.destination(pageUrl, f.url());
+    if (!v.ok) throw new Error(`Refused: that field is in a frame from ${safeUrl(f.url())}, which is not the page's own site (${cleanText(v.reason, 160)}). Nothing was attached.`);
+  }
+  const facts = await handle.evaluate(fileFieldInPage);
+  if (!facts.isFileInput) throw new Error("Refused: that element is not a file field (an input of type file). Nothing was attached.");
+  if (facts.disabled) throw new Error("Refused: that file field is disabled. Nothing was attached.");
+  if (!facts.inForm) throw new Error("Refused: that file field is not inside a form, so where the file would be sent cannot be checked. Nothing was attached; tell the user that this page needs the file attached by hand.");
+  if (facts.method !== "post") throw new Error("Refused: that field's form does not post (its method is not post), so it would not send a file. Nothing was attached.");
+  if (facts.otherWindow) throw new Error(`Refused: that field's form opens its answer in another window (${JSON.stringify(cleanText(facts.otherWindow, 40))}), which cannot be checked. Nothing was attached.`);
+  const action = resolveFormAction(facts.rawAction, facts.base, facts.docUrl);
+  for (const dest of [action, ...facts.rawSubmitActions.map((raw) => resolveFormAction(raw, facts.base, facts.docUrl))]) {
+    const v = session.policy.destination(pageUrl, dest);
+    if (!v.ok) throw new Error(`Refused: the form sends to ${safeUrl(dest)} (${cleanText(v.reason, 200)}). Nothing was attached.`);
+  }
+  let host = "";
+  try { host = new URL(action).host; } catch { /* checked above */ }
+  return { host };
 }
 
 /** Fill writes only where a person could type: a text field that is not visible to one (opacity 0, a box of 1px, outside the page, display:none) is how forms catch bots, and
@@ -1685,6 +1832,35 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
       })
   );
 
+  const upload = tool(
+    "upload",
+    "Attach one of the files the user designated to a file field (an input of type file) in a form, by ref from inspect or CSS selector. `file` is the NAME the user gave the file (like resume), never a path. " +
+      "The field must be in a form that posts to the same site as the page; anything else is refused and nothing is attached. The file is sent when the form is submitted.",
+    { ref: refArg, selector: selectorArg, file: z.string().min(1).max(60).describe("The name of a designated file, for example resume") },
+    async ({ ref, selector, file }) =>
+      textTool("upload", { ref, selector, file }, async () => {
+        const session = requireSession();
+        const tab = activeTab(session);
+        const chosen = resolveUpload(sessions.uploads, file);
+        if (!chosen.ok) throw new Error(`Refused: ${chosen.error}. Nothing was attached.`);
+        const target = resolveTarget(session, { ref, selector });
+        const handle = await onTarget(target, () => handleOf(target));
+        const checked = await checkFileField(session, tab, handle);
+        // From here on the network holds this tab's non-read requests to the page's own site, so the file cannot be sent elsewhere even if the page rewrites its form after the check.
+        tab.upload = { pageUrl: tab.page.url() };
+        try {
+          await handle.setInputFiles(chosen.path, { timeout: 5000 });
+          await checkFileField(session, tab, handle); // the page may have changed where the form sends while the file was being attached
+        } catch (err) {
+          await handle.setInputFiles([], { timeout: 2000 }).catch(() => {});
+          tab.upload = undefined;
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(msg.startsWith("Refused:") ? `Refused: the page changed where its form sends files while the file was being attached; the file was removed. ${msg.slice("Refused: ".length)}` : msg);
+        }
+        return { text: `Attached "${chosen.name}" (${cleanText(chosen.fileName, 80)}, ${Math.max(1, Math.round(chosen.bytes / 1024))} KB) to ${target.label}. Its form sends to ${checked.host}. The file is sent when the form is submitted.` };
+      })
+  );
+
   const scroll = tool(
     "scroll",
     "Scroll an element (by ref or CSS selector) into view, or scroll the page by dx/dy CSS pixels.",
@@ -1916,6 +2092,7 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
     press,
     hover,
     select_option: selectOption,
+    upload,
     scroll,
     wait,
     screenshot,
@@ -1928,7 +2105,7 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
 }
 
 /** The tools that act on what a page contains (they click, type, press keys, choose an option). A checker's browser is built without them: it can open, look, read, scroll and wait, and change nothing the page holds. */
-export const BROWSER_ACTING_TOOLS: readonly string[] = ["click", "fill", "press", "select_option", "click_at"];
+export const BROWSER_ACTING_TOOLS: readonly string[] = ["click", "fill", "press", "select_option", "upload", "click_at"];
 
 /** The tools to register: all of them, or without the acting ones for a read-only browser. */
 export function selectBrowserTools<T extends { name: string }>(all: Record<string, T>, readOnly: boolean): T[] {

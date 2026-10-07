@@ -28,6 +28,7 @@ prompt explains the workflow described below.
 | `press` | `key`, optional `ref` or `selector` | Focuses the element if given, then presses the key |
 | `hover` | `ref` or `selector` | Moves the mouse over it (menus, tooltips) |
 | `select_option` | `ref` or `selector`, `values` | Picks options in a `<select>`, matched by value or visible label |
+| `upload` | `ref` or `selector`, `file` (a **name**) | Attaches a file the user designated in `uploads.json` to a file field. `file` is never a path. Refused unless the field's form posts to the page's own site; see "Uploading a file" below. Not offered to a read-only (checker) browser; with no files designated it attaches nothing. |
 | `scroll` | `ref`/`selector`, or `dx`/`dy` | Scrolls an element into view, or scrolls the page |
 | `wait` | optional `selector`, `timeoutMs` ≤ 30,000 | Waits for a selector, or for a fixed time |
 | `screenshot` | — | The active tab's viewport as a PNG, plus a `snapshotId` |
@@ -232,6 +233,22 @@ listed. Any check built on that reader (a form diff, a job-id check, a hidden-te
 **Deadlines and popups** (A31, A41): every tool gives up on a page that does not answer after 60 s ("the page is not responding"), opens a fresh tab so the run can carry on and leaves the stuck one closable; `list_tabs` bounds each tab's title. A session holds at most 10 tabs open and 60 in all.
 
 Measured by the benchmark: `form-coverage` went from 1 of 8 to 8 of 8 ([`BENCHMARK.md`](BENCHMARK.md), [`IMPROVEMENTS.md`](IMPROVEMENTS.md) IMP-014).
+
+## 4d. Uploading a file (S2 increment 4)
+
+The agent never names a path. The user lists the files it may attach in `<agent-loop home>/uploads.json` (their own directory, never the project), by name:
+
+```json
+{"files": {"resume": "/home/you/documents/resume.pdf", "cover-letter": {"path": "/home/you/documents/cover.docx", "sha256": "<64 hex characters>", "maxBytes": 2000000}}}
+```
+
+Only document and image types (pdf, doc, docx, rtf, txt, odt, png, jpg, jpeg); the path is absolute and names a file; nothing inside the agent-loop directory (it holds the saved sign-ins). The file is read like the allowances file (a link, a file others can write, or someone else's is refused). At the moment of use the file must still be a regular file, not a link, within its size limit, at the real path it had when the session started, and (if pinned) with the content that was pinned.
+
+`upload {ref|selector, file: "resume"}` then checks the field before anything is attached: it is a file field, enabled, **inside a form that posts**, whose action and each submit or image button's own `formaction` go to the page's own site (LIVE: the same platform on the allowances list, so the employer's own subdomains are fine and another listed platform is not; TEST: the page's own server), in a frame that belongs to that site, with no `target` that opens the answer somewhere the check cannot follow. A field outside any form (a script would send the file) is refused with a message that says the page needs the file attached by hand. It looks again after attaching and takes the file back if the page changed its form meanwhile.
+
+While a file is attached on a page, the network holds that tab's requests that are not plain reads (a form post, a `fetch` with a body) to the page's own site, and so are the requests of a window that page opened. This is what stops a page that rewrites its form after the check, or sends the file with a script, and the agent is told ("blocked by the upload rule"). The hold ends when a new page has loaded in the tab (a form submitted, a link followed); a script that only changes the address does not end it.
+
+What it does not stop: the page's own scripts can read the file once it is attached, and a listed page can still send a small GET (an image beacon) to any public host (threat D1). The user's list is the trust boundary.
 
 ## 5. Limits
 

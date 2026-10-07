@@ -78,6 +78,9 @@ export function prepareProfile(o: PrepareOptions): PrepareResult {
   const site = siteName(o.site);
   if (!site) return { ok: false, error: `"${String(o.site).replace(/[^\x20-\x7e]/g, "?").slice(0, 40)}" is not a site name: use the platform name from your allowances file (lower-case letters, digits, hyphens)` };
   const uid = o.uid ?? process.getuid?.();
+  // Judged before anything is made, on where the profile would be (a refused profile leaves no directory inside the place it was refused for), and again on where it really is once it exists.
+  const refused = forbiddenReason(join(realOrResolved(o.home), "profiles", site), o.forbidden ?? []);
+  if (refused) return { ok: false, error: refused };
   try { mkdirSync(o.home, { recursive: true, mode: 0o700 }); } catch { /* reported below if it matters */ }
   let realHome: string;
   try { realHome = realpathSync(o.home); } catch { return { ok: false, error: "the agent-loop home directory cannot be read" }; }
@@ -86,12 +89,19 @@ export function prepareProfile(o: PrepareOptions): PrepareResult {
   const bad = ensurePrivateDir(profiles, "the profiles directory", uid) ?? ensurePrivateDir(dir, `the ${site} profile`, uid);
   if (bad) return { ok: false, error: bad };
   const real = realpathSync(dir);
-  for (const f of o.forbidden ?? []) {
-    const rf = realOrResolved(f);
-    if (within(rf, real)) return { ok: false, error: `the profile would be inside ${rf}, a directory the agents can read: put the agent-loop home somewhere else` };
-    if (within(real, rf)) return { ok: false, error: `the profile would contain ${rf}, a directory the agents work in` };
-  }
+  const refusedNow = forbiddenReason(real, o.forbidden ?? []);
+  if (refusedNow) return { ok: false, error: refusedNow };
   return { ok: true, dir: real, lockPath: join(realHome, "profiles", `${site}.lock`) };
+}
+
+/** Why a profile at `real` may not be there: it would be inside a directory the agents can read, or it would contain one they work in. Undefined if it may. */
+function forbiddenReason(real: string, forbidden: string[]): string | undefined {
+  for (const f of forbidden) {
+    const rf = realOrResolved(f);
+    if (within(rf, real)) return `the profile would be inside ${rf}, a directory the agents can read: put the agent-loop home somewhere else`;
+    if (within(real, rf)) return `the profile would contain ${rf}, a directory the agents work in`;
+  }
+  return undefined;
 }
 
 export interface LockHolder {

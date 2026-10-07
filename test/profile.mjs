@@ -65,6 +65,7 @@ const mode = (p) => lstatSync(p).mode & 0o777;
   mkdirSync(repo); mkdirSync(work);
   const insideRepo = prepareProfile({ home: join(repo, ".agent-loop-home"), site: "linkedin", forbidden: [repo, work] });
   assert.ok(!insideRepo.ok && /inside/i.test(insideRepo.error) && /repo/.test(insideRepo.error), JSON.stringify(insideRepo));
+  assert.ok(!existsSync(join(repo, ".agent-loop-home")), "a refused profile left a directory inside the place it was refused for");
   const insideWork = prepareProfile({ home: join(work, "h"), site: "linkedin", forbidden: [repo, work] });
   assert.ok(!insideWork.ok && /inside/i.test(insideWork.error), JSON.stringify(insideWork));
   // the working directory is the profile's own parent chain: --dir pointing at the home, or above it
@@ -94,6 +95,14 @@ const mode = (p) => lstatSync(p).mode & 0o777;
     assert.ok(!notThereYet.ok && /contain/i.test(notThereYet.error), `a forbidden directory that does not exist yet, named through a link, was not resolved: ${JSON.stringify(notThereYet)}`);
     const insideNotThere = prepareProfile({ home: join(linkedBase, "work", "later", "h"), site: "linkedin", forbidden: [join(linkedBase, "work")] });
     assert.ok(!insideNotThere.ok && /inside/i.test(insideNotThere.error), `a profile under a not-yet-existing forbidden directory named through a link was made: ${JSON.stringify(insideNotThere)}`);
+  }
+  // two directories that are not there yet, in the order they will be: the profile would be inside the second
+  if (posix) {
+    const linked2 = join(scratch(), "linked-2");
+    symlinkSync(base, linked2);
+    const deep = prepareProfile({ home: join(base, "ghost", "x", "y", "h"), site: "linkedin", forbidden: [join(linked2, "ghost", "x", "y")] });
+    assert.ok(!deep.ok && /inside/i.test(deep.error), `a profile under two directories that do not exist yet was made: ${JSON.stringify(deep)}`);
+    assert.ok(!existsSync(join(base, "ghost")), "a refused profile left directories behind");
   }
   // a directory whose own name starts with two dots is still a child, not a way out of its parent
   for (const name of ["..sneaky", "..", ".. x"].filter((n) => n !== "..")) {

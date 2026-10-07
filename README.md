@@ -238,13 +238,13 @@ The companion skill repository ([Dev-Skill](https://github.com/noobhacker02/Dev-
 
 ## Platform support
 
-Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-07 (the last commit checked was `bbdb587`), and the two badges at the top are the live ones.
+Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-07 (the last commit checked was `4e5bccf`), and the two badges at the top are the live ones.
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 76 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `bbdb587` (74 suites; the two added since, `profile` and `login`, are not read yet) |
-| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `bbdb587` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 74). Two suites added since; their CI is not read yet |
-| **Windows** (`windows-latest`) | The same | Green at `bbdb587` (same). It was red at `a035a87` (`test:team-run-cli`, an absolute `--import` path, now scanned for by `test:windows-imports`; and `test:ui-plain`, cause not established, not seen again at `b695f8c`, `58aaba4` or `bbdb587`) |
+| **Linux** | All 78 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `4e5bccf` (76 suites; the two added since, `uploads` and `upload-form`, are not read yet) |
+| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `4e5bccf` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 76). Two suites added since; their CI is not read yet |
+| **Windows** (`windows-latest`) | The same | Green at `4e5bccf` (same). It was red at `e9da57a` (`test:login`: a Ctrl-C during the window's opening was lost; fixed) and at `a035a87` (`test:team-run-cli`, an absolute `--import` path, now scanned for by `test:windows-imports`; and `test:ui-plain`, cause not established, not seen again at `b695f8c`, `58aaba4`, `bbdb587` or `4e5bccf`) |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
@@ -406,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 76 suites, none of which calls a model (what CI runs)
+npm test                          # all 78 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 

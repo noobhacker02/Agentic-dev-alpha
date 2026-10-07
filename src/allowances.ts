@@ -217,15 +217,18 @@ export function parseAllowances(raw: unknown): { ok: true; value: Allowances } |
   return errors.length ? { ok: false, errors } : { ok: true, value: { allow, deny, platforms } };
 }
 
-/** Reads `<home>/allowances.json`. No file means nothing is allowed. The file is the user's: a link, a directory or (on POSIX) a file someone else can write or that is not theirs is refused. */
-export function loadAllowances(home: string, opts: { uid?: number } = {}): LoadedAllowances {
-  const path = join(home, "allowances.json");
+export type UserJson = { ok: true; missing: false; json: unknown; path: string } | { ok: true; missing: true; path: string } | { ok: false; errors: string[] };
+
+/** Reads a JSON file the user keeps in their own agent-loop directory (`<home>/<fileName>`; `allowances.json`, `uploads.json`). No file is `missing`, not an error. The file is the user's: a link, a directory or (on POSIX) a
+ * file someone else can write or that is not theirs is refused, so a project (or an agent) cannot grant itself anything by placing or editing it. */
+export function readUserJson(home: string, fileName: string, opts: { uid?: number } = {}): UserJson {
+  const path = join(home, fileName);
   const shown = clean(path, 200);
   let st;
   try {
     st = lstatSync(path);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, value: NO_ALLOWANCES, source: "none", path };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, missing: true, path };
     return { ok: false, errors: [`cannot read ${shown} (${clean(String((err as NodeJS.ErrnoException).code ?? "error"), 20)})`] };
   }
   if (st.isSymbolicLink()) return { ok: false, errors: [`${shown} is a link; put the real file there, so nothing can be swapped in behind it`] };
@@ -236,12 +239,19 @@ export function loadAllowances(home: string, opts: { uid?: number } = {}): Loade
     const uid = opts.uid ?? process.getuid?.();
     if (uid !== undefined && st.uid !== uid) return { ok: false, errors: [`${shown} is not owned by you`] };
   }
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    return { ok: true, missing: false, json: JSON.parse(readFileSync(path, "utf8")), path };
   } catch {
     return { ok: false, errors: [`${shown} is not valid JSON`] };
   }
-  const r = parseAllowances(parsed);
-  return r.ok ? { ok: true, value: r.value, source: "file", path } : { ok: false, errors: r.errors.map((e) => `${shown}: ${e}`) };
+}
+
+/** Reads `<home>/allowances.json`. No file means nothing is allowed. */
+export function loadAllowances(home: string, opts: { uid?: number } = {}): LoadedAllowances {
+  const read = readUserJson(home, "allowances.json", opts);
+  if (!read.ok) return { ok: false, errors: read.errors };
+  if (read.missing) return { ok: true, value: NO_ALLOWANCES, source: "none", path: read.path };
+  const shown = clean(read.path, 200);
+  const r = parseAllowances(read.json);
+  return r.ok ? { ok: true, value: r.value, source: "file", path: read.path } : { ok: false, errors: r.errors.map((e) => `${shown}: ${e}`) };
 }
