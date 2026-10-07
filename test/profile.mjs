@@ -86,6 +86,15 @@ const mode = (p) => lstatSync(p).mode & 0o777;
   symlinkSync(repo, alias);
   const viaLink = prepareProfile({ home: join(repo, ".home-through-link"), site: "linkedin", forbidden: [alias] });
   assert.ok(!viaLink.ok && /inside/i.test(viaLink.error), `a forbidden directory named through a link was not resolved: ${JSON.stringify(viaLink)}`);
+  // a forbidden directory that is not there yet, named through a link in its path (on macOS /var is such a link): it still lives where the link leads
+  if (posix) {
+    const linkedBase = join(scratch(), "linked-base");
+    symlinkSync(base, linkedBase);
+    const notThereYet = prepareProfile({ home: base, site: "linkedin", forbidden: [join(linkedBase, "profiles", "linkedin", "not-yet")] });
+    assert.ok(!notThereYet.ok && /contain/i.test(notThereYet.error), `a forbidden directory that does not exist yet, named through a link, was not resolved: ${JSON.stringify(notThereYet)}`);
+    const insideNotThere = prepareProfile({ home: join(linkedBase, "work", "later", "h"), site: "linkedin", forbidden: [join(linkedBase, "work")] });
+    assert.ok(!insideNotThere.ok && /inside/i.test(insideNotThere.error), `a profile under a not-yet-existing forbidden directory named through a link was made: ${JSON.stringify(insideNotThere)}`);
+  }
   // a directory whose own name starts with two dots is still a child, not a way out of its parent
   for (const name of ["..sneaky", "..", ".. x"].filter((n) => n !== "..")) {
     const dotted = prepareProfile({ home: join(repo, name), site: "linkedin", forbidden: [repo] });

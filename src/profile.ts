@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const SITE_RE = /^[a-z][a-z0-9-]{0,30}$/;
 /** A lock file that cannot be read is probably being written; it is held this long, and after that it is a broken file. */
@@ -19,13 +19,22 @@ export function siteName(raw: unknown): string | undefined {
 }
 
 /** Is `child` the same as, or somewhere under, `parent`? A directory whose own name starts with two dots (`..x`) is a child, not a way out; only `..` itself or `..` followed by a separator climbs out. */
-const within = (parent: string, child: string): boolean => {
+export const within = (parent: string, child: string): boolean => {
   const r = relative(parent, child);
   return r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r);
 };
 
-const realOrResolved = (p: string): string => {
-  try { return realpathSync(p); } catch { return resolve(p); }
+/** The real path of `p`, even if it does not exist yet: the nearest ancestor that exists is resolved through its links (on macOS `/var` is a link to `/private/var`, and a directory that is not there yet still lives under it) and the rest is appended. */
+export const realOrResolved = (p: string): string => {
+  const full = resolve(p);
+  const rest: string[] = [];
+  for (let cur = full; ; ) {
+    try { return rest.length ? join(realpathSync(cur), ...rest) : realpathSync(cur); } catch { /* not there: try its parent */ }
+    const parent = dirname(cur);
+    if (parent === cur) return full;
+    rest.unshift(basename(cur));
+    cur = parent;
+  }
 };
 
 export interface PrepareOptions {

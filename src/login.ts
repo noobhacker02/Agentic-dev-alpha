@@ -66,14 +66,17 @@ export async function runLogin(o: LoginOptions): Promise<LoginResult> {
     gate = await startNetGate({ policy: livePolicy(o.allowances, { isPublic: o.isPublic }), resolve: o.resolve });
     context = await launchPersistent(prepared.dir, downloads, { server: `http://127.0.0.1:${gate.port}`, username: gate.username, password: gate.password }, { acceptDownloads: false, ...(o.headless ? {} : { viewport: null }) }, o.headless ?? false);  // devskill:allow (a runtime-generated credential or a type, not a secret)
     const page = context.pages()[0] ?? (await context.newPage());
-    say(`Opening ${verdict.host} in a browser window. Log in as you normally would, then close the window. agent-loop does not read what you type or the cookies the site sets.`);
-    await page.goto(verdict.url, { waitUntil: "commit", timeout: 30_000 }).catch(() => { /* the person sees the error in the window */ });
     const closed = new Promise<void>((resolve) => context!.on("close", () => resolve()));
-    if (o.drive) await o.drive({ context, page });
-    else {
-      o.signal?.addEventListener("abort", () => { void context?.close().catch(() => {}); }, { once: true });
-      await closed;
+    // Ctrl-C must close the window whenever it arrives: while it opens (an abort that fires before anyone listens is never delivered again), while the page loads, or later.
+    const closeNow = () => { void context?.close().catch(() => {}); };
+    if (!o.drive) {
+      if (o.signal?.aborted) closeNow();
+      else o.signal?.addEventListener("abort", closeNow, { once: true });
     }
+    say(`Opening ${verdict.host} in a browser window. Log in as you normally would, then close the window. agent-loop does not read what you type or the cookies the site sets.`);
+    await page.goto(verdict.url, { waitUntil: "commit", timeout: 30_000 }).catch(() => { /* the person sees the error in the window, or the window was closed */ });
+    if (o.drive) await o.drive({ context, page });
+    else await closed;
     return { ok: true, dir: prepared.dir };
   } catch (err) {
     return { ok: false, error: `the login window could not be opened: ${clean(err instanceof Error ? err.message : String(err), 300)}` };

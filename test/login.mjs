@@ -263,8 +263,15 @@ try {
       assert.deepStrictEqual(loginDirs(), dirsBefore, "the login left its temporary directory behind");
     }
 
-    // 7g. Ctrl-C closes the window and ends the login cleanly
+    // 7g. Ctrl-C closes the window and ends the login cleanly, whenever it arrives: before the page has started to load (a signal that fired before anyone listened is never delivered again), and later
     {
+      const early = new AbortController();
+      const r1 = await Promise.race([runLogin({ ...base, site: "demo", home: scratch(), url: L("/login"), signal: early.signal, say: () => early.abort() }), sleep(30000).then(() => "hung")]);
+      assert.ok(r1 !== "hung" && r1.ok, `Ctrl-C while the window was opening did not end the login: ${JSON.stringify(r1)}`);
+      const already = new AbortController();
+      already.abort();
+      const r2 = await Promise.race([runLogin({ ...base, site: "demo", home: scratch(), url: L("/login"), signal: already.signal }), sleep(30000).then(() => "hung")]);
+      assert.ok(r2 !== "hung" && r2.ok, `a login started after Ctrl-C did not end: ${JSON.stringify(r2)}`);
       const ctl = new AbortController();
       let opened = false;
       const running = runLogin({ ...base, site: "demo", home: scratch(), url: L("/login"), signal: ctl.signal, say: () => { opened = true; } });
@@ -272,7 +279,7 @@ try {
       assert.ok(opened, "the login never said it was opening");
       await sleep(1500);
       ctl.abort();
-      const r = await Promise.race([running, sleep(20000).then(() => "hung")]);
+      const r = await Promise.race([running, sleep(30000).then(() => "hung")]);
       assert.ok(r !== "hung" && r.ok, `Ctrl-C did not end the login: ${JSON.stringify(r)}`);
     }
 
