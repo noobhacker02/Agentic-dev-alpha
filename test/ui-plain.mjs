@@ -318,4 +318,18 @@ const waitPlain = (page, v) => page.waitForFunction((x) => document.documentElem
   console.log("[ok] a real run: --plain makes the live page and the saved report start plain; without it neither does");
 }
 
+// 8. The harness names a script that did not load, instead of leaving "AL.mascot is undefined" to be puzzled over (ui-plain on Windows at a035a87)
+{
+  const h = await harness();
+  await h.ctx.route((u) => u.pathname === "/mascot.js", (r) => r.fulfill({ status: 404, body: "not found" }));
+  await assert.rejects(() => h.open("?plain=1"), /did not load everything.*\/mascot\.js answered 404/, "a script that answered 404 was not named");
+  await h.ctx.unroute((u) => u.pathname === "/mascot.js").catch(() => {});
+  await h.close();
+  const ok = await harness();
+  await ok.open("?plain=1");
+  assert.deepStrictEqual(ok.badLoads, [], "a page that loaded everything reported a bad load");
+  await ok.close();
+  console.log("[ok] a page script that answers 404 is named by the harness's open(); a page that loads everything reports nothing");
+}
+
 console.log("\nALL PLAIN MODE TESTS PASSED");

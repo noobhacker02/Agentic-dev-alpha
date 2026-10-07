@@ -46,13 +46,28 @@ export async function harness(opts = {}) {
   const expected = /WebSocket|ERR_CONNECTION|ERR_FAILED|Failed to load resource/;
   h.page.on("pageerror", (e) => h.errors.push("pageerror: " + e.message));
   h.page.on("console", (m) => m.type() === "error" && !expected.test(m.text()) && h.errors.push("console: " + m.text()));
+  // The page survives a script that did not load (the cat, the sound), so a test that then reads that script's API fails with "undefined" and no hint why (ui-plain on Windows at a035a87: AL.mascot undefined).
+  // A page, script or stylesheet that answers 4xx or 5xx or fails (other than what the test aborted on purpose) is remembered, and open() names it.
+  h.badLoads = [];
+  const aborted = (url) => (opts.abort ?? []).some((part) => url.includes(part));
+  const asset = (rq) => ["document", "script", "stylesheet"].includes(rq.resourceType());
+  h.page.on("response", (res) => { const rq = res.request(); if (asset(rq) && res.status() >= 400 && !aborted(rq.url())) h.badLoads.push(`${new URL(rq.url()).pathname} answered ${res.status()}`); });
+  h.page.on("requestfailed", (rq) => { if (asset(rq) && !aborted(rq.url())) h.badLoads.push(`${new URL(rq.url()).pathname} failed (${rq.failure()?.errorText ?? "unknown"})`); });
   if (opts.init) await h.page.addInitScript(opts.init);
   if (opts.clock) await h.page.clock.install({ time: Date.now() });
   const runId = "extras-run";
   h.ev = (o) => bus.emitEvent({ runId, ts: new Date().toISOString(), ...o });
   h.open = async (search = "") => {
-    await h.page.goto(`http://127.0.0.1:${port}/${search}#token=${token}`);
-    await h.page.waitForFunction(() => document.getElementById("status")?.textContent === "live", undefined, { timeout: 8000 });
+    h.badLoads.length = 0;
+    const named = () => new Error(`the page did not load everything it needs: ${[...new Set(h.badLoads)].join("; ")}`);
+    try {
+      await h.page.goto(`http://127.0.0.1:${port}/${search}#token=${token}`);
+      await h.page.waitForFunction(() => document.getElementById("status")?.textContent === "live", undefined, { timeout: 8000 });
+    } catch (err) {
+      if (h.badLoads.length) throw named();
+      throw err;
+    }
+    if (h.badLoads.length) throw named();
   };
   h.startRun = () => {
     h.ev({ type: "run-start", task: "Add a /health route", workDir: "/work/app" });

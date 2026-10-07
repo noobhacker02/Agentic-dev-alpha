@@ -238,13 +238,13 @@ The companion skill repository ([Dev-Skill](https://github.com/noobhacker02/Dev-
 
 ## Platform support
 
-Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-07 (the last commit checked was `a1da2ae`), and the two badges at the top are the live ones.
+Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-07 (the last commit checked was `a035a87`), and the two badges at the top are the live ones.
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 70 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `a1da2ae` (69 suites; one is new since, its CI result is not read yet) |
-| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `a1da2ae`: all 69 suites (the job fails if one does; its log could not be fetched from here, so the count is that commit's suite list). One suite added since; its CI result is not read yet |
-| **Windows** (`windows-latest`) | The same | Green at `a1da2ae` (same) |
+| **Linux** | All 71 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `a035a87` (70 suites; one is new since, its CI result is not read yet) |
+| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `a035a87` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 70). One suite added since; its CI is not read yet |
+| **Windows** (`windows-latest`) | The same | **68 of 70 at `a035a87`; red.** `test:team-run-cli` (an absolute `--import` path, fixed and now scanned for by `test:windows-imports`) and `test:ui-plain` (`mascot.js` apparently did not load; cause not established, the harness now names failed loads). Last green: `a1da2ae`. The fix commit's CI is not read yet |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
@@ -406,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 70 suites, none of which calls a model (what CI runs)
+npm test                          # all 71 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 

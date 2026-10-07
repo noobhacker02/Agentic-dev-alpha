@@ -12,7 +12,7 @@ import { chromium } from "playwright-core";
 import { spawn } from "node:child_process";
 import { mkdirSync, readdirSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const argv = process.argv.slice(2);
 const sep = argv.indexOf("--");
@@ -26,7 +26,7 @@ mkdirSync(join(out, "shots"), { recursive: true });
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const nodeArgs = ["--experimental-sqlite", "--no-warnings"];
-if (process.env.COST_LOG) nodeArgs.push("--import", join(root, "test/stress/proxy-sdk/register.mjs"));
+if (process.env.COST_LOG) nodeArgs.push("--import", pathToFileURL(join(root, "test/stress/proxy-sdk/register.mjs")).href); // a URL: a bare Windows path is read as the scheme "d:"
 const cliArgs = ["run", task, "--dir", workDir, "--port", port, ...(flag("browser") ? ["--browser"] : [])];
 const t0 = Date.now();
 const child = spawn(process.execPath, [...nodeArgs, join(root, "dist/cli.js"), ...cliArgs], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });

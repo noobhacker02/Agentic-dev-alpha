@@ -1,6 +1,6 @@
 # Testing: every suite, what it proves, and what spends money
 
-Moved out of the README. `npm test` runs all 70 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
+Moved out of the README. `npm test` runs all 71 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
 
 ```bash
 npm run build
@@ -63,6 +63,7 @@ All no-API. Each was written to fail on the old code first, mutation-checked, an
 | `test:team-changes` | IMP-022: the before/after snapshot of the project tree (content hashes, links as links, derived directories left out, a snapshot cut short is refused) that the diff audit compares |
 | `test:team-verdict` | IMP-022: a team step's verdict may carry a report (cleaned, cut), a team planner names steps to skip by role id; the built-in phases' verdicts are unchanged |
 | `test:team-pipeline` | IMP-022 and IMP-024: a composed team through the real pipeline with the fake SDK: plan order, step ids in events and store, reports, repair by step id, the diff audit closing Bash, budgets, stop, a refused plan, the planner's skip (applied, refused, bounded, only the planner, only when it passes), the five-phase path unchanged |
+| `test:windows-imports` | IMP-025: no `--import` in the repository takes an absolute path (Windows reads `D:\a\...` as a URL with the scheme `d:`); the scanner is checked against snippets it must refuse and accept |
 | `test:team-run-cli` | IMP-023: `--team auto|fixed5|<plan file>`: no flag and fixed5 change nothing, auto is the composer's team for the task and the repo's paths, a plan file is finalized (floor added, change reported), bad values and refused plans end the command before a database exists (exit 1 or 2), project roster roles need `--trust-project`, and the real command line runs a team with step ids in the stored run |
 | `test:fatal` | Round 2, A39 and A41: an error nobody caught stops the run the ordinary way, including through the real command twice per kind of error |
 | `test:net-gate` | The forward proxy that decides where the browser may go: absolute URIs, CONNECT, WebSocket upgrades, resolution, the credential, and an upstream that answers a status HTTP does not allow |

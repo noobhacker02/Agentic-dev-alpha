@@ -133,9 +133,11 @@ const opt = (args, task = "add a docstring to the users module") => resolveTeamO
 // 6. The real command line, with the fake SDK: a team run, the five-phase run, and a bad value that starts nothing
 {
   const cli = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
-  const reg = fileURLToPath(new URL("./stress/fake-sdk/register.mjs", import.meta.url));
+  // `--import` takes a URL or a relative path: an absolute Windows path (D:\...) is refused as an unsupported URL scheme, so the suites that spawn the CLI run from the repository root with a relative one.
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const reg = "./test/stress/fake-sdk/register.mjs";
   const run = (args, env = {}) => {
-    const r = spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "--import", reg, cli, ...args], { encoding: "utf8", timeout: 120_000, env: { ...process.env, AGENT_LOOP_HOME: home, FAKE_STEP_OUTCOMES: "{}", FAKE_MAX_CALLS: "1000", ...env } });
+    const r = spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "--import", reg, cli, ...args], { cwd: root, encoding: "utf8", timeout: 120_000, env: { ...process.env, AGENT_LOOP_HOME: home, FAKE_STEP_OUTCOMES: "{}", FAKE_MAX_CALLS: "1000", ...env } });
     return { status: r.status, all: `${r.stdout}${r.stderr}` };
   };
   const work = join(scratch, "work-team");
