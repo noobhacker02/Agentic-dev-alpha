@@ -13,6 +13,8 @@ export const meta = {
   unit: "rows right",
   higherIsBetter: true,
   stage: "S1",
+  // the row that reads a symlink to `.env` is not run on Windows (a link needs a privilege there), so the number of rows is 241 there and 242 elsewhere; full marks are full marks
+  maxVariesOn: "win32",
 };
 
 // Payloads that would trip this repository's own pre-commit scanner are XOR (0x5A) + base64 encoded, like test/safety-net.mjs.

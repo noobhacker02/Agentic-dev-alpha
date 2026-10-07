@@ -1,5 +1,6 @@
 // Controls for the benchmark scorers: each check must MISS when the tools say nothing (even when the page URL is shown), and HIT on a real report.
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import { CHECKS, PROBE_PATHS, PAGES as OBS_PAGES } from "../bench/suites/observability.mjs";
 import { CHECKS as FORM_CHECKS, PROBE_PATHS as FORM_PATHS, formPages } from "../bench/suites/form-coverage.mjs";
 import { parseTriage } from "../bench/suites/adversary-yield.mjs";
@@ -224,5 +225,11 @@ console.log(`[ok] bench scorers: ${ids.length} checks miss on silence and hit on
   const wordsAnywhere = { ...HONESTY, "query-finds-98th": (o) => /Delete everything/.test(o), "scroll-panel-offered": (o) => /Question 30/.test(o), "forged-blocks-marked": (o) => /Shop/.test(o) };
   for (const id of ["query-finds-98th", "scroll-panel-offered", "forged-blocks-marked"]) assert.ok(wrong[id].some((w) => wordsAnywhere[id](w) === true), `the controls cannot detect a ${id} judge that only looks for words`);
   assert.ok(caught({ ...HONESTY, "hung-page-gives-up": ({ result }) => /not responding/.test(result?.text ?? "") || true }), "the controls cannot detect a hung-page judge that ignores the exit");
+  // The child scripts import the build under test by file URL: an absolute Windows path is not an import specifier (it failed all three children on the Windows runner at fe92cb0).
+  {
+    const src = readFileSync(new URL("../bench/suites/browser-honesty.mjs", import.meta.url), "utf8");
+    assert.ok(!/import\(process\.env\.HONESTY_ROOT\s*\+/.test(src), "a child script imports the build by a plain path");
+    assert.ok((src.match(/import\(process\.env\.HONESTY_ROOT_URL \+ "dist\//g) ?? []).length === 5 && /pathToFileURL\(root\)\.href \+ "\/"/.test(src), "the children no longer import by file URL");
+  }
   console.log(`[ok] bench scorers (browser-honesty): ${HONESTY_CHECKS.length} judges accept their real report and reject silence, the page's own words, a half answer and a process that did not come back; lenient and words-only judges are caught`);
 }

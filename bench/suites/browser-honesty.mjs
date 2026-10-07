@@ -72,12 +72,13 @@ export const PAGES = {
   "/many": `<!doctype html><title>t</title><h1>App</h1><script>for(let i=0;i<60;i++)console.error("distinct-error-"+i)</script>`,
 };
 
+// The children import the build under test by file URL (`HONESTY_ROOT_URL`): a Windows path such as D:\\a\\x is not a valid import specifier, which failed all three on the Windows runner.
 const CHILD = {
   // a page stuck in a loop, with a short deadline (the old build has none, and never returns)
   hung: `
     import { createServer } from "node:http";
-    const { BrowserSessionManager, __testHandlers } = await import(process.env.HONESTY_ROOT + "/dist/browser-tools.js");
-    const { EventBus } = await import(process.env.HONESTY_ROOT + "/dist/bus.js");
+    const { BrowserSessionManager, __testHandlers } = await import(process.env.HONESTY_ROOT_URL + "dist/browser-tools.js");
+    const { EventBus } = await import(process.env.HONESTY_ROOT_URL + "dist/bus.js");
     const app = createServer((req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end('<!doctype html><title>busy</title><h1>Busy</h1><script>setTimeout(()=>{for(;;){}},300)</script>'); });
     await new Promise((r) => app.listen(0, "127.0.0.1", r));
     const bus = new EventBus(), sessions = new BrowserSessionManager();
@@ -90,8 +91,8 @@ const CHILD = {
   // thirty popups that open and close themselves, each with eight requests in flight, video on (the old build dies with an unhandled rejection in 6 runs of 6; three popups killed it about one run in three)
   popups: `
     import { createServer } from "node:http";
-    const { BrowserSessionManager, __testHandlers } = await import(process.env.HONESTY_ROOT + "/dist/browser-tools.js");
-    const { EventBus } = await import(process.env.HONESTY_ROOT + "/dist/bus.js");
+    const { BrowserSessionManager, __testHandlers } = await import(process.env.HONESTY_ROOT_URL + "dist/browser-tools.js");
+    const { EventBus } = await import(process.env.HONESTY_ROOT_URL + "dist/bus.js");
     const app = createServer((req, res) => {
       const path = req.url.split("?")[0];
       res.writeHead(200, { "content-type": "text/html" });
@@ -113,7 +114,7 @@ const CHILD = {
   status: `
     import net from "node:net";
     import { request } from "node:http";
-    const { startNetGate, localOnlyPolicy } = await import(process.env.HONESTY_ROOT + "/dist/net-gate.js");
+    const { startNetGate, localOnlyPolicy } = await import(process.env.HONESTY_ROOT_URL + "dist/net-gate.js");
     const gate = await startNetGate({ policy: localOnlyPolicy });
     const auth = "Basic " + Buffer.from(gate.username + ":" + gate.password).toString("base64");
     const up = net.createServer((s) => { s.on("data", () => s.end("HTTP/1.1 099 Odd\\r\\ncontent-length: 0\\r\\nconnection: close\\r\\n\\r\\n")); s.on("error", () => {}); });
@@ -132,7 +133,7 @@ const CHILD = {
 
 function child(name, root, ms) {
   const tmp = mkdtempSync(join(tmpdir(), "honesty-"));
-  const r = spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "--input-type=module", "-e", CHILD[name]], { encoding: "utf8", timeout: ms, env: { ...process.env, HONESTY_ROOT: root, HONESTY_TMP: tmp } });
+  const r = spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", "--input-type=module", "-e", CHILD[name]], { encoding: "utf8", timeout: ms, env: { ...process.env, HONESTY_ROOT_URL: pathToFileURL(root).href + "/", HONESTY_TMP: tmp } });
   const m = `${r.stdout}${r.stderr}`.match(/RESULT (\{.*\})/);
   let result;
   try { result = m ? JSON.parse(m[1]) : undefined; } catch { result = undefined; }
