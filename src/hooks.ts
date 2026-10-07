@@ -1,9 +1,11 @@
-import { dirname, isAbsolute, parse, resolve, sep } from "node:path";
-import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import type { HookCallback, PreToolUseHookInput } from "@anthropic-ai/claude-agent-sdk";
 import { analyzeBash } from "./bash-analysis.js";
+import { canonicalPath, expandBraces, isInside, toolPath } from "./path-canon.js";
 import type { EventBus } from "./bus.js";
 import type { PhaseName } from "./types.js";
+
+export { canonicalPath };
 
 /**
  * Patterns that are denied outright, before the request even reaches the human approval UI. This
@@ -18,8 +20,9 @@ import type { PhaseName } from "./types.js";
  * do unsupervised before a human would have caught it anyway.
  */
 
+/** The root, the home directory, `..`, a bare `*`, and (A30) any top-level directory of the machine (`/etc`, `/home`, `/usr`, `/root`, ...) or everything in one (`/etc/*`): depth one, not just `/`. */
 const DANGEROUS_RM_TARGET =
-  /^(\/|\/\*|~|~\/.*|\$HOME\b.*|"\$HOME"|'\$HOME'|\$\{HOME\}.*|\.\.|\.\.\/.*|\*)$/;
+  /^(\/|\/\*|\/[^/\s*]+\/?|\/[^/\s*]+\/\*|~|~\/.*|\$HOME\b.*|"\$HOME"|'\$HOME'|\$\{HOME\}.*|\.\.|\.\.\/.*|\*)$/;
 
 /** True if any `rm` invocation in the command combines recursive+force flags with a target like `/`, `~`, `$HOME`, `..`, or a bare `*` (including after `cd /` / `cd ~` earlier in the same line). */
 function hasDangerousRm(command: string): boolean {
@@ -43,7 +46,7 @@ function hasDangerousRm(command: string): boolean {
     }
     if (!recursive || !force) continue;
     if (targets.some((t) => DANGEROUS_RM_TARGET.test(t))) return true;
-    if (changedToDangerousDir && targets.includes("*")) return true;
+    if (changedToDangerousDir && targets.length > 0) return true; // after `cd /`, `rm -rf etc` is /etc
   }
   return false;
 }
@@ -88,6 +91,13 @@ const HARD_DENY_CHECKS: Array<{ name: string; test: (cmd: string) => boolean }> 
   },
 ];
 
+/**
+ * Git's global options sit between `git` and the subcommand (`git -C repo push`, `git -c k=v reset`, `git --no-pager clean`), and every pattern above wants the subcommand right after
+ * `git`. Dropping them first makes the cheapest rewrite match the same rules (adversary round 2, A30).
+ */
+const GIT_GLOBAL_OPTS = /\bgit((?:\s+(?:-[Cc]\s+(?:"[^"]*"|'[^']*'|\S+)|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env)(?:=\S+|\s+\S+)|--[a-z][a-z-]*|-[pP]))+)\s+(?=[a-z])/gi;
+export const withoutGitGlobalOptions = (command: string): string => command.replace(GIT_GLOBAL_OPTS, "git ");
+
 function commandFromInput(toolName: string, toolInput: Record<string, unknown>): string | null {
   if (toolName === "Bash" && typeof toolInput.command === "string") return toolInput.command;
   return null;
@@ -101,7 +111,8 @@ export function createSafetyHook(): HookCallback {
     const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
     const command = commandFromInput(pre.tool_name, toolInput);
     if (!command) return {};
-    const hit = HARD_DENY_CHECKS.find((c) => c.test(command));
+    const plain = withoutGitGlobalOptions(command);
+    const hit = HARD_DENY_CHECKS.find((c) => c.test(command) || c.test(plain));
     if (hit) {
       return {
         hookSpecificOutput: {
@@ -130,59 +141,6 @@ const PATH_ARGS: Record<string, string[]> = {
 };
 
 /**
- * The physical location a path names: every symlink followed, and `..` applied to the real directory it follows (the operating system resolves
- * `link/..` through the link, so collapsing it as text first, as `path.resolve` does, judges a different path from the one that will be opened).
- * The part of a path that does not exist yet (a file about to be created) is kept as written. Anything unexpected (a symlink loop, a permission
- * error) returns undefined, and callers treat that as "outside": a path that cannot be resolved is not one to trust.
- * Found by adversary round 1 (A1): a symlink inside --dir pointing at the agent profile read straight through the old, text-only check.
- */
-export function canonicalPath(input: string, baseDir: string, hops = 0): string | undefined {
-  if (hops > 40) return undefined; // a chain of links this long is a loop
-  const raw = isAbsolute(input) ? input : baseDir + sep + input;
-  const root = parse(raw).root;
-  // `resolve` on the bare root only maps it to a place: on Windows "/" and "\\" are the current drive's root, not a directory named "/", and
-  // walking up from the unmapped root made every `/tmp/...` path unresolvable, so every workdir looked like it had nothing inside it.
-  let cur = resolve(root);
-  for (const comp of raw.slice(root.length).split(/[\\/]+/)) {
-    if (comp === "" || comp === ".") continue;
-    if (comp === "..") {
-      cur = dirname(cur);
-      continue;
-    }
-    const next = cur.endsWith(sep) ? cur + comp : cur + sep + comp;
-    try {
-      cur = realpathSync.native(next);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
-      // Either nothing is there (a file about to be created: keep it as written), or a symlink whose target does not exist yet. Writing through
-      // the second kind creates the file at the target, so follow it by hand.
-      let link: string | undefined;
-      try {
-        if (lstatSync(next).isSymbolicLink()) link = readlinkSync(next);
-      } catch { /* not there at all */ }
-      if (link === undefined) {
-        cur = next;
-      } else {
-        const followed = canonicalPath(link, cur, hops + 1);
-        if (followed === undefined) return undefined;
-        cur = followed;
-      }
-    }
-  }
-  return cur;
-}
-
-const foldCase = (p: string): string => (process.platform === "win32" || process.platform === "darwin" ? p.toLowerCase() : p);
-
-function isInside(workDir: string, candidate: string): boolean {
-  const root = canonicalPath(workDir, process.cwd());
-  const resolved = canonicalPath(candidate, workDir);
-  if (root === undefined || resolved === undefined) return false;
-  const r = foldCase(root), c = foldCase(resolved);
-  return c === r || c.startsWith(r.endsWith(sep) ? r : r + sep);
-}
-
-/**
  * Defense-in-depth backstop, same spirit as the safety hook: keeps the file tools' own read/write
  * targets inside the run's `--dir`, so a phase can't touch `/root/.bashrc`, `/etc/hosts`, or climb
  * out with `../..` regardless of what the approval UI does. It only sees named path arguments —
@@ -190,6 +148,13 @@ function isInside(workDir: string, candidate: string): boolean {
  * a hook, so it stays out of scope here.
  */
 export function createPathScopeHook(workDir: string): HookCallback {
+  const deny = (pre: PreToolUseHookInput, arg: string, value: string, why: string) => ({
+    hookSpecificOutput: {
+      hookEventName: pre.hook_event_name,
+      permissionDecision: "deny" as const,
+      permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 200)}') ${why} and is never allowed.`,
+    },
+  });
   return async (input) => {
     if (input.hook_event_name !== "PreToolUse") return {};
     const pre = input as PreToolUseHookInput;
@@ -199,14 +164,21 @@ export function createPathScopeHook(workDir: string): HookCallback {
     for (const arg of argNames) {
       const value = toolInput[arg];
       if (typeof value !== "string" || value === "") continue;
-      if (!isInside(workDir, value)) {
-        return {
-          hookSpecificOutput: {
-            hookEventName: pre.hook_event_name,
-            permissionDecision: "deny",
-            permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value}') resolves outside the run's working directory (${workDir}) and is never allowed.`,
-          },
-        };
+      const placed = toolPath(value);
+      if ("refuse" in placed) return deny(pre, arg, value, `cannot be placed (${placed.refuse})`);
+      if (!isInside(workDir, placed.path)) return deny(pre, arg, value, `resolves outside the run's working directory (${workDir})`);
+    }
+    // Glob's pattern is a path too: an absolute one, one that climbs, one that starts with ~, one that names an outside directory inside a brace.
+    if (pre.tool_name === "Glob" && typeof toolInput.pattern === "string" && toolInput.pattern !== "") {
+      const pattern = toolInput.pattern;
+      const placed = toolPath(pattern);
+      if ("refuse" in placed) return deny(pre, "pattern", pattern, `cannot be placed (${placed.refuse})`);
+      // A relative pattern with no .. stays under the directory it searches, which the path check above has already placed inside; an absolute one names its own directory.
+      for (const alt of expandBraces(placed.path)) {
+        if (/(^|[\\/])\.\.([\\/]|$)/.test(alt)) return deny(pre, "pattern", pattern, "climbs out of its directory with ..");
+        const asTool = toolPath(alt);
+        if ("refuse" in asTool) return deny(pre, "pattern", pattern, `cannot be placed (${asTool.refuse})`);
+        if ((isAbsolute(asTool.path) || /^[A-Za-z]:[\\/]/.test(asTool.path)) && !isInside(workDir, asTool.path)) return deny(pre, "pattern", pattern, `names a directory outside the run's working directory (${workDir})`);
       }
     }
     return {};
@@ -222,31 +194,51 @@ export function createPathScopeHook(workDir: string): HookCallback {
  * through on tool-name auto-approval alone. This checks the path itself, so it holds either way —
  * a `deny` from any hook wins regardless of what the approval hook auto-approves by tool name.
  */
-const SENSITIVE_PATH_RE =
-  /(^|[/\\])(\.ssh[/\\](id_rsa|id_ed25519|id_dsa|id_ecdsa)(\.pub)?|\.aws[/\\]credentials|\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.claude[/\\]\.credentials\.json|credentials\.json|\.env)$/i;
+const SENSITIVE_PATH_RE = new RegExp(
+  String.raw`(^|[/\\])(` +
+    [
+      String.raw`\.ssh[/\\](id_rsa|id_ed25519|id_dsa|id_ecdsa)(\.pub)?`,
+      String.raw`\.aws[/\\]credentials`,
+      String.raw`\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|\.my\.cnf|\.boto|\.s3cfg`,
+      String.raw`\.claude[/\\]\.credentials\.json|credentials\.json`,
+      // .env and its variants (.env.local, .env.production); the files meant to be committed as templates are not secrets
+      String.raw`\.env(\.(?!(example|sample|template|dist|defaults?)$)[^/\\]+)?`,
+      String.raw`\.docker[/\\]config\.json|\.kube[/\\]config|\.gnupg([/\\].*)?`,
+      String.raw`id_(rsa|ed25519|dsa|ecdsa)|[^/\\]+\.(pem|key|p12|pfx)|secrets?\.(ya?ml|json|toml)`,
+      // agent-loop's own home (the login profile, the audit database, a roster): nothing an agent should read, and a roster an agent writes is the threat G10
+      String.raw`\.agent-loop([/\\].*)?`,
+      // .git holds the config and attributes that make an auto-approved `git status` or `git diff` run a program (core.fsmonitor, a diff driver), and remotes with tokens in them
+      String.raw`\.git([/\\].*)?`,
+    ].join("|") +
+    String.raw`)$`,
+  "i"
+);
 const SENSITIVE_ABS_RE = /^\/etc\/(shadow|passwd|sudoers)$/i;
 
-export function createSensitiveFileHook(): HookCallback {
+/** `workDir` is where relative paths are resolved, as the file tools and the scope hook do (A28); without it the process's own directory is used, as before. */
+export function createSensitiveFileHook(workDir?: string): HookCallback {
   return async (input) => {
     if (input.hook_event_name !== "PreToolUse") return {};
     const pre = input as PreToolUseHookInput;
     const argNames = PATH_ARGS[pre.tool_name];
     if (!argNames) return {};
     const toolInput = (pre.tool_input ?? {}) as Record<string, unknown>;
+    const base = workDir ?? process.cwd();
+    const deny = (arg: string, value: string) => ({
+      hookSpecificOutput: {
+        hookEventName: pre.hook_event_name,
+        permissionDecision: "deny" as const,
+        permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 200)}') names a credential/secret file and is never allowed, regardless of --dir or tool-level auto-approval.`,
+      },
+    });
     for (const arg of argNames) {
       const value = toolInput[arg];
       if (typeof value !== "string" || value === "") continue;
-      // The name as written, and the file it really is: a link called notes.txt that points at .env is the credential file.
-      const real = canonicalPath(value, process.cwd());
-      if (SENSITIVE_PATH_RE.test(value) || SENSITIVE_ABS_RE.test(resolve(value)) || (real !== undefined && (SENSITIVE_PATH_RE.test(real) || SENSITIVE_ABS_RE.test(real)))) {
-        return {
-          hookSpecificOutput: {
-            hookEventName: pre.hook_event_name,
-            permissionDecision: "deny",
-            permissionDecisionReason: `agent-loop safety net: ${pre.tool_name}'s ${arg} ('${value}') names a credential/secret file and is never allowed, regardless of --dir or tool-level auto-approval.`,
-          },
-        };
-      }
+      const placed = toolPath(value);
+      if ("refuse" in placed) return deny(arg, value); // a form that cannot be placed is not one to read a secret through
+      // The name as written, the file it will expand to, and the file it really is: a link called notes.txt that points at .env is the credential file.
+      const real = canonicalPath(placed.path, base);
+      if (SENSITIVE_PATH_RE.test(value) || SENSITIVE_ABS_RE.test(resolve(base, placed.path)) || (real !== undefined && (SENSITIVE_PATH_RE.test(real) || SENSITIVE_ABS_RE.test(real)))) return deny(arg, value);
     }
     return {};
   };

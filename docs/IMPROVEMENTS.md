@@ -311,3 +311,30 @@ come from those documents, not from a re-run.
 - **Skill impact:** SKILL-011 (lesson 27: a filter test names the byte classes and channels it covers).
 - **Follow-ups:** S3a part two (the pipeline runs the plan: `--team auto|fixed5`, events with `stepId`, store columns, lineage identity, the variable-length stepper, Overseer append/split/skip/repair, diff-scope audit after
   each builder, V14 wiring, V7 enforced by the hook chain); an adversary round aimed at the validator; V9 with the S4 governor; the sizing labels are mine, so a second labeller would be a better test.
+
+## IMP-016 · 2026-10-03 · Approval and path hooks judge what the tool will do, not what the text looks like (adversary round 2: A51, A27, A28, A29, A30, A44)
+- **Problem:** a fresh-context adversary ran the real hook chain and found it let through, with no human asked: `sed '1e CMD'` and `sed w` (run a program, write any file), `rg --pre ./script`, `git remote set-url`, `git branch -d`,
+  `sort -o`, a symlink inside `--dir` read through `cat outside/x`, and `cat {/etc/hostname,notes.txt}` (A51, critical: three proof files were created outside the directory by commands the hook approved). It also found that `~/x`
+  was read as a directory called `~` inside `--dir` while the file tools expand it to the home directory (A27), a relative link to `.env` was judged from the wrong directory (A28), Glob's pattern was never looked at and the credential
+  list knew only exact names (A29), and `git -C repo push --force` or `rm -rf /etc` passed under `--no-approval` (A30). Working on it showed the same class in `less '+!id'`, `printf -v PATH`, `ps eww` and `.git/config`
+  (an auto-approved `git status` runs `core.fsmonitor` from it).
+- **Why it matters:** the approval step is what the design leans on for `Bash` and the path hooks are what keep the file tools inside `--dir`; each was a check on the text of a command or path, and the tool that acts on it reads the
+  text differently. For unattended runs (and the job-application flow) a steered model needs only one such line.
+- **Change (how):** `src/readonly-shell.ts`: read-only is an allow-list of safe FORMS, not names (sed: a plain `p`, `d`, `q` or one `s///` whose flags are g p i I m M and digits; git: `status diff log show rev-parse ls-files`, `branch` and
+  `remote` only to list, never `--output`, `--no-index`, `--ext-diff`, `--textconv`; no `--pre`, `-o`, `--output`, `--compress-program`, `-L`/`-R` link-following; every non-flag word, the pattern included, judged by its real location;
+  `less` and `more` ask). `src/bash-analysis.ts`: the tokenizer marks unquoted glob, brace and tilde words unsafe (they ask), redirect targets the shell rewrites make the whole command ask, and paths are judged through
+  `canonicalPath` (links followed). `src/path-canon.ts` (moved out of `hooks.ts`): `toolPath` expands `~` as the tools do and refuses `~user`, UNC, drive-relative, `%VAR%` and NUL; Glob patterns are checked (absolute, `..`, braces).
+  `src/hooks.ts`: the sensitive-file hook takes `--dir`; the credential list is shapes (`.env.*` except `.env.example`, `*.pem`, `*.key`, `id_*`, `.docker`, `.kube`, `.gnupg`, `.agent-loop`, `.git`); git's global options are dropped before
+  the safety patterns match and `rm` of any top-level directory is denied. Wired in `src/phases.ts`.
+- **Measured:** two new suites, baselines taken on the unmodified build `f10a830`: `shell-readonly` **106 of 216 to 216 of 216** (110 attack rows ran without a prompt; 71 ordinary commands still run quietly, 0 newly asked) and
+  `file-hooks` **65 of 242 to 242 of 242** (177 rows wrong). `test/bash-readonly.mjs`, `test/path-text.mjs`, `test/safety-rewrites.mjs` each failed on the old build at the first row. Mutation checks: **61 mutants on the read-only analysis,
+  2 equivalent survivors** (`git --no-index` and `stat -L`: the real-location check already refuses everything they would add); **31 on the path and safety hooks, 1 equivalent** (a NUL byte: an unresolvable path is already denied).
+  The harness's first run left eight "survivors" that were dead mutants (compiled text did not match) and five real test gaps (no row where sed names an outside file, git diff an outside path, a flag carries an attached path, a link is
+  reached only by recursion, a brace sits in a flag), all closed by rows; two pieces of code the survivors showed to be redundant were deleted rather than kept.
+- **Cost / trade-off:** commands with a glob, brace, variable or tilde now ask (`ls *.ts`, `cat $F`), as does any `sed` beyond the simple forms, `git diff --ext-diff`, and `less`; `git log main..feature` still runs quietly. Under `--no-approval`,
+  `rm -rf /tmp/*` or `rm -rf /app` (a top-level directory, or all of one) is now denied outright. The file tools can no longer read or write `.git/**`, `.agent-loop/**`, `*.pem`, `*.key`, `.env.local` and similar, so a project that
+  keeps a real key file in the tree must be worked on through the shell, with approval. A name like `a:b` is read as a drive form and refused. The safety net's `git branch -d` pattern is still case-insensitive and denies the safe lowercase form too (left alone, noted).
+- **Suites:** shell-readonly, file-hooks
+- **Skill impact:** SKILL-013 (lesson 28: judge what the tool will open or run, and run every tool against every form of its input).
+- **Follow-ups:** the rest of round 2 (see `docs/adversary/round-02-triage.md`); Bash is still not scoped (a command that does ask can still write anywhere the person approves); expansion is judged, not performed (a glob asks instead of being expanded
+  and checked); on Windows only the string forms are tested here.

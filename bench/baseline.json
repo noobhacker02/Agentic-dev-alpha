@@ -35,6 +35,18 @@
       "max": 28,
       "commit": "1845dc7",
       "date": "2026-10-03"
+    },
+    "shell-readonly": {
+      "value": 106,
+      "max": 216,
+      "commit": "f10a830",
+      "date": "2026-10-03"
+    },
+    "file-hooks": {
+      "value": 65,
+      "max": 242,
+      "commit": "f10a830",
+      "date": "2026-10-03"
     }
   }
 }

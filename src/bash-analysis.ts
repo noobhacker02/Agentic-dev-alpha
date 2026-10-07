@@ -1,4 +1,6 @@
-import { isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { canonicalPath, isInside } from "./path-canon.js";
+import { readOnlyCommand } from "./readonly-shell.js";
 
 /**
  * Splits a shell command into its simple subcommands the way Claude Code's permission check does,
@@ -22,6 +24,8 @@ interface RawSub {
   words: string[];
   /** Words that contained an unquoted `$` expansion (value unknown until the shell runs it). */
   dynamic: boolean[];
+  /** Words the shell rewrites before the command sees them: an unquoted glob, brace expansion or leading tilde. The analysis cannot know what they become. */
+  unsafe: boolean[];
   writes: boolean; // output redirected to a real file
   readsFrom: string[]; // `< file`
 }
@@ -30,17 +34,29 @@ const SEPARATORS = new Set([";", "\n", "&&", "||", "|", "&", "(", ")"]);
 
 function tokenize(command: string): RawSub[] | null {
   const subs: RawSub[] = [];
-  let cur: RawSub = { words: [], dynamic: [], writes: false, readsFrom: [] };
+  let cur: RawSub = { words: [], dynamic: [], unsafe: [], writes: false, readsFrom: [] };
   let word: string | null = null;
   let dyn = false;
+  /** The characters of the current word that were not quoted or escaped, and whether the word began with one: only those can be expanded by the shell. */
+  let unq = "";
+  let startsUnquoted = false;
+  const add = (text: string, quoted: boolean) => {
+    if (word === null) { word = ""; startsUnquoted = !quoted; }
+    word += text;
+    if (!quoted) unq += text;
+  };
   const flushWord = () => {
-    if (word !== null) { cur.words.push(word); cur.dynamic.push(dyn); }
-    word = null; dyn = false;
+    if (word !== null) {
+      cur.words.push(word);
+      cur.dynamic.push(dyn);
+      cur.unsafe.push(/[*?[]/.test(unq) || /\{[^{}]*(,|\.\.)[^{}]*\}/.test(unq) || (startsUnquoted && unq.startsWith("~")));
+    }
+    word = null; dyn = false; unq = ""; startsUnquoted = false;
   };
   const flushSub = () => {
     flushWord();
     if (cur.words.length || cur.writes || cur.readsFrom.length) subs.push(cur);
-    cur = { words: [], dynamic: [], writes: false, readsFrom: [] };
+    cur = { words: [], dynamic: [], unsafe: [], writes: false, readsFrom: [] };
   };
   const readTarget = (i: number): [string, number] => {
     while (command[i] === " " || command[i] === "\t") i++;
@@ -62,12 +78,12 @@ function tokenize(command: string): RawSub[] | null {
     const ch = command[i], two = command.slice(i, i + 2);
     if (ch === "\\") {
       if (command[i + 1] === "\n") { i += 2; continue; } // line continuation
-      word = (word ?? "") + (command[i + 1] ?? ""); i += 2; continue;
+      add(command[i + 1] ?? "", true); i += 2; continue;
     }
     if (ch === "'") {
       const end = command.indexOf("'", i + 1);
       if (end < 0) return null;
-      word = (word ?? "") + command.slice(i + 1, end); i = end + 1; continue;
+      add(command.slice(i + 1, end), true); i = end + 1; continue;
     }
     if (ch === '"') {
       let j = i + 1, s = "";
@@ -78,19 +94,20 @@ function tokenize(command: string): RawSub[] | null {
         s += command[j]; j++;
       }
       if (j >= command.length) return null;
-      word = (word ?? "") + s; i = j + 1; continue;
+      add(s, true); i = j + 1; continue;
     }
     if (ch === "`" || two === "$(" || two === "<(" || two === ">(" || two === "<<") return null;
     if (ch === "$") dyn = true;
     if (ch === ">" || ch === "<") {
       // An fd prefix like the 2 in 2>&1 belongs to the operator, not to the command's words.
-      if (word !== null && /^(\d+|&)$/.test(word)) word = null;
+      if (word !== null && /^(\d+|&)$/.test(word)) { word = null; unq = ""; startsUnquoted = false; }
       else flushWord();
       let op = ch; i++;
       if (command[i] === ">") { op += ">"; i++; }
       if (command[i] === "&") { i++; const [fd, n] = readTarget(i); if (n < 0) return null; i = n; if (!/^\d+$/.test(fd) && fd !== "-") return null; continue; }
       const [target, n] = readTarget(i);
       if (n < 0 || !target) return null;
+      if (/[$*?[{~]/.test(target)) return null; // a target the shell rewrites (variable, glob, brace, tilde) is a file nobody can name in advance
       i = n;
       if (target === "/dev/null") continue;
       if (op === "<") cur.readsFrom.push(target); else cur.writes = true;
@@ -99,16 +116,12 @@ function tokenize(command: string): RawSub[] | null {
     if (two === "&&" || two === "||") { flushSub(); i += 2; continue; }
     if (SEPARATORS.has(ch)) { flushSub(); i++; continue; }
     if (ch === " " || ch === "\t") { flushWord(); i++; continue; }
-    word = (word ?? "") + ch; i++;
+    add(ch, false); i++;
   }
   flushSub();
   return subs;
 }
 
-/** Commands that only read; the ones in PATH_READERS also get their path arguments checked. */
-const ARG_FREE = new Set(["echo", "printf", "true", "false", "sleep", "pwd", "date", "which", "whoami", "ps", "test", "[", "uname", "id"]);
-const PATH_READERS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "find", "diff", "sort", "uniq", "cut", "stat", "file", "tree", "du", "sed", "less", "more", "jq", "md5sum", "sha256sum"]);
-const GIT_READ = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "branch", "remote"]);
 /** Never generalised into a "don't ask again" rule: destructive, network-reaching, or runs other code. */
 const NEVER_RULE = new Set([
   "rm", "rmdir", "dd", "shred", "chmod", "chown", "chgrp", "kill", "pkill", "killall", "shutdown", "reboot",
@@ -151,6 +164,8 @@ const PACKAGE_MANAGERS = new Set([
 ]);
 const PACKAGE_INSTALL_SUBS = new Set(["install", "i", "add", "uninstall", "remove", "rm", "un", "update", "upgrade", "get"]);
 const GIT_NEVER = new Set(["push", "reset", "clean", "checkout", "rebase", "filter-branch", "gc", "prune", "restore", "switch", "am", "apply", "config", "remote", "submodule", "update-ref", "worktree"]);
+/** Commands whose arguments are not paths, so a variable or a glob in them reaches nothing the shell could not already print (echo * lists the directory). */
+const ARG_FREE_NO_EXPANSION_CHECK = new Set(["echo", "pwd", "true", "false", "sleep", "which", "whoami", "uname", "id", "test", "["]);
 const LOCAL_URL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/;
 
 /** `python3 -c`, `python3 -O -c`, `python3 -Bc`, `node -pe`, `node --eval=…`: code given on the
@@ -164,20 +179,15 @@ function runsInlineCode(args: string[]): boolean {
   return false;
 }
 
-function insideDir(root: string, p: string): boolean {
-  const r = resolve(root);
-  const c = resolve(p);
-  return c === r || c.startsWith(r + sep);
-}
-
 export function analyzeBash(command: string, workDir?: string): Subcommand[] | null {
   const raw = tokenize(command.trim());
   if (!raw || raw.length === 0) return null;
-  let cwd = workDir;
-  const pathOk = (arg: string, dynamic: boolean) => {
-    if (dynamic || arg.startsWith("~") || !cwd || !workDir) return false;
+  let cwd = workDir ? canonicalPath(workDir, process.cwd()) : undefined;
+  // Where a path word really is, with links followed: a lexical check called `outside/hostname` inside the directory when `outside` was a link to /etc.
+  const pathOk = (arg: string, dynamic = false, unsafe = false) => {
+    if (dynamic || unsafe || !cwd || !workDir) return false;
     if (arg === "/dev/null") return true;
-    return insideDir(workDir, isAbsolute(arg) ? arg : resolve(cwd, arg));
+    return isInside(workDir, arg, cwd);
   };
   return raw.map((s): Subcommand => {
     // Leading VAR=value assignments: harmless alone, but they can change what a command does
@@ -186,32 +196,28 @@ export function analyzeBash(command: string, workDir?: string): Subcommand[] | n
     while (k < s.words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(s.words[k])) k++;
     const words = s.words.slice(k);
     const dynamic = s.dynamic.slice(k);
+    const unsafe = s.unsafe.slice(k);
     if (!words.length) return { words: s.words, readOnly: !s.writes, rule: null };
     const [cmd, sub] = words;
     const args = words.slice(1);
-    const readsOk = s.readsFrom.every((f) => pathOk(f, false));
-    const plainArgsOk = () => args.every((a, idx) => a.startsWith("-") || pathOk(a, dynamic[idx + 1]));
+    const readsOk = s.readsFrom.every((f) => pathOk(f));
 
     let readOnly = false;
     if (k === 0 && !s.writes && readsOk) {
       if (cmd === "cd") {
         const target = args[0] ?? "~";
-        readOnly = pathOk(target, dynamic[1]);
+        readOnly = pathOk(target, dynamic[1], unsafe[1]);
         // After a cd we can't vouch for, every relative path that follows is somewhere unknown.
-        cwd = readOnly && cwd ? (isAbsolute(target) ? target : resolve(cwd, target)) : undefined;
-      } else if (ARG_FREE.has(cmd)) readOnly = true;
-      else if (cmd === "git") readOnly = GIT_READ.has(sub ?? "") && args.slice(1).every((a) => !a.includes(".."));
-      else if (cmd === "find") readOnly = !args.some((a) => /^-(exec|execdir|delete|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(a)) && args.every((a, idx) => a.startsWith("-") || !/^[/.~]/.test(a) || pathOk(a, dynamic[idx + 1]));
-      else if (cmd === "sed") readOnly = !args.some((a) => /^-i|^--in-place/.test(a)) && plainArgsOk();
-      else if (cmd === "grep" || cmd === "egrep" || cmd === "fgrep" || cmd === "rg") {
-        // The first non-flag argument is the pattern, not a path.
-        const firstNonFlag = args.findIndex((a) => !a.startsWith("-"));
-        readOnly = args.every((a, idx) => idx === firstNonFlag || a.startsWith("-") || pathOk(a, dynamic[idx + 1]));
-      } else if (PATH_READERS.has(cmd)) readOnly = plainArgsOk();
-      else if (cmd === "curl") {
+        cwd = readOnly && cwd ? canonicalPath(target, cwd) : undefined;
+      } else if (cmd === "curl") {
         const urls = args.filter((a) => /^https?:\/\//.test(a));
         const outFlag = args.findIndex((a) => /^(-o|-O|--output|-T|--upload-file|--remote-name)$/.test(a));
         readOnly = urls.length > 0 && urls.every((u) => LOCAL_URL.test(u)) && (outFlag < 0 || args[outFlag + 1] === "/dev/null") && !args.some((a) => /^-[a-zA-Z]*[oOT]$/.test(a) && a !== "-o");
+      } else {
+        // A word the shell rewrites (a variable, a glob, a brace expansion, a tilde) is a word we cannot see: the command asks. The few commands with
+        // no path arguments (echo, pwd, date ...) are judged by their flags and ignore this.
+        const dynOrUnsafe = args.some((_, i) => dynamic[i + 1] || unsafe[i + 1]);
+        readOnly = !dynOrUnsafe || ARG_FREE_NO_EXPANSION_CHECK.has(cmd) ? readOnlyCommand(cmd, args, { pathOk: (a) => pathOk(a) }) : false;
       }
     }
 

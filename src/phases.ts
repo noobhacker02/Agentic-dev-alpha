@@ -176,7 +176,7 @@ export async function runPhase(opts: RunPhaseOptions): Promise<PhaseVerdict> {
   const spec = PHASE_SPECS[opts.phase];
   const safetyHook = createSafetyHook();
   const pathScopeHook = createPathScopeHook(opts.workDir);
-  const sensitiveFileHook = createSensitiveFileHook();
+  const sensitiveFileHook = createSensitiveFileHook(opts.workDir);
   const approvalHook = createApprovalHook({
     bus: opts.bus,
     runId: opts.runId,

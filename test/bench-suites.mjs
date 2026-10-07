@@ -4,6 +4,8 @@ import { CHECKS, PROBE_PATHS } from "../bench/suites/observability.mjs";
 import { CHECKS as FORM_CHECKS, PROBE_PATHS as FORM_PATHS } from "../bench/suites/form-coverage.mjs";
 import { generate, scoreWith } from "../bench/suites/team-invariants.mjs";
 import { scoreSizing, TASKS as SIZING_TASKS } from "../bench/suites/team-sizing.mjs";
+import { AUTO as SHELL_AUTO, ASK as SHELL_ASK, scoreShell } from "../bench/suites/shell-readonly.mjs";
+import { scoreHooks, setupHooks, SAFETY_DENY, SAFETY_ALLOW } from "../bench/suites/file-hooks.mjs";
 import { validatePlan } from "../dist/team/plan.js";
 import { BUILTIN_ROSTER } from "../dist/team/roster.js";
 import { composeOffline } from "../dist/team/compose.js";
@@ -118,4 +120,24 @@ console.log(`[ok] bench scorers: ${ids.length} checks miss on silence and hit on
   assert.strictEqual(scoreSizing(() => { throw new Error("boom"); }).right, 0, "a composer that crashes scored points");
   assert.strictEqual(SIZING_TASKS.length, 28, "the labelled task list changed size without the suite's title saying so");
   console.log(`[ok] team-sizing: 28 labelled tasks; the real composer ${good.right}; a fixed five ${fixedFive.right}, the smallest team ${smallest.right}, fourteen builders 0 with ${huge.oversized} oversized plans counted`);
+}
+// shell-readonly and file-hooks: a scorer that always allows, one that always denies and one that crashes must each fall well short of full marks; the real hooks score all of them.
+{
+  const total = SHELL_AUTO.length + SHELL_ASK.length;
+  const allowAll = scoreShell(() => true), askAll = scoreShell(() => false);
+  assert.strictEqual(allowAll.right, SHELL_AUTO.length, "allowing everything should score only the ordinary commands");
+  assert.strictEqual(askAll.right, SHELL_ASK.length, "asking about everything should score only the ones that must ask");
+  assert.ok(allowAll.right < total * 0.5 && askAll.right < total * 0.7, `a scorer that always allows scored ${allowAll.right} and one that always asks ${askAll.right} of ${total}`);
+  assert.throws(() => scoreShell(() => { throw new Error("boom"); }), /boom/, "a crashing decision must surface, not score");
+  const h = await setupHooks();
+  try {
+    const real = await scoreHooks(h);
+    assert.deepStrictEqual(real.wrong, [], `the real hooks get rows wrong: ${real.wrong.slice(0, 5).join("; ")}`);
+    const denyAll = await scoreHooks({ ...h, denied: async () => true, decide: async () => "deny", safetyDenies: async () => true });
+    const passAll = await scoreHooks({ ...h, denied: async () => false, decide: async () => "pass", safetyDenies: async () => false });
+    assert.ok(denyAll.right <= real.total - 40, `denying everything scored ${denyAll.right} of ${real.total}`);
+    assert.ok(passAll.right <= real.total / 2, `passing everything scored ${passAll.right} of ${real.total}`);
+    assert.ok(SAFETY_DENY.length >= 10 && SAFETY_ALLOW.length >= 10, "the safety rows shrank");
+    console.log(`[ok] shell-readonly: ${total} rows, the real analysis ${total}, always-allow ${allowAll.right}, always-ask ${askAll.right}; file-hooks: ${real.total} rows, the real hooks ${real.right}, deny-everything ${denyAll.right}, pass-everything ${passAll.right}`);
+  } finally { h.restore(); }
 }

@@ -10,11 +10,16 @@ export function validateRound(md, triageMd) {
   for (const r of rows) {
     if (seen.has(r.id)) problems.push(`${r.id}: duplicate id`);
     seen.add(r.id);
-    const sec = md.match(new RegExp(`^### ${r.id} \\([^)]*\\)[^\\n]*\\n([\\s\\S]*?)(?=^### |^## |\\Z)`, "m"));
+    // A section ends at the next heading or at the end of the input. JavaScript has no \Z: `(?![\s\S])` is the end, and a bare Z would end a section at the first capital Z in it.
+    const sec = md.match(new RegExp(`^### ${r.id} \\([^)]*\\)[^\\n]*\\n([\\s\\S]*?)(?=^### |^## |(?![\\s\\S]))`, "m"));
     if (!sec) { problems.push(`${r.id}: in the table but has no section`); continue; }
     if (/^CONFIRMED/i.test(r.status)) {
       // A reproduction, an argument or a scenario by name, or else concrete evidence: at least four quoted code, file or line references.
-      const named = /Reproduction|Argument|Scenario/i.test(sec[1]);
+      // The label alone is not a reproduction (A49): a Reproduction field needs a command, code or output in it (a code span or a fenced block) and may not say "none"; an Argument or Scenario needs some substance.
+      const field = (name) => sec[1].match(new RegExp(`\\*\\*${name}[^*\\n]*\\*\\*:?([\\s\\S]*?)(?=\\n- \\*\\*|(?![\\s\\S]))`, "i"))?.[1] ?? "";
+      const repro = field("Reproduction");
+      const reproOk = /`[^`\n]+`|```/.test(repro) && !/^\s*(none|n\/a|not run|no)\b/i.test(repro);
+      const named = reproOk || field("Argument").trim().length >= 80 || field("Scenario").trim().length >= 80;
       const concrete = (sec[1].match(/`[^`\n]+`/g) ?? []).length >= 4;
       // A finding "confirmed by the documents' own text" is an argument from quotation; it must at least be substantial.
       const fromText = /text/i.test(r.status) && sec[1].length >= 600;

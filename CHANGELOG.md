@@ -5,6 +5,19 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- **Read-only auto-approval is an allow-list of safe forms, and the path hooks judge what the file tools will open** (adversary round 2: A51 critical, A27 high, A28, A29, A30, A44; `docs/IMPROVEMENTS.md` IMP-016). A fresh-context adversary
+  made the real approval hook run `sed '1e CMD'`, `sed w`, `rg --pre`, `git remote set-url`, `sort -o` and a read through a symlink with no prompt, and showed `~/x` slipping past path scope. Now `sed` is read-only only as a plain
+  `p`, `d`, `q` or one `s///`, `git` only in reading forms, output and program-running flags ask, every path is judged by its real location, a glob, brace, tilde or variable asks, `~` means the home directory as the tools
+  expand it, Glob patterns are checked, the credential list is shapes (`.env.*`, keys, `.git`, `.agent-loop`), the sensitive-file hook resolves from `--dir`, and `git -C repo push --force` or `rm -rf /etc` is denied under
+  `--no-approval`. Benchmarks `shell-readonly` 106 to 216 of 216 and `file-hooks` 65 to 242 of 242 (baselines on the unmodified build); three new tests that failed on the old build; 92 mutants with 3 equivalent. Costs: commands with a
+  glob or variable now ask; the file tools cannot touch `.git/**` or key files.
+
+### Fixed
+- **`test:ui-plain` waits for the glyph to turn instead of sampling it twelve times in 1.4 s.** It failed once on the macOS runner at `f10a830` (the control "the glyph turns when cartoons are on") and passed on Linux, Windows and in
+  my full local run; four runs under six CPU hogs also passed, so the cause there is unproven. A new section clamps the page's timers to one a second and shows the old window sees fewer than three glyphs while the new wait sees
+  three, and plain mode still freezes it. Whether the runner throttled its page is a hypothesis until CI is green.
+
 ### Added
 - **The team a task gets is decided by code, and `agent-loop roster` and `agent-loop team "<task>" --dry-run` show it without running anything** (S3a part one; `docs/TEAM-COMPOSITION.md`,
   `docs/IMPROVEMENTS.md` IMP-015). A roster of 19 built-in roles as data (what each may use and write, how many, whether it can be skipped), your own roles from `~/.agent-loop/roster`, a project roster

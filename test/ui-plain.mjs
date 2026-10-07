@@ -120,14 +120,49 @@ const waitPlain = (page, v) => page.waitForFunction((x) => document.documentElem
   await h.open("?plain=0");
   h.startRun();
   await page.waitForSelector(".statusline .spin");
-  const sample = async () => { const seen = new Set(); for (let i = 0; i < 12; i++) { seen.add(await page.evaluate(() => document.querySelector(".statusline .spin").textContent)); await page.waitForTimeout(120); } return seen; };
-  assert.ok((await sample()).size >= 3, "control: the glyph turns when cartoons are on");
+  const glyph = () => page.evaluate(() => document.querySelector(".statusline .spin").textContent);
+  // Wait for the state, not for a fixed number of samples (the macOS run of f10a830 saw too few frames in 1.4 s, most likely because a page's timers can be throttled there):
+  // the glyph must be seen in three positions within a generous deadline, and how long that took sizes the window in which plain mode must show it holding still.
+  const t0 = Date.now();
+  const turning = new Set();
+  while (turning.size < 3 && Date.now() - t0 < 20_000) { turning.add(await glyph()); await page.waitForTimeout(60); }
+  const turnMs = Date.now() - t0;
+  assert.ok(turning.size >= 3, `control: the glyph turns when cartoons are on (saw ${[...turning]} in ${turnMs} ms)`);
   await page.evaluate(() => AL.setPlain(true));
   await waitPlain(page, "on");
-  const frozen = await sample();
+  const frozen = new Set();
+  const until = Date.now() + Math.max(1500, turnMs * 2);
+  while (Date.now() < until) { frozen.add(await glyph()); await page.waitForTimeout(60); }
   assert.deepStrictEqual([...frozen], ["✻"], `in plain mode it holds still on the first glyph: ${[...frozen]}`);
   assert.ok(await page.evaluate(() => !!document.querySelector(".statusline .spin")), "…and it is still there");
   console.log("[ok] the turning glyph turns normally and holds still in plain mode");
+  await h.close();
+}
+
+// ---------- 1d. a page whose timers are throttled (a window the system treats as hidden): the glyph still turns, slowly, and plain mode still holds it
+// The first version of 1c sampled twelve times in 1.4 s and failed once on macOS. Here the page's own timers are clamped to one a second, as a throttled page's are; the old
+// sampling would see two glyphs in 1.4 s, the wait-for-state version sees three, later.
+{
+  const h = await harness({ init: () => { const real = window.setInterval.bind(window); window.setInterval = (f, ms, ...a) => real(f, Math.max(ms ?? 0, 1000), ...a); } });
+  const { page } = h;
+  await h.open("?plain=0");
+  h.startRun();
+  await page.waitForSelector(".statusline .spin");
+  const glyph = () => page.evaluate(() => document.querySelector(".statusline .spin").textContent);
+  const shortWindow = new Set();
+  for (let i = 0; i < 12; i++) { shortWindow.add(await glyph()); await page.waitForTimeout(120); }
+  assert.ok(shortWindow.size < 3, `control for the control: with throttled timers a 1.4 s window sees fewer than three glyphs (saw ${[...shortWindow]})`);
+  const turning = new Set();
+  const t0 = Date.now();
+  while (turning.size < 3 && Date.now() - t0 < 20_000) { turning.add(await glyph()); await page.waitForTimeout(60); }
+  assert.ok(turning.size >= 3, `a throttled page still turns the glyph (saw ${[...turning]})`);
+  await page.evaluate(() => AL.setPlain(true));
+  await waitPlain(page, "on");
+  const frozen = new Set();
+  const until = Date.now() + Math.max(1500, (Date.now() - t0) * 2);
+  while (Date.now() < until) { frozen.add(await glyph()); await page.waitForTimeout(60); }
+  assert.deepStrictEqual([...frozen], ["✻"], `a throttled page in plain mode holds still: ${[...frozen]}`);
+  console.log("[ok] with the page's timers throttled to one a second, the glyph still turns (seen over a longer wait) and plain mode still holds it still");
   await h.close();
 }
 
