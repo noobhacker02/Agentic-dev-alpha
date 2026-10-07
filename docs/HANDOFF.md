@@ -5,8 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-07T06:19:34Z
-Covers agent-loop commit: 922e709
+Updated: 2026-10-07T07:19:57Z
+Covers agent-loop commit: 2df56d3
 Covers Dev-Skill commit: df00698
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
@@ -154,16 +154,15 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
-1. **Round 2 batches 3 to 6 are committed locally as `922e709` (a WIP checkpoint) and are NOT pushed.** The standing commitment is: do not push until the full local suite has passed on the exact commit
-   (`scratchpad/full-on-commit.sh <commit>` makes a fresh worktree and runs `CI=1 node scripts/run-suites.mjs --timeout-min 10` plus `pipeline_logic.sh`), then push and read CI on Linux, macOS and Windows
-   (also confirm Windows `test:bash-readonly` after the `ASK` filter, and the new `test:fatal`, `test:browser-popup-storm`, `test:browser-hang` and the re-measuring `test:bench-table` on all three).
-   Still to do before that run: IMP-017 and IMP-018 in `docs/IMPROVEMENTS.md` (draft in the scratchpad `imp-017-018.tmpl`; numbers: 66 mutants run, survivors accounted for in the entry), `node bench/run.mjs --write-doc`,
-   `test:improvements-log`, `test:bench-table`, `test:handoff`.
-2. The Dev-Skill repo is pushed (`df00698`: lessons 28 and 29, SKILL-013 to SKILL-016, the compaction redactor, the scanner-copies test).
-3. **Needs you (a decision, nothing blocks on it):** the compaction summaries in `docs/handoff/compactions/` are committed by `checkpoint` to a public repository. The redactor is fixed (SKILL-015) and found nothing in the three
-   summaries saved so far; the newest summary (`20261007T051726Z-auto.md`) was run through the fixed redactor (0 lines changed) and committed like the two before it. Say whether to keep committing them (they are lossy digests of the whole session), to ignore the directory, or to keep them local.
-4. Then **S3a part two** (task #101: `--team auto|fixed5|<file>`, events with `stepId`/`role`/`item`, store columns, lineage identity, variable-length stepper, Overseer append/split/skip, diff-scope audit, V14 and V7 wiring),
-   then an adversary round on it; then S2, S3, S4, S5, S5b, S6, S6b, S7 in the spec's order. Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
+1. **CI is green on all three systems at agent-loop `2df56d3`** (Tests on Linux; Cross-platform on macOS and Windows; read from the Actions API; the full local suite had passed 60 of 60 plus `pipeline_logic.sh` on that exact commit first).
+   It took two pushes: at `fe92cb0` Linux and macOS were green and Windows failed only the new re-measuring `test:bench-table` (the three child scripts of `browser-honesty` imported the build by an absolute Windows path, and
+   `file-hooks` has 241 rows there against 242); both are fixed in `2df56d3`. Round 2 batches 2 to 6 are therefore done and CI-confirmed (IMP-016, IMP-017, IMP-018; Dev-Skill `df00698`).
+   **Rule that came out of it, again:** a full suite that passes on Linux says nothing about a test written on Linux; read all three systems after every push.
+2. **Needs you (a decision, nothing blocks on it):** the compaction summaries in `docs/handoff/compactions/` are committed to a public repository (`checkpoint` stages them). The redactor is fixed (SKILL-015) and changed 0 lines of the
+   three summaries saved so far, so all three are committed. Say whether to keep committing them (they are lossy digests of whole sessions), to ignore the directory, or to keep them local.
+3. **S3a part two** (task #101), the next build: `--team auto|fixed5|<file>`, events with `stepId`/`role`/`item`, store columns, lineage identity, variable-length stepper, Overseer append/split/skip, diff-scope audit, V14 and V7 wiring,
+   then an adversary round (a new agent) on it. Then S2, S3, S4, S5, S5b, S6, S6b, S7 in the spec's order. Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
+4. Adversary round 3 (a new fresh-context agent) after S3a part two, not before: round 2's findings are fixed or scheduled by stage.
 
 ## Verified and not verified
 
@@ -178,18 +177,16 @@ Verified (by running, with the evidence in CHANGELOG/STATUS):
   (input: `source` incl. `compact`; output `additionalContext`) hooks (read from the type definitions). `PreCompact` has no documented
   way to block or inject, so it can only warn.
 
-Verified this session (by running; each about the working tree, not about a pushed commit):
+Verified this session (by running; the CI items by reading the Actions API):
 
-- Round 2 batches 3 to 6 on the tree that became `922e709`: `test:fatal` (including the real command, twice per kind of error), `test:browser-popup-storm`, `test:browser-hang`, `test:browser-observability` (all 22 sections, twice), `test:net-gate`,
-  `test:checkpoint`, `test:bench-integrity`, `test:bench-suites`, `test:adversary-round`; benchmark `browser-honesty` 0 of 11 on the old build `ecc83f2` in every run since the popup scenario was made harsher, 11 of 11 here.
-  Mutation checks: 66 mutants on the browser, gate and fatal code (16 first-pass survivors, all accounted for in IMP-017: 8 closed by new assertions and killed on rerun, 1 redundant line deleted, 7 equivalent or redundant layers or an unexercised guard, named), 29 on `checkpoint` and 14 on the baseline check, 0 survivors.
-- Dev-Skill: `tests/handoff_hook_test.py` (3 mutants), `improvement_log_test.py` (16 entries), `scanner_copies_test.py`, `bench_skill_test.py`, `tests/stress/scan_stress2.py` (9 of 11, its two documented holes).
+- **CI green on Linux, macOS and Windows at agent-loop `2df56d3`**, including the new `test:fatal`, `test:browser-popup-storm`, `test:browser-hang`, `test:checkpoint` and the re-measuring `test:bench-table`, and Windows `test:bash-readonly` after the `ASK` filter (it had failed at `ecc83f2`). `test:ui-plain` passed on macOS again (its one failure at `f10a830` is still unexplained).
+- Local full suite: 60 of 60 plus `pipeline_logic.sh` on `fe92cb0` and again on `2df56d3`, each in a fresh worktree with `CI=1`.
+- Mutation checks: 66 mutants on the browser, gate and fatal code (16 first-pass survivors, all accounted for in IMP-017: 8 closed by new assertions and killed on rerun, 1 redundant line deleted, 7 equivalent or redundant layers or an unexercised guard, named), 29 on `checkpoint` and 14 on the baseline check, 0 survivors.
+- Benchmark `browser-honesty` 0 of 11 on the old build `ecc83f2` in every run since the popup scenario was made harsher, 11 of 11 now; `observability` and `form-coverage` baselines unchanged under the stricter scorers (0 of 8 at `7138e1b`, 1 of 8 at `646cdcb`).
+- Dev-Skill: `tests/handoff_hook_test.py` (3 mutants), `improvement_log_test.py` (16 entries), `scanner_copies_test.py`, `bench_skill_test.py`, `tests/stress/scan_stress2.py` (9 of 11, its two documented holes). Dev-Skill has no CI beyond the PR gate.
 
 Not verified:
 
-- **The full suite on `922e709` or any later commit, and CI on any system for it.** Windows CI at `ecc83f2` failed only `test:bash-readonly` (rows that need a symlink); the fix is in `922e709` and was checked only by simulating `win32` on Linux.
-  `test:ui-plain` failed once on macOS at `f10a830` and passed at `ecc83f2`; the cause is unproven.
-- The new tests have not run on macOS or Windows (popups, the child-process scenarios, the CLI fatal test, the scanner run by `checkpoint` with `python` instead of `python3`).
 
 - **That the harness fires the PreCompact hook** (PostCompact **is verified live** now: `docs/handoff/compactions/20261003T060319Z-auto.md` was written by it after the second compaction; the first compaction predates the hook). `SessionStart` **is verified live**: after a session-limit interruption
   the session resumed with source `resume` and the handoff was injected. PreCompact is tested only with the documented JSON payload (it can only warn);
