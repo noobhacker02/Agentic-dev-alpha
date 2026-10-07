@@ -18,6 +18,7 @@ import { LineageTracker, buildLineage, renderLineageMarkdown, renderLineageText 
 import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./persona.js";
 import { roast, roastWithModel, type Habits } from "./roast.js";
 import { rosterCommand, teamCommand, type CommandResult } from "./team/cli-commands.js";
+import { installFatalHandlers } from "./fatal.js";
 
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
@@ -379,6 +380,9 @@ Usage:
   process.on("SIGINT", () => onSignal("SIGINT"));
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 
+  // An error nothing caught must not end the process with the browser running and the run "running" in the database: stop the run the ordinary way, and quit if that does not finish.
+  const removeFatalHandlers = installFatalHandlers({ target: process, stop: (why) => control.stop(why), exit: (code) => process.exit(code), log: (m) => console.error(m) });
+
   let url: string, close: () => Promise<void>;
   try {
     ({ url, close } = await startServer(bus, port, { artifactRoot: browser || desktopTarget !== undefined ? browserArtifactDir : undefined, humor: humor.level, plain, onStop: () => control.stop("you pressed Stop on the page") }));
@@ -446,6 +450,7 @@ Usage:
     store
   );
 
+  removeFatalHandlers();
   terminal.detach();
   persona.detach();
   console.log(`\nRun ${run.id} finished with status: ${run.status}`);

@@ -128,19 +128,21 @@ Screenshots and videos go under `<data dir>/browser-artifacts/<runId>/`. That's 
 
 ## 4. The local-only boundary
 
-Only `localhost` and `127.0.0.1` are reachable, from any page, tab or frame. `open()`'s own check
+Only `localhost` and `127.0.0.1` are reachable, from any page, tab or frame, **on any port**: a page served from one local port can make the browser send a request (a method, headers and a body of the page's
+choosing) to every other service listening on this machine's loopback, and the gate lets it through (adversary round 2, A43: a raw listener on another port received a `POST` whose body was three lines of commands; whether a given
+service acts on that depends on the service). Allowing only the port of the app under test is planned with the LIVE-mode allowances list (S2); until then "local-only" means "every local port". `open()`'s own check
 isn't enough, because pages make requests without calling `open()`. So the boundary is enforced on
 the browser context, in layers. Each layer was added because a real exploit got through without it:
 
 | Channel | Layer that stops it | How we know |
 |---|---|---|
 | Links, forms, `fetch`/XHR, images, beacons, prefetch, `EventSource`, popups (the first URL of each request) | `context.route("**/*")` aborts every non-local request | Clicking a link reached a second server before this existed |
-| **Every hop of a redirect**, the browser's own background requests, tunnels, DNS | The network gate (`src/net-gate.ts`): all browser traffic goes through a proxy that refuses what is not on the list, resolves names itself and connects to the checked address | A 302 from an allowed page reached a decoy on `127.0.0.2` with the query string intact; `test/browser-redirect-gate.mjs` runs 16 ways of trying, and the mutation run kills 13 of 13 mutants |
+| **Every hop of a redirect**, the browser's own background requests, tunnels, the lookup of any name a page chooses | The network gate (`src/net-gate.ts`): all browser traffic goes through a proxy that refuses what is not on the list, resolves names itself and connects to the checked address | A 302 from an allowed page reached a decoy on `127.0.0.2` with the query string intact; `test/browser-redirect-gate.mjs` runs 16 ways of trying, and the mutation run kills 13 of 13 mutants |
 | WebSocket | `context.routeWebSocket` closes non-local sockets with code 1008 before they connect; local sockets aren't matched and behave natively | A page's `new WebSocket()` reached a non-allowed host with the route gate in place: `route()` never sees WebSockets |
 | WebRTC (STUN over UDP, TURN over TCP) | An init script removes `RTCPeerConnection` in every realm before page scripts run | STUN packets reached a non-allowed host (20 of them in one probe). Chromium's `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` did **not** stop them, even to a non-loopback address. The init script held in the main page, a fresh iframe read synchronously, `srcdoc`, `data:` and `blob:` iframes, and `window.open('')` popups |
 | Service workers | `serviceWorkers: "block"` | Playwright's docs say `route()` can't see requests a service worker answers, and recommend blocking them whenever interception matters |
 | Tabs and popups | All of the above, since every tab shares the one context | Tested per channel in a page-opened popup |
-| Runaway popups | At most 10 tabs; extra popups are closed as they arrive | A page opening 25 popups gets 10 |
+| Runaway popups | At most 10 tabs open at once and 60 in a session; the rest are closed as they arrive, counted, and `list_tabs` says how many | A page opening 25 popups gets 10; a storm of 150 leaves 60 ever held (A41) |
 
 **The network gate (added after adversary round 1, finding A2).** The route handler is called once, for the first URL of a request. A server-side
 redirect (301, 302, 303, 307, 308) is followed inside the browser and the handler never sees the next hop, so an allowed local page could send the
@@ -151,6 +153,11 @@ only and requires a random credential, forwards only to hosts on the allowed lis
 and connects to the address it checked and no other (so the browser's own resolver cannot be pointed elsewhere between the check and the connection),
 tunnels `CONNECT` and `ws://` upgrades the same way, and tells the agent what it refused. It also sees the browser's own background requests, which no
 page controls: this Chromium contacts `google.com` by itself at start-up, which the route handler never could have seen.
+
+**DNS, measured (adversary round 2, A40).** In a private network namespace with a UDP sink on port 53, a page carrying `dns-prefetch`, `preconnect`, `prefetch`, an image, `WebTransport`, `fetch`, a WebSocket, a beacon, an
+`EventSource` and a worker, each to its own `*.invalid` name, produced no question for any of those names: the gate resolves page-chosen names itself, so the page cannot use DNS to carry anything out. The browser's *own* resolver
+traffic is not behind the gate, though: the sink saw Chromium's DNS-over-HTTPS probe asking for `dns.google` (type 1 and type 65, four times each). The names are fixed, not the page's, so this is not an exfiltration path, but a
+TEST-mode run on a machine whose resolver is reachable is not silent on the network. Launching with the DoH and async-DNS features off and a host-resolver rule that maps everything but loopback to nothing would close it; that is not done.
 
 An earlier note here said a dead proxy "couldn't be verified" because Chromium sent loopback targets around it. Playwright adds `<-loopback>` to the
 bypass list when a proxy is set (unless `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` is set), and this was checked: the gate saw requests to
@@ -188,6 +195,8 @@ How it stays safe and small:
   messages collapse into one with a count (`x100`). When the buffer is full the least informative entry goes first (a one-off console line
   before a repeated one, a warning before an exception), not simply the oldest. An oldest-first buffer threw away a message repeated 100 times
   to keep 200 one-offs, which the test found.
+- **A failure that happens again is reported again** (adversary round 2, A21). A repeat of a notice that was already shown becomes undelivered again and goes to the end of the order, so the next result carries it as `(x2, 1 since you last looked)`, and the bus hears when the count passes 2, 10 and 100. Before, the click that failed after a "fix" and a verifier's reload of the page the builder saw failing both heard nothing.
+- **`notices` lists what the results left out** (A50): entries the agent has not seen come first, the head says how many are not listed and how to see them, and only entries that were listed count as delivered.
 - **A burst is let to finish** (up to 480 ms, stopping at the first 120 ms lull, only when there is something to show) so the counts are the final ones. The lull was 60 ms until a very slow macOS CI machine reported a burst half finished.
 - **A popup is heard from its first message.** Console output, uncaught exceptions and dialogs are listened to on the whole browser context as well as on each page, because a popup's page object only reaches us after it has started loading: under CPU load its first error was lost 3 runs in 5 when only page listeners existed. An unknown page that speaks is adopted as a tab on the spot, and each event is handled once whichever level hears it first.
 - The browser's own `favicon.ico` request is not news.
@@ -203,16 +212,24 @@ listed. Any check built on that reader (a form diff, a job-id check, a hidden-te
 - **One walk, one budget.** `inspect` walks the main document, every open shadow root (nested ones too, in document order) and every readable frame, same-origin or cross-origin (the browser
   can read both; a page's own scripts cannot, and the [network gate](#4-the-local-only-boundary) already decided what a frame may load). The 60-ref budget is shared; the surplus is counted.
   Refs into a frame or a shadow root work with `click`, `fill`, `select_option`, `hover`, `press` and `scroll` like any other.
+- **Page text is data and is marked as data** (A37). The visible text of `inspect` is stripped of control, bidi and zero-width characters, fenced between `<<<` and `>>>`, and a line that starts like one of the tool's own blocks (`Interactive elements`, `[s9e1]`, `Not listed, and why`, `[Page notices`, `URL:`) is prefixed `(page text)`, so a page cannot print a convincing copy of a block. URLs show protocol, host and path only (`(query and fragment withheld)`), and titles are cut at 200 characters (A38).
+- **A query searches the whole page first** (A47). `inspect` with `query` filters inside the page (up to 600 candidates) before the 60-ref budget applies to the matches, and the answer says how many it looked at and when the list stops. A page past 100,000 elements per frame says the search stopped there (A26).
 - **Frame text is read too.** `inspect`'s visible text and the `text` tool include the text of each readable frame under `[frame "name"]`, bounded (1,000 characters a frame, 3,000 in all in `inspect`).
 - **What could not be read is said**, in a "Not listed, and why" block after the elements: a frame still loading (inspect waits up to 1.5 s for frames, then says so and asks you to inspect again), a
   frame that did not load, a frame whose read failed (named, with the reason; the rest of the page is still listed), more than 20 frames (the rest counted), a frame nobody can see that holds form fields,
-  and custom elements that may hold a **closed** shadow root (a script cannot look inside one; this is a heuristic: a defined custom element with no children and no open root).
-- **Fields a person cannot see are named, not offered.** A text field or text area with opacity 0 (itself or an ancestor), a box of 1px or less, or a position outside the page is listed under "Not visible to a person"
-  with its id, name and reason, and is **not given a ref**. `fill` refuses such a field (and `display:none` and `type=hidden` ones) with "not visible to a person": form builders use exactly these fields to catch
-  bots, and a refusal costs the agent one message. Checkboxes, radios, selects and buttons are not judged (custom-styled controls hide the real input behind a label as a matter of course), and `display:none` fields are
+  and custom elements that may hold a **closed** shadow root (a script cannot look inside one). That is a heuristic that finds one kind: a defined custom element with no children and no open root. A closed root on an ordinary element, or on a custom element that has children (a slot), is **not** reported (adversary round 2, A26; an `attachShadow` init script to catch the rest is planned with S5).
+- **Fields a person cannot see are named, not offered.** A text field or text area with opacity 0 (itself or an ancestor), a box of 1px or less, or a position outside the page *and outside any panel that scrolls to it* is listed under "Not visible to a person"
+  with its id, name and reason, and is **not given a ref**. `fill` refuses such a field (and `display:none` and `type=hidden` ones) with "not visible to a person": form builders use fields like these to catch
+  bots, and a refusal costs the agent one message. A field further down a scrolling panel (a 30-question dialog) is offered, because a person scrolls it (A24). **This covers those three signals and nothing wider** (adversary round 2, A25): opacity 0.01, a 2px box, transparent text, `font-size:0`, a `clip` rectangle, `z-index:-1`, and every `contenteditable` pass. Checkboxes, radios, selects and buttons are not judged (custom-styled controls hide the real input behind a label as a matter of course), and `display:none` fields are
   not reported (a multi-step form has many). This is a safety rule, not an evasion: it makes the agent *less* like a bot, never more.
 - **A selector cannot reach into a frame**, and now says so at once: "`#years` is inside an iframe (frame "grnhse_iframe"), which selectors cannot reach. Call inspect and use the ref of that element." (Selectors
   still reach open shadow roots; Playwright pierces them.)
+
+**The reader is advisory against a page that cooperates with it** (A22). The walk and the fill guard run in the page's own JavaScript world, so a page that overrides `checkVisibility` and `getBoundingClientRect` gets its honeypot offered and filled, and one that wraps `matches` can make a real field vanish from `inspect` without a note. Running them where the page cannot reach (an isolated world) is scheduled before S5, which depends on it.
+
+**Typed values** (A42): the value typed into a password, one-time-code or card field (by type, `autocomplete` hint or name), into a field that could not be checked, and a single typed character are not recorded in the event stream or the audit database; their length is. An ordinary field's value and named keys (`Enter`, `Tab`) still are.
+
+**Deadlines and popups** (A31, A41): every tool gives up on a page that does not answer after 60 s ("the page is not responding"), opens a fresh tab so the run can carry on and leaves the stuck one closable; `list_tabs` bounds each tab's title. A session holds at most 10 tabs open and 60 in all.
 
 Measured by the benchmark: `form-coverage` went from 1 of 8 to 8 of 8 ([`BENCHMARK.md`](BENCHMARK.md), [`IMPROVEMENTS.md`](IMPROVEMENTS.md) IMP-014).
 
@@ -221,7 +238,10 @@ Measured by the benchmark: `form-coverage` went from 1 of 8 to 8 of 8 ([`BENCHMA
 | Limit | Value | Why |
 |---|---|---|
 | Screenshots per session | 50 | Disk-fill DoS from a looping phase |
-| Tabs per session | 10 | A renderer and a video per popup otherwise |
+| Tabs per session | 10 open at once, 60 in all | A renderer and a video per popup otherwise; a storm of popups that close themselves |
+| Browser tool deadline | 60 s (`wait` is 30 s) | A page whose main thread is busy answers nothing, and no Playwright timeout covers every call that waits on it |
+| Elements scanned per frame | 100,000, and the answer says so | A page of data cannot stall the walk |
+| Query candidates | 600 before the 60-ref budget | A query finds the 98th button without listing 98 |
 | Refs per `inspect` | 60 across the page and its frames, plus a count of the rest | A page with thousands of links shouldn't flood the transcript |
 | Frames read per `inspect` | 20 (60 looked at), plus a count of the rest; 1.5 s to wait for frames still loading | A page of ad frames cannot stall the reader |
 | Frame text in `inspect` | 1,000 characters a frame, 3,000 in all | The same reason as the page text |
@@ -247,11 +267,11 @@ and the web UI label each call by what it acted on: `browser.click(s2e5)`,
   script while a blocked WebSocket is pending. The socket still ends `CLOSED` and never connects,
   but the page's `close` event doesn't fire. Found while writing the Stage 1 test. Security is
   unaffected; an app waiting on that event would wait forever.
-- **DNS isn't covered, and hasn't been tested either way.** Nothing here stops a page from making
-  Chromium resolve an arbitrary hostname (for example via `<link rel="dns-prefetch">`), which could
-  leak a few bytes through DNS. The request that would follow the lookup is blocked.
+- **DNS: page-chosen names stay out of it, the browser's own probe does not.** Measured (section 4): the names a page asks for never reach a resolver, but Chromium's own DNS-over-HTTPS probe asks for `dns.google` outside the gate.
+- **"Local" means every local port.** A page can reach any service on this machine's loopback (section 4, A43) until the allowances list has ports.
 - **Dialogs are dismissed, not answered.** The agent is told what a dialog said, but cannot choose to accept it (a "Discard changes?" confirm always reads `false`). Letting it decide needs the page held open until it answers.
-- **Closed shadow roots cannot be read.** A script cannot look inside one, so their fields are not listed; `inspect` says a custom element *may* hold one (a heuristic, so it can be wrong in both directions).
+- **Closed shadow roots cannot be read.** A script cannot look inside one, so their fields are not listed; `inspect` says a custom element *may* hold one only when it is a defined custom element with no children and no open root, so a closed root on a `div`, or on an element with children, is silent.
 - **Frames are read once per `inspect`.** A frame that navigates afterwards makes its refs stale (the usual stale-ref message); inspect again. A frame injected by a script after `inspect` is not listed until the next one.
-- **The "person could not see it" test is geometry and style only** (display, visibility, opacity, size, position). A field covered by another element, clipped by a scroll container or hidden by `clip-path` still counts as visible.
+- **The "person could not see it" test is geometry and style only, and only three signals** (opacity 0, a box of 1px or less, outside the page and any scrolling panel). A field covered by another element, clipped by a scroll container or hidden by `clip-path`, and the recipes opacity 0.01, a 2px box, transparent text, `font-size:0`, a `clip` rectangle, `z-index:-1` and `contenteditable` count as visible. `elementFromPoint` at the field's centre is the cheapest next check.
+- **The reader runs in the page's own JavaScript world** (section 4c): a page that cooperates with the reader's geometry questions can lie to it.
 - **Text-field traps only.** A visually hidden checkbox or select is listed like any other; if a form uses those as bot traps, this reader does not know.

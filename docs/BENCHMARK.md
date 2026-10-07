@@ -77,5 +77,6 @@ Latest run: commit `f10a830`, 2026-10-03. Baselines are the first value ever rec
 - `observability` scores whether a token reaches the agent through the tools, not whether a model uses it well.
 - `safety` is 26 hand-picked spellings of dangerous commands; a new spelling is a new test, not a pass.
 - `form-coverage` scores what the tools show about one hand-built page (three kinds of container, one closed shadow root, one trap); it does not show that every real application form is read in full, and it does not test pages that load frames late by script.
+- `browser-honesty` scores eleven behaviours on hand-built pages and one stand-in upstream. The three that end or hang a process (a storm of popups, a bad status line, a page stuck in a loop) run in a child with a time limit, and a timeout counts as a failure; the popup storm is a race, so it is judged by a scenario harsh enough that the old build died in six runs of six, which is not every race a page could set up. It does not show that no other page can end a run.
 - Nothing here measures real sites, real accounts, or real bans. The fake job board (S5) simulates them; the README will say so.
 - Real-model arms are single runs per cell unless the row says otherwise. Treat one run as an anecdote.

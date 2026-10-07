@@ -236,6 +236,35 @@ try {
     console.log("[ok] several allowed addresses: the next one is tried when the first refuses (plain, CONNECT, ws://); none reachable is a clean 502");
   }
 
+  // A39: an upstream status line Node's client accepts but its server cannot send (HTTP/1.1 000, 099) used to throw inside the gate's response callback: an uncaught exception in the
+  // whole process, with Chromium orphaned and the run left "running". It is a 502 now, and the gate (and this process) carry on.
+  // The listener that detects the crash is removed BEFORE anything is asserted: left in place it would swallow this test's own assertion errors and let the process exit 0.
+  {
+    const uncaught = [];
+    const onUncaught = (e) => uncaught.push(String(e?.message ?? e));
+    const upstream = (status) => net.createServer((s) => { s.on("data", () => s.end(`HTTP/1.1 ${status} Odd\r\ncontent-length: 0\r\nconnection: close\r\n\r\n`)); s.on("error", () => {}); });
+    const ask = async (status) => {
+      const srv = upstream(status);
+      await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+      try {
+        const timeout = new Promise((r) => setTimeout(() => r({ status: "no answer in 5 s" }), 5000));
+        return await Promise.race([viaProxy(`http://127.0.0.1:${srv.address().port}/x`), timeout]);
+      } finally { srv.close(); }
+    };
+    const got = {};
+    process.on("uncaughtException", onUncaught);
+    try {
+      for (const status of ["000", "099", "204", "599", "999"]) got[status] = (await ask(status)).status;
+      got.after = (await viaProxy(`http://127.0.0.1:${tport}/after`)).status;
+      await new Promise((r) => setTimeout(r, 100));
+    } finally { process.off("uncaughtException", onUncaught); }
+    for (const status of ["000", "099"]) assert.strictEqual(got[status], 502, `an upstream answering HTTP/1.1 ${status} is not a clean 502 (got ${got[status]})`);
+    for (const [status, expect] of [["204", 204], ["599", 599], ["999", 999]]) assert.strictEqual(got[status], expect, `control: an upstream answering ${status} must pass through unchanged (got ${got[status]})`);
+    assert.strictEqual(got.after, 200, "the gate stopped working after the bad statuses");
+    assert.deepStrictEqual(uncaught, [], "a bad upstream status raised an uncaught exception in this process");
+    console.log("[ok] an upstream status of 000 or 099 is a clean 502 and raises nothing; 204, 599 and 999 pass through, and the gate keeps working");
+  }
+
   // 8. The refusal log is bounded and answers deniedReason(url); a connected host is not reported as refused.
   {
     const g3 = await startNetGate({ policy: localOnlyPolicy });

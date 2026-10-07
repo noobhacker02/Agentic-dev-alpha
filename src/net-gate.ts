@@ -192,8 +192,25 @@ export async function startNetGate(opts: NetGateOptions): Promise<NetGate> {
     if (res.destroyed) return void sock.destroy();
     track(sock);
     const up = httpRequest({ createConnection: () => sock, method: req.method, path: url.pathname + url.search, headers }, (r) => {
-      res.writeHead(r.statusCode ?? 502, r.headers);
-      r.pipe(res);
+      // This is a callback of the whole process: nothing in it may throw (adversary round 2, A39). Node's client accepts a status line such as `HTTP/1.1 099` that `writeHead` refuses
+      // (it takes 100 to 999), and a throw here was an uncaught exception that ended the run. An upstream that answers like that is a bad gateway.
+      const bad = (): void => {
+        r.destroy();
+        try {
+          if (!res.headersSent) res.writeHead(502, { connection: "close" });
+          res.end();
+        } catch {
+          res.destroy();
+        }
+      };
+      const code = r.statusCode;
+      if (code === undefined || !Number.isInteger(code) || code < 100 || code > 999) return bad();
+      try {
+        res.writeHead(code, r.headers);
+        r.pipe(res);
+      } catch {
+        bad();
+      }
     });
     up.on("error", () => {
       if (!res.headersSent) res.writeHead(502, { connection: "close" });

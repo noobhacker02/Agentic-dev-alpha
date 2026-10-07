@@ -18,11 +18,12 @@ export const meta = {
 };
 
 const FILLER = Array.from({ length: 400 }, (_, i) => `Line ${i} of a long job description about responsibilities and benefits.`).join(" ");
-const PAGES = {
-  "/p1": `<!doctype html><title>t</title><h1>App</h1><script>setTimeout(()=>{throw new Error("boom-uncaught-7")},30)</script>`,
-  "/p2": `<!doctype html><title>t</title><h1>App</h1><script>console.error("render-failed-9")</script>`,
+// The tokens are built at run time in the page (`"boom-uncaught-" + (3 + 4)`), so the page's own source never holds them: a tool set that only echoes the HTML cannot pass these checks (adversary round 2, A36).
+export const PAGES = {
+  "/p1": `<!doctype html><title>t</title><h1>App</h1><script>setTimeout(()=>{throw new Error("boom-uncaught-"+(3+4))},30)</script>`,
+  "/p2": `<!doctype html><title>t</title><h1>App</h1><script>console.error("render-failed-"+(4+5))</script>`,
   "/p3": `<!doctype html><title>t</title><h1>App</h1><script src="/missing.js"></script>`,
-  "/p4": `<!doctype html><title>t</title><button id="b" onclick="alert('hello-dialog-5')">go</button>`,
+  "/p4": `<!doctype html><title>t</title><button id="b" onclick="alert('hello-dialog-'+(2+3))">go</button>`,
   "/p5": `<!doctype html><title>t</title><a id="a" href="/file.bin">get the file</a>`,
   "/p6": `<!doctype html><title>t</title><div id="app"></div><script>/* renders nothing */</script>`,
   "/p8": `<!doctype html><title>t</title><h1>Job</h1><p>${FILLER}</p><p>THE-END-MARKER-42</p>`,

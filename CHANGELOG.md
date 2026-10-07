@@ -14,6 +14,16 @@ All notable changes to this project are documented here. Format follows
   glob or variable now ask; the file tools cannot touch `.git/**` or key files.
 
 ### Fixed
+- **A page can no longer end the run, hang it, hide a repeated failure, or get a typed password recorded; and `checkpoint`, the baseline log and the benchmark check what they claim to** (adversary round 2, batches 3 to 5: A21, A24, A26, A31,
+  A32, A33, A35, A36, A37, A38, A39, A41, A42, A47, A48, A50; `docs/IMPROVEMENTS.md` IMP-017 and IMP-018; Dev-Skill SKILL-013 to SKILL-016). Browser tools: a failure that happens again is reported again (`x2, 1 since you last looked`);
+  `inspect` with a query searches the whole page before its 60-ref budget, says when the 100,000-element scan stopped, and offers every question of a scrolling dialog while still refusing real traps; page text is stripped of control,
+  bidi and zero-width characters, fenced as data, and a line that looks like one of the tool's own blocks is marked `(page text)`; URLs show no query or fragment and titles are capped; a typed password, one-time code or card
+  field is never recorded (its length is); every tool has a 60 s deadline and a stuck page answers "not responding" with a fresh tab; a session holds at most 10 tabs open and 60 in all. Process: an upstream status of `099` is a 502,
+  a rejected route callback is caught, and an error nothing catches stops the run as "stopped" with its reason (report written) instead of killing the process with the browser running and the run left "running". Tooling: `checkpoint`
+  runs the repository's own scanner itself and refuses without one, pushes only the designated branch to the expected origin and lists what it staged, and `.gitignore` covers credential and profile files; a baseline change needs a row that
+  names the suite, "baseline", and both the old and the new value, used once; `test:bench-table` measures every suite again; the observability and form-coverage scorers no longer pass on the page's own source, and `adversary-yield`
+  is tracked, not scored. Benchmark `browser-honesty` (new) **0 of 11 to 11 of 11** on the unmodified build `ecc83f2`. New tests that failed on the old code (the popup storm killed the old build in 3 of 3 runs of the test, the CLI test left
+  the run "running"); mutation checks: see IMP-017 and IMP-018. Costs: a page's query string is no longer visible in `inspect`; a tool call that takes over 60 s is cut off; popups beyond 60 in a session are closed.
 - **`test:ui-plain` waits for the glyph to turn instead of sampling it twelve times in 1.4 s.** It failed once on the macOS runner at `f10a830` (the control "the glyph turns when cartoons are on") and passed on Linux, Windows and in
   my full local run; four runs under six CPU hogs also passed, so the cause there is unproven. A new section clamps the page's timers to one a second and shows the old window sees fewer than three glyphs while the new wait sees
   three, and plain mode still freezes it. Whether the runner throttled its page is a hypothesis until CI is green.

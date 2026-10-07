@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from "nod
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkBaselines } from "../bench/baseline-check.mjs";
+import { checkBaselines, mentionsValue } from "../bench/baseline-check.mjs";
 import { renderTable } from "../bench/doc.mjs";
 import { checkHandoff } from "../scripts/handoff-check.mjs";
 
@@ -29,8 +29,9 @@ assert.ok(r.problems.some((p) => /safety.*5\/8.*2\/8/.test(p)), `a lowered basel
 r = checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `observability` | Baseline corrected | x |\n| 2026-10-02 | `safety` | Denominator changed | x |" });
 assert.ok(r.problems.length === 1, "a row that does not say baseline for this suite excused a changed baseline");
 // 4. A real, logged reason passes.
-r = checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Baseline corrected from 5 to 2. | The first scorer was lenient. |" });
+r = checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Baseline corrected from 5 of 8 to 2 of 8. | The first scorer was lenient. |" });
 assert.deepStrictEqual(r.problems, [], "a logged baseline correction was rejected");
+assert.deepStrictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Baseline corrected from 5/8 to 2/8. | x |" }).problems, [], "the 5/8 spelling of the values was rejected");
 // 5. A changed number of checks counts as changed too.
 r = checkBaselines({ root: repo, baseline: base(5, 10), docMd: "" });
 assert.ok(r.problems.length === 1, "a changed max went unnoticed");
@@ -38,6 +39,43 @@ assert.ok(r.problems.length === 1, "a changed max went unnoticed");
 r = checkBaselines({ root: mkdtempSync(join(tmpdir(), "no-git-")), baseline: base(5), docMd: "" });
 assert.ok(r.problems.length === 0 && r.notes.length > 0, "a missing history should be a note");
 console.log("[ok] baselines: unchanged passes; lowered without a logged reason, with a row for another suite, or with a row that never says baseline fails; a logged correction passes; changed max caught");
+
+// 6b. A35: a row covers ONE change, the one whose old and new values it names, and is used once. (Before: any row that mentioned the suite and the word "baseline" excused every later change to any value.)
+{
+  // a row about this suite's baseline for other numbers does not excuse this change (the reproduction: observability's "1 of 8 to 0 of 8" rows excused 0 -> 3 and 0 -> 8)
+  const other = "| 2026-10-02 | `safety` | Baseline corrected from 1 of 8 to 0 of 8. | The first scorer was lenient. |";
+  for (const v of [0, 3, 8]) assert.strictEqual(checkBaselines({ root: repo, baseline: base(v), docMd: other }).problems.length, 1, `a row for other numbers excused 5 -> ${v}`);
+  // it must name the new value as well as the old, and the old as well as the new
+  assert.strictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Baseline corrected from 5 of 8. | x |" }).problems.length, 1, "a row that names only the old value excused the change");
+  assert.strictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Baseline corrected to 2 of 8. | x |" }).problems.length, 1, "a row that names only the new value excused the change");
+  // the right numbers in a row for another suite, or in a row that never says baseline, excuse nothing either (these rows name 5 of 8 and 2 of 8)
+  assert.strictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `observability` | Baseline corrected from 5 of 8 to 2 of 8. | x |" }).problems.length, 1, "a row for another suite with the right numbers excused the change");
+  assert.strictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: "| 2026-10-02 | `safety` | Denominator corrected from 5 of 8 to 2 of 8. | x |" }).problems.length, 1, "a row that never says baseline excused the change");
+  // a second change in the history needs a second row
+  writeFileSync(join(repo, "bench/baseline.json"), JSON.stringify(base(2), null, 2));
+  git(repo, "add", "-A"); git(repo, "commit", "-qm", "baseline 5 -> 2");
+  const first = "| 2026-10-02 | `safety` | Baseline corrected from 5 of 8 to 2 of 8. | x |";
+  const second = "| 2026-10-04 | `safety` | Baseline corrected from 2 of 8 to 3 of 8. | x |";
+  assert.deepStrictEqual(checkBaselines({ root: repo, baseline: base(2), docMd: first }).problems, [], "control: the committed 5 -> 2 change with its row");
+  r = checkBaselines({ root: repo, baseline: base(3), docMd: first });
+  assert.ok(r.problems.length === 1 && /2\/8 to 3\/8/.test(r.problems[0]), `one row covered two changes: ${JSON.stringify(r)}`);
+  assert.deepStrictEqual(checkBaselines({ root: repo, baseline: base(3), docMd: `${first}\n${second}` }).problems, [], "both changes have rows and were rejected");
+  // one row cannot cover a change and its reverse (5 -> 2, then 2 -> 5 name the same two values): the second use needs its own row
+  writeFileSync(join(repo, "bench/baseline.json"), JSON.stringify(base(5), null, 2));
+  git(repo, "add", "-A"); git(repo, "commit", "-qm", "baseline 2 -> 5");
+  r = checkBaselines({ root: repo, baseline: base(5), docMd: first });
+  assert.ok(r.problems.length === 1 && /2\/8 to 5\/8/.test(r.problems[0]), `one row covered a change and its reverse: ${JSON.stringify(r)}`);
+  assert.deepStrictEqual(checkBaselines({ root: repo, baseline: base(5), docMd: `${first}\n| 2026-10-05 | \`safety\` | Baseline restored from 2 of 8 to 5 of 8. | x |` }).problems, [], "a change and its reverse, each with its own row, were rejected");
+  writeFileSync(join(repo, "bench/baseline.json"), JSON.stringify(base(2), null, 2));
+  git(repo, "add", "-A"); git(repo, "commit", "-qm", "baseline back to 2 for the checks below");
+  // the committed history is checked, not only the working copy: the 5 -> 2 commit with no row is reported even when the file is unchanged since
+  r = checkBaselines({ root: repo, baseline: base(2), docMd: "" });
+  assert.ok(r.problems.length === 3 && r.problems.every((x) => /in an earlier commit/.test(x)) && /5\/8 to 2\/8/.test(r.problems[0]), `past changes with no row went unnoticed (three changes in the history, none of them in the working copy): ${JSON.stringify(r)}`);
+  // a suite with no maximum names plain numbers
+  assert.ok(mentionsValue("| x | baseline 20 to 1 |", 20, null) && mentionsValue("| x | baseline 20 to 1 |", 1, null) && !mentionsValue("| x | baseline 120 to 11 |", 20, null) && !mentionsValue("| x | 1.5 |", 5, null), "plain-number matching is loose");
+  assert.ok(mentionsValue("1 of 8", 1, 8) && mentionsValue("1/8", 1, 8) && !mentionsValue("11 of 8", 1, 8) && !mentionsValue("1 of 80", 1, 8) && !mentionsValue("1 of 10", 1, 8), "value matching is loose");
+  console.log("[ok] baselines (A35): a row for other numbers, or naming only one side, excuses nothing; one row covers one change; a past change with no row is reported even when the file has not changed since");
+}
 
 // 7. The runner refuses to continue over a corrupt baseline file and leaves it exactly as it found it.
 {

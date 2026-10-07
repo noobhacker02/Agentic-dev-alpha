@@ -49,7 +49,8 @@ export const CHECKS = {
   // Acting through what inspect showed: the field in the frame was filled by its ref and inspect then shows the value.
   "iframe-field-fillable-by-ref": (o) => /\[s\d+e\d+\][^\n]*YEARS-FIELD-2[^\n]*value="7"/.test(o),
   // A field no script can read is something the agent has to be told it cannot see, not something it can ignore.
-  "closed-shadow-root-reported": (o) => /closed[^\n]*shadow|shadow[^\n]*closed/i.test(o),
+  // Anchored to the tool's own sentence ("... may hold a closed shadow root ..."): the page's source has `attachShadow({mode:'closed'})` on one line, which the looser pattern accepted (A36).
+  "closed-shadow-root-reported": (o) => /custom element[^\n]*may hold a closed shadow root/i.test(o),
   // The trap is named, said to be hidden, and not offered as a field to act on.
   // (A line with markup in it is the page's own source echoed back, not the tool's report.)
   "hidden-trap-flagged-not-offered": (o) => !refLine("trap-9").test(o) && o.split("\n").some((l) => /trap-9/.test(l) && !/[<>]/.test(l) && /hidden|not visible|invisible|offscreen/i.test(l)),

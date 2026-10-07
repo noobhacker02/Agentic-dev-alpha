@@ -13,6 +13,8 @@ export const meta = {
   unit: "rows right",
   higherIsBetter: true,
   stage: "S1",
+  // the rows that need the symlink to a directory outside are not run on Windows (a link needs a privilege there), so the number of rows is 203 there and 216 elsewhere; full marks are full marks
+  maxVariesOn: "win32",
 };
 
 /** A scratch working directory with a file to read, a script, a source file, and a link to a directory elsewhere. */
@@ -42,7 +44,7 @@ export const AUTO = [
   "cd src && ls", "cat notes.txt | grep line | sort | uniq", "ls -la 2>&1", "grep line < notes.txt", "cat notes.txt 2>/dev/null",
 ];
 // The attacks: each runs code, writes, follows a link out, expands to a path outside, or reads a file the check never saw.
-export const ASK = [
+const ASK_ALL = [
   // sed: `e` runs a command, `w` and `W` write a file, `r` and `R` read one, `-f` loads a script nobody read, -i edits
   "sed '1e touch x' notes.txt", "sed 's/x/y/e' notes.txt", "sed -n 'w /tmp/r2-sed-w' notes.txt", "sed -n '1w out.txt' notes.txt", "sed 'r /etc/hostname' notes.txt", "sed -n 'R /etc/hostname' notes.txt",
   "sed -f script.sed notes.txt", "sed -e '1e id' notes.txt", "sed --expression='1e id' notes.txt", "sed 'e' notes.txt", "sed -i 's/a/b/' notes.txt", "sed --in-place s/a/b/ notes.txt", "sed 's/a/b/w out.txt' notes.txt",
@@ -71,6 +73,10 @@ export const ASK = [
   "ls && sed '1e id' notes.txt", "cat notes.txt; sort -o notes.txt notes.txt", "ls | rg --pre ./pre.sh x .",
 ];
 
+
+/** Rows that name `outside` are about a link to a directory elsewhere. Where the link cannot be made (Windows, which this test does not make links on) there is no link, `outside/x` is an ordinary path
+ * inside the directory and rightly runs quietly, so those rows are left out there (the Windows CI run of ecc83f2 failed on exactly those seven). */
+export const ASK = process.platform === "win32" ? ASK_ALL.filter((c) => !/\boutside\b/.test(c)) : ASK_ALL;
 
 /** `autoAllowed(command)` is true when the command would run with no prompt. */
 export function scoreShell(autoAllowed) {

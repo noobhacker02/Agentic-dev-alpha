@@ -12,11 +12,13 @@ function change(meta, base, now) {
   if (base.max !== now.max && base.max && now.max) {
     const pts = Math.round((now.value / now.max - base.value / base.max) * 1000) / 10;
     if (pts === 0) return "same rate";
+    if (meta.higherIsBetter === null) return `${pts > 0 ? "+" : ""}${pts} points (not scored; ${base.max} -> ${now.max} checks)`;
     const better = meta.higherIsBetter ? pts > 0 : pts < 0;
     return `${pts > 0 ? "+" : ""}${pts} points (${better ? "better" : "worse"}; ${base.max} -> ${now.max} checks)`;
   }
   const d = now.value - base.value;
   if (d === 0) return "no change";
+  if (meta.higherIsBetter === null) return `${d > 0 ? "+" : ""}${d} (not scored)`;
   const better = meta.higherIsBetter ? d > 0 : d < 0;
   return `${d > 0 ? "+" : ""}${d} (${better ? "better" : "worse"})`;
 }

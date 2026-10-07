@@ -9,3 +9,14 @@ runs/
 __pycache__/
 *.pyc
 suite-*.log
+# Credentials and login profiles: `checkpoint` stages everything that is not ignored, so these are ignored here as well as scanned (adversary round 2, A32)
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+Cookies
+Login Data
+.agent-loop/

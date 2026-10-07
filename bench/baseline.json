@@ -47,6 +47,12 @@
       "max": 242,
       "commit": "f10a830",
       "date": "2026-10-03"
+    },
+    "browser-honesty": {
+      "value": 0,
+      "max": 11,
+      "commit": "ecc83f2",
+      "date": "2026-10-07"
     }
   }
 }
