@@ -14,6 +14,9 @@ All notable changes to this project are documented here. Format follows
   glob or variable now ask; the file tools cannot touch `.git/**` or key files.
 
 ### Fixed
+- **README, `docs/LAYOUT.md` and `docs/TESTING.md` were stale and are brought up to date** (docs only). They still said 37 suites; `npm test` runs 60, and 36 of them, 12 source files, the benchmark, the scripts and the whole record (`CHANGELOG.md`, `docs/IMPROVEMENTS.md`, `docs/BENCHMARK.md`, `docs/adversary/`,
+  `docs/SELF-HEALING.md`, `docs/HANDOFF.md`) were not mentioned anywhere a reader would look. The README now has a section that says where the record lives, the platform table reads 60 of 60 from CI at `2df56d3`, and the safety-net rows say
+  "any local port". No test reads these files (checked), so this cannot change a result.
 - **A page can no longer end the run, hang it, hide a repeated failure, or get a typed password recorded; and `checkpoint`, the baseline log and the benchmark check what they claim to** (adversary round 2, batches 3 to 5: A21, A24, A26, A31,
   A32, A33, A35, A36, A37, A38, A39, A41, A42, A47, A48, A50; `docs/IMPROVEMENTS.md` IMP-017 and IMP-018; Dev-Skill SKILL-013 to SKILL-016). Browser tools: a failure that happens again is reported again (`x2, 1 since you last looked`);
   `inspect` with a query searches the whole page before its 60-ref budget, says when the 100,000-element scan stopped, and offers every question of a scrolling dialog while still refusing real traps; page text is stripped of control,

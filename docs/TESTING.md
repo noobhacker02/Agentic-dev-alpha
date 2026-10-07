@@ -1,6 +1,6 @@
 # Testing: every suite, what it proves, and what spends money
 
-Moved out of the README. `npm test` runs all 37 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
+Moved out of the README. `npm test` runs all 60 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
 
 ```bash
 npm run build
@@ -35,6 +35,41 @@ node test/browser-approval.mjs # real API calls — full pipeline, real browser,
 node test/validate-dev-workflow.mjs   # real API calls — does dev-workflow actually trigger + get followed?
 node test/validate-decisions-log.mjs  # real API calls — ask once, never re-ask what's already decided
 ```
+
+## Suites added with the hybrid-agent work (S0 to S3a, adversary rounds 1 and 2)
+
+All no-API. Each was written to fail on the old code first, mutation-checked, and run twice; the benchmark column says which suite in [BENCHMARK.md](BENCHMARK.md) measures the same thing.
+
+| Script | What it proves |
+|---|---|
+| `test:safety` | The safety net and the sensitive-file guard against every bypass the stress test found (24 of 27 dangerous commands once got through) |
+| `test:safety-rewrites` | Round 2, A30: `git -C repo push --force`, `rm -rf /etc` and the other cheap rewrites of a denied command are still denied (payloads XOR-encoded in the file so no scanner reads them as live) |
+| `test:bash-readonly` | Round 2, A51: shell commands run without a prompt only in safe forms; 216 rows beside the ordinary commands that must stay quiet (benchmark `shell-readonly`) |
+| `test:path-text` | Round 2, A27 to A29, A44: `~`, a relative link, Glob patterns, UNC and drive-relative forms and the credential list are judged as the file tools read them (benchmark `file-hooks`) |
+| `test:path-scope-symlink` | Round 1, A1: a symlink inside `--dir` does not walk out of it, and `link/..` is judged by where it really is |
+| `test:persona`, `test:ui-persona` | The voice: catalog lint, levels, determinism, hostile text in every event field; and the real page showing it |
+| `test:lineage`, `test:ui-lineage` | The run's tree, rebuilt from events and cross-checked against them; and the tree view in a real browser |
+| `test:browser-cu` | Refs, screenshot-bound `click_at`, tabs, hover, select, scroll, and every leak channel (WebSocket, WebRTC, service worker, popups) |
+| `test:browser-observability` | What the browser tools tell the agent about a page: errors, failed requests, dialogs, downloads, repeats, the unseen notices, queries, fenced text, URLs, typed secrets, scrolling dialogs (benchmarks `observability`, `browser-honesty`) |
+| `test:browser-frames` | Round 1, A10: `inspect` sees iframes and open shadow roots, says what it could not read, and refuses fields a person cannot see (benchmark `form-coverage`) |
+| `test:browser-popup-storm` | Round 2, A41: ten and thirty popups that open and close themselves, video on, do not end the process; a storm of 150 leaves 60 tabs |
+| `test:browser-hang` | Round 2, A31: a busy page makes every tool give up at its deadline and leave a fresh tab; a stuck tab closes quickly |
+| `test:fatal` | Round 2, A39 and A41: an error nobody caught stops the run the ordinary way, including through the real command twice per kind of error |
+| `test:net-gate` | The forward proxy that decides where the browser may go: absolute URIs, CONNECT, WebSocket upgrades, resolution, the credential, and an upstream that answers a status HTTP does not allow |
+| `test:browser-redirect-gate` | Round 1, A2 (critical): a server-side redirect from an allowed page cannot reach a decoy host (16 ways of trying) |
+| `test:team-roster`, `test:team-plan`, `test:team-signals`, `test:team-compose`, `test:team-cli` | S3a part one: the 19 built-in roles and the user's own, the plan validator (V1 to V8, V10 to V12, V15), signals from words and paths, the offline composer, and `roster` / `team --dry-run` (benchmarks `team-invariants`, `team-sizing`) |
+| `test:ui-desktop` | The desktop panel and every approval prompt for a desktop input, in a real browser |
+| `test:desktop-tools`, `test:desktop-adapter`, `test:desktop-cli`, `test:desktop-pipeline` | Desktop control against a scripted driver: target resolution, the five tools and every fence before an action, the driver adapter, the flags, and a real pipeline run |
+| `test:insights` | `agent-loop insights` never prints a raw control byte from a stored rule |
+| `test:bus-history` | The bus's replay never forgets the shape of a run, however long |
+| `test:ui-replay` | A long run replays into the page quickly and correctly |
+| `test:bench-suites` | The benchmark's scorers have teeth: each check misses on silence, on a page's own words and source, and hits on a real report |
+| `test:bench-integrity` | A baseline cannot change without a row that names both values and is used once; a corrupt baseline stops the runner; freshness fails closed in CI |
+| `test:bench-table` | The table in BENCHMARK.md is what the numbers say, **and every suite is measured again on this checkout** (full marks stay full marks) |
+| `test:adversary-round` | Adversary rounds are real (a reproduction or an argument per finding), numbered without gaps, and every finding is triaged |
+| `test:checkpoint` | `npm run checkpoint`: runs the repository's own scanner, pushes only the designated branch to the expected origin, respects a blocking hook, never forces, and `.gitignore` covers credential files |
+| `test:improvements-log` | Every entry of IMPROVEMENTS.md has every field, a number or a reason for "Measured", and known suites |
+| `test:handoff` | HANDOFF.md has its sections, a timestamp, and a covered commit no more than 8 behind |
 
 Every `test/validate-*` and `test/browser-approval.mjs` script spends real API tokens — they exist because
 reading the code isn't evidence something works.

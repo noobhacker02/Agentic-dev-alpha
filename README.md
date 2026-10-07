@@ -31,7 +31,7 @@ evaluated instead of trusted on faith. It is **a safe, auditable harness around 
 | | What it does | Evidence / more |
 |---|---|---|
 | **An approval gate for every tool call** | A prompt pinned to the page (or in the terminal): `y`/`n`/`1-3`. Plain-words labels ("runs a shell command"), a reason that goes back to the agent on "no", narrow "don't ask again" rules that last one run. Read-only commands inside `--dir` don't ask. | 53 prompts down to 13 for the same task, same hidden-grader score (one run each): [docs/UI.md](docs/UI.md) |
-| **A safety net under it** | Destructive commands, path escapes and secret-file writes are refused even under `--no-approval`. Browser tools reach `localhost` only (requests, WebSocket, WebRTC, service workers). | 24 of 27 dangerous commands got through before the fix; real exploits per threat: [docs/DESKTOP-AGENT.md](docs/DESKTOP-AGENT.md), [docs/BROWSER-AGENT.md](docs/BROWSER-AGENT.md) |
+| **A safety net under it** | Destructive commands, path escapes and secret-file writes are refused even under `--no-approval`. Browser tools reach `localhost` only (requests, WebSocket, WebRTC, service workers), on any local port. Two adversary rounds have attacked it so far: 51 findings, the critical and high ones fixed, the rest scheduled by stage ([`docs/adversary/`](docs/adversary/)). | 24 of 27 dangerous commands got through before the fix; real exploits per threat: [docs/DESKTOP-AGENT.md](docs/DESKTOP-AGENT.md), [docs/BROWSER-AGENT.md](docs/BROWSER-AGENT.md) |
 | **Stop, and a cost cap** | **stop run** (two clicks), Ctrl-C, SIGTERM and `--max-cost <usd>` end a run the same way: model sessions aborted, waiting approvals refused, the run saved as `stopped` with the reason, the report still written. | Before, Ctrl-C left the run "running" forever. Checked with the real SDK, no orphan process: [docs/REFERENCE-AUDIT.md](docs/REFERENCE-AUDIT.md). The cap can be passed by one long step; it is not a hard ceiling. |
 | **"Still running" and "no result"** | A command quiet for 30 s says so and for how long; a run that ends on a call that never answered marks it. | Tested with a faked clock and a page whose clock is 7 minutes off |
 | **An audit trail you can read** | Every event goes to SQLite. Every run writes a self-contained `report.html`, and a **lineage tree**: every attempt, repairs as branches, who wrote which file, what each agent handed on, cost per attempt. | [docs/LINEAGE.md](docs/LINEAGE.md) |
@@ -221,15 +221,30 @@ machine's directory layout.
   `agent-loop` from a genuinely clean terminal with only a bare `ANTHROPIC_API_KEY` set has not been
   independently verified here, even though it's how the SDK is documented to work.
 
+## The record: what changed, why, and what it moved
+
+Nothing here is changed without a trace you can read on GitHub:
+
+| Where | What it holds |
+|---|---|
+| [`CHANGELOG.md`](CHANGELOG.md) | Every change, in plain words, newest first |
+| [`docs/IMPROVEMENTS.md`](docs/IMPROVEMENTS.md) | One entry per improvement: the problem, why it matters, how it was fixed, **the number it moved**, what it costs, which benchmark suites and skill lessons it touches |
+| [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | The benchmark table (first recorded value on the unmodified build, latest value, change), re-measured by `npm test` itself, and what the numbers do not show |
+| [`docs/adversary/`](docs/adversary/) | Each adversary round (a fresh agent attacking the code, a reproduction for every finding) and how every finding was triaged |
+| [`docs/SELF-HEALING.md`](docs/SELF-HEALING.md) | How the work and the product recover, and a table of mistakes made more than once, so they are not made a third time |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | The state of the work for the next session: what was asked, decided, done, verified and not verified, and the next step |
+
+The companion skill repository ([Dev-Skill](https://github.com/noobhacker02/Dev-Skill)) keeps the same trail for the workflow itself: its `CHANGELOG.md`, `dev-workflow/references/improvement-log.md` and `references/verification-lessons.md`.
+
 ## Platform support
 
-Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-02 (the last commit checked was `e0764be`), and the two badges at the top are the live ones.
+Everything runs on Linux, macOS and Windows with Node 22.5+. The results below are from CI on 2026-10-07 (the last commit checked was `2df56d3`), and the two badges at the top are the live ones.
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 37 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green |
-| **macOS** (`macos-latest`) | Each of the 37 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | **37 of 37** |
-| **Windows** (`windows-latest`) | The same | **37 of 37** |
+| **Linux** | All 60 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green |
+| **macOS** (`macos-latest`) | Each of the 60 suites on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | **60 of 60** |
+| **Windows** (`windows-latest`) | The same | **60 of 60** |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
@@ -356,7 +371,7 @@ treatment as `Bash` or `Write`: never auto-approved, always visible in the live 
 safety net. A `BrowserSessionManager` keeps one browser and its tabs alive per run across agent-loop's
 separate per-phase SDK sessions.
 
-Only `localhost`/`127.0.0.1` is reachable, from every tab and frame. That's enforced on requests,
+Only `localhost`/`127.0.0.1` is reachable, from every tab and frame (on any port: a page can reach every other service on this machine's loopback until the allowances list has ports). That's enforced on requests,
 WebSockets, WebRTC and service workers, each layer added after a real exploit got through without it.
 [`docs/BROWSER-AGENT.md`](docs/BROWSER-AGENT.md) has the full reference and evidence.
 
@@ -391,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 37 suites, none of which calls a model (what CI runs)
+npm test                          # all 60 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 
