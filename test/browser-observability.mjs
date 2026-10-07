@@ -121,6 +121,22 @@ try {
     const beforeGate = log.entries.length;
     emit("response", res("http://evil.test/x", 403, "GET", "document", { "x-agent-loop-gate": "blocked", "x-agent-loop-gate-reason": "evil.test is not on the allowed list" }));
     assert.strictEqual(log.entries.length, beforeGate, "a gate refusal was repeated as an ordinary 403");
+    // A page load the gate refused on plain http carries no Sec-Fetch header, so the gate cannot tell the agent a page asked: the response is then the only place to say so, once, and not when the gate already did.
+    {
+      const noted = new Set();
+      const l2 = {}; const fake2 = { on: (ev, fn) => { (l2[ev] ??= []).push(fn); } };
+      const log2 = __testWatchPage(fake2, { gateNoted: noted });
+      const emit2 = (ev, arg) => (l2[ev] ?? []).forEach((fn) => fn(arg));
+      const refused = { "x-agent-loop-gate": "blocked", "x-agent-loop-gate-reason": "internal.test resolves to an address that is not allowed (10.0.0.5)" };
+      emit2("response", res("http://internal.test:8080/", 403, "GET", "document", refused));
+      assert.strictEqual(log2.entries.length, 1, "a refused page load that the gate had not reported was not reported");
+      assert.ok(/blocked by the network rule/.test(log2.entries[0].text) && /not allowed \(10\.0\.0\.5\)/.test(log2.entries[0].text) && !/403/.test(log2.entries[0].text), `the notice: ${log2.entries[0].text}`);
+      noted.add("other.test:80");
+      emit2("response", res("http://other.test/", 403, "GET", "document", refused));
+      assert.strictEqual(log2.entries.length, 1, "a refusal the gate had already reported was repeated");
+      emit2("response", res("http://sub.test/pic.png", 403, "GET", "image", refused));
+      assert.strictEqual(log2.entries.length, 1, "a refused subresource was reported as a page load");
+    }
     emit("requestfailed", { url: () => "http://h/favicon.ico", failure: () => ({ errorText: "net::ERR_FAILED" }) });
     emit("requestfailed", { url: () => "http://h/a", failure: () => ({ errorText: "net::ERR_ABORTED" }) });
     assert.strictEqual(log.entries.length, 2, "a favicon failure or an aborted (navigated-away) request was reported");

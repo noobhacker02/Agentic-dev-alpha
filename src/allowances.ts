@@ -85,8 +85,8 @@ const clean = (s: string, n = 80): string => s.replace(/[^\x20-\x7e]/g, "?").sli
 
 export type NavigationVerdict = { ok: true; host: string; platform: string; url: string } | { ok: false; reason: string };
 
-/** Whether the agent may open this URL in LIVE mode. The first hop only: a server-side redirect is judged where it lands (the browser tools). */
-export function navigationVerdict(a: Allowances, rawUrl: unknown): NavigationVerdict {
+/** Whether the agent may open this URL in LIVE mode. The first hop only: a server-side redirect is judged where it lands (the browser tools). `extraPorts` is for tests, whose servers cannot listen on 80 or 443. */
+export function navigationVerdict(a: Allowances, rawUrl: unknown, opts: { extraPorts?: number[] } = {}): NavigationVerdict {
   let url: URL;
   try {
     url = new URL(String(rawUrl));
@@ -101,7 +101,7 @@ export function navigationVerdict(a: Allowances, rawUrl: unknown): NavigationVer
   if (status === "denied") return { ok: false, reason: `${shown} is denied by your deny list` };
   if (status !== "allowed") return { ok: false, reason: `${shown} is not on the allowances list` };
   if (url.username || url.password) return { ok: false, reason: "the URL carries credentials" };
-  if (url.port !== "" && url.port !== "80" && url.port !== "443") return { ok: false, reason: `port ${clean(url.port, 6)} is not allowed (only 80 and 443)` };
+  if (url.port !== "" && url.port !== "80" && url.port !== "443" && !opts.extraPorts?.includes(Number(url.port))) return { ok: false, reason: `port ${clean(url.port, 6)} is not allowed (only 80 and 443)` };
   const host = normalizeHost(url.hostname)!;
   return { ok: true, host, platform: platformOf(a, host)!, url: url.href };
 }
