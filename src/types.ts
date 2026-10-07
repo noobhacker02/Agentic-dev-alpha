@@ -358,4 +358,6 @@ export interface PipelineConfig {
   desktop?: import("./desktop-tools.js").ResolvedDesktop;
   /** Ends the run early (cost cap, Ctrl-C, the page's Stop button). The run is then recorded as "stopped". */
   control?: import("./run-control.js").RunControl;
+  /** A composed team (src/team/): the plan to run, validated again by the engine, and the roster its roles come from. Absent: the five built-in phases in order, as always (`--team fixed5`). */
+  team?: { plan: import("./team/plan.js").TeamPlan; roster: import("./team/roster.js").RoleDef[]; source: "auto" | "file"; /** How many project files the diff audit may compare before it refuses to vouch for a step (default 20,000). */ maxTreeFiles?: number };
 }

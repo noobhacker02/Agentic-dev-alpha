@@ -1,6 +1,6 @@
 # Testing: every suite, what it proves, and what spends money
 
-Moved out of the README. `npm test` runs all 66 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
+Moved out of the README. `npm test` runs all 69 no-API suites in order; `node scripts/run-suites.mjs` runs each on its own with a timeout and prints which passed (it is what the macOS and Windows CI job uses).
 
 ```bash
 npm run build
@@ -60,6 +60,9 @@ All no-API. Each was written to fail on the old code first, mutation-checked, an
 | `test:team-role-spec` | IMP-021: the tools, auto-approval, browser and desktop access and prompt of every built-in role and hostile ones; briefs and role files fenced as data |
 | `test:team-browser-readonly` | IMP-021 (A16): a checker's browser registers 13 of 18 tools; every browser tool is classified acting or looking |
 | `test:team-run-phase` | IMP-021: the real `runPhase` and hook chain for a team step (fake SDK runs scripted tool calls through the hooks): slice, reader, integrator, browser, desktop, approval; the built-in phases unchanged |
+| `test:team-changes` | IMP-022: the before/after snapshot of the project tree (content hashes, links as links, derived directories left out, a snapshot cut short is refused) that the diff audit compares |
+| `test:team-verdict` | IMP-022: a team step's verdict may carry a report (cleaned, cut), a team planner names steps to skip by role id; the built-in phases' verdicts are unchanged |
+| `test:team-pipeline` | IMP-022: a composed team through the real pipeline with the fake SDK: plan order, step ids in events and store, reports, repair by step id, the diff audit closing Bash, budgets, stop, a refused plan, the five-phase path unchanged |
 | `test:fatal` | Round 2, A39 and A41: an error nobody caught stops the run the ordinary way, including through the real command twice per kind of error |
 | `test:net-gate` | The forward proxy that decides where the browser may go: absolute URIs, CONNECT, WebSocket upgrades, resolution, the credential, and an upstream that answers a status HTTP does not allow |
 | `test:browser-redirect-gate` | Round 1, A2 (critical): a server-side redirect from an allowed page cannot reach a decoy host (16 ways of trying) |

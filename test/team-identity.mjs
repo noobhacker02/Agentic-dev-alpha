@@ -210,6 +210,10 @@ const result = (phase, id) => ({ type: "tool-result", runId: R, phase, toolUseId
   assert.strictEqual(boundRepairTarget("s9", "s3", team), "s3", "a repair to a step that is not in the plan was allowed");
   assert.strictEqual(boundRepairTarget("builder", "s3", team), "s3", "a built-in name was accepted in a team that does not have it");
   assert.strictEqual(boundRepairTarget(undefined, "s3", team), "s3", "a missing target was not the same step");
+  assert.strictEqual(boundRepairTarget(null, "s3", team), "s3", "a null target was not the same step");
+  assert.strictEqual(boundRepairTarget(undefined, "s3", team, "s2"), "s2", "a target that was not named did not go to the default (the step a checker checks)");
+  assert.strictEqual(boundRepairTarget("s9", "s3", team, "s2"), "s3", "an invalid target went to the default instead of the same step");
+  assert.strictEqual(boundRepairTarget("s2", "s3", team, "s1"), "s2", "a valid target was replaced by the default");
   assert.strictEqual(boundRepairTarget(7, "s3", team), "s3", "a number was taken as a target");
   assert.strictEqual(boundRepairTarget("planner", "gatekeeper", PHASES), "planner", "the five built-in phases are the order when the run has no team");
   assert.strictEqual(boundRepairTarget("gatekeeper", "builder", PHASES), "builder", "a forward repair in the built-in order was allowed");

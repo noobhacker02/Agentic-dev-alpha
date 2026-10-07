@@ -1,6 +1,6 @@
 // Fake @anthropic-ai/claude-agent-sdk used by pipeline_logic.sh: scripted by FAKE_SCENARIO, no API calls.
-import { writeFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync, appendFileSync, mkdirSync, rmSync } from "node:fs";
+import { join, dirname } from "node:path";
 let calls = 0;
 
 // src/browser-tools.ts imports these from the real package at module load time regardless of
@@ -20,9 +20,12 @@ export function query({ prompt, options }) {
   calls++;
   const sc = process.env.FAKE_SCENARIO;
   const isOverseer = /Overseer of agent-loop/.test(options.systemPrompt);
-  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, abortable: !!options.abortController, prompt, mcp: Object.keys(options.mcpServers ?? {}) }) + "\n");
-  if (calls > 60) { console.error("FAKE: >60 LLM calls, aborting (infinite loop)"); process.exit(99); }
-  const phase = (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
+  if (process.env.FAKE_LOG) appendFileSync(process.env.FAKE_LOG, JSON.stringify({ n: calls, overseer: isOverseer, abortable: !!options.abortController, prompt, teamStep: /step of a team/.test(options.systemPrompt), mcp: Object.keys(options.mcpServers ?? {}) }) + "\n");
+  const maxCalls = Number(process.env.FAKE_MAX_CALLS ?? 60); // a test that runs many pipelines in one process raises it
+  if (calls > maxCalls) { console.error(`FAKE: >${maxCalls} LLM calls, aborting (infinite loop)`); process.exit(99); }
+  // A built-in phase says "You are the Builder phase"; a step of a team says "You are the Security Reviewer step of a team": its role id is the lower-cased words joined by dashes.
+  const teamRole = (options.systemPrompt.match(/You are the ([A-Za-z -]+?) step of a team/) || [])[1]?.toLowerCase().replace(/ /g, "-");
+  const phase = teamRole ?? (options.systemPrompt.match(/You are the ([A-Za-z-]+) phase/) || [])[1]?.toLowerCase();
   let text;
   // `agent-loop insights --roast api` (src/roast-api.ts): the text comes from FAKE_ROAST_TEXT, one tool-less turn.
   if (/funny lines about how someone has been using/.test(options.systemPrompt)) {
@@ -38,8 +41,10 @@ export function query({ prompt, options }) {
     // The phase the Overseer is being asked to judge -- parsed from its own prompt (overseer.ts
     // always includes "The phase that just finished: <name>"), not from systemPrompt, which is the
     // fixed OVERSEER_SYSTEM_PROMPT and doesn't name a phase.
-    const targetPhase = (prompt.match(/The phase that just finished: ([a-z-]+)/) || [])[1];
+    const targetPhase = (prompt.match(/The (?:phase|step) that just finished: ([A-Za-z0-9._-]+)/) || [])[1];
     if (sc === "overseer-throws") throw new Error("API 529 overloaded");
+    // FAKE_OVERSEER_REPAIR: a JSON map from the step that just finished to the step the Overseer sends the repair to; used when that step did not pass.
+    const scripted = process.env.FAKE_OVERSEER_REPAIR ? JSON.parse(process.env.FAKE_OVERSEER_REPAIR)[targetPhase] : undefined;
     if (sc === "always-retry")
       text = `\`\`\`json\n{"action":"repair","repairTarget":"${targetPhase}","reasoning":"try again","feedbackForRepair":"fix it"}\n\`\`\``;
     // A hallucinated/adversarial repairTarget *later* in the pipeline than the phase that just ran
@@ -49,6 +54,9 @@ export function query({ prompt, options }) {
     else if (sc === "forward-repair")
       text = `\`\`\`json\n{"action":"repair","repairTarget":"gatekeeper","reasoning":"pretend forward repair","feedbackForRepair":"nope"}\n\`\`\``;
     else if (sc === "garbage-overseer") text = "I think it's fine!";
+    else if (scripted !== undefined && /outcome: (fail|blocked|inconclusive)/.test(prompt))
+      // "-" names no target at all: the Overseer asked for a repair and did not say where
+      text = `\`\`\`json\n{"action":"repair",${scripted === "-" ? "" : `"repairTarget":${JSON.stringify(scripted)},`}"reasoning":"scripted repair","feedbackForRepair":"fix it"}\n\`\`\``;
     else text = '```json\n{"action":"continue","reasoning":"looks settled per DECISIONS.md"}\n```';
   } else {
     if (sc === "injected-decisions" && phase === "builder") {
@@ -57,7 +65,20 @@ export function query({ prompt, options }) {
     // "trivial-skip" is the one scenario meant to reach a clean "done" (to prove the Planner's
     // suggestedSkip actually shrinks the run), so it's excluded from the otherwise-unconditional
     // gatekeeper failure every other scenario relies on.
-    const fail = sc === "always-retry" || sc === "forward-repair" || sc === "garbage-overseer" || (phase === "gatekeeper" && sc !== "trivial-skip");
+    // FAKE_STEP_OUTCOMES: a JSON map from role to the outcomes of its successive calls ("fail" or "pass"); a role with no entry passes, and the legacy rules below do not apply to a run that uses it.
+    const calls = (globalThis.__fakeRoleCalls ??= {});
+    calls[phase] = (calls[phase] ?? 0) + 1;
+    const scriptedOutcome = process.env.FAKE_STEP_OUTCOMES ? (JSON.parse(process.env.FAKE_STEP_OUTCOMES)[phase] ?? [])[calls[phase] - 1] ?? "pass" : undefined;
+    // FAKE_THROW: {"role": "builder", "call": 1}: that role's call number `call` fails with an API error instead of answering.
+    if (process.env.FAKE_THROW) { const t = JSON.parse(process.env.FAKE_THROW); if (t.role === phase && (t.call ?? 1) === calls[phase]) throw new Error("API 500 scripted"); }
+    // FAKE_WRITES: a JSON list of {role, call, path, content} files written during that role's call (content null deletes): what a shell command inside the step would have done, which no file-tool hook sees.
+    for (const w of process.env.FAKE_WRITES ? JSON.parse(process.env.FAKE_WRITES) : []) {
+      if (w.role !== phase || (w.call ?? 1) !== calls[phase]) continue;
+      const abs = join(options.cwd, w.path);
+      if (w.content === null) rmSync(abs, { force: true });
+      else { mkdirSync(dirname(abs), { recursive: true }); writeFileSync(abs, w.content); }
+    }
+    const fail = scriptedOutcome !== undefined ? scriptedOutcome === "fail" : sc === "always-retry" || sc === "forward-repair" || sc === "garbage-overseer" || (phase === "gatekeeper" && sc !== "trivial-skip");
     const verdict = {
       completed: true,
       outcome: fail ? "fail" : "pass",

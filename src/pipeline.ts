@@ -8,6 +8,7 @@ import { runPhase } from "./phases.js";
 import { overseerDecide } from "./overseer.js";
 import { BrowserSessionManager } from "./browser-tools.js";
 import type { DesktopSession } from "./desktop-tools.js";
+import { runTeamPlan } from "./team/run-plan.js";
 
 /**
  * A project's DECISIONS.md (any phase may write one, following dev-workflow's convention) is
@@ -95,175 +96,180 @@ export async function runPipeline(config: PipelineConfig, bus: EventBus, store: 
   });
 
   try {
-    let phaseIdx = 0;
-    let retryFeedback: string | undefined;
-    // The actual sequence for this run -- starts as every phase, shrinks by at most
-    // SKIPPABLE_PHASES when the Planner suggests it and pipeline code allows it (see below).
-    let runPhases: PhaseName[] = [...PHASES];
+    if (config.team) {
+      // A composed team: the plan-driven loop (src/team/run-plan.ts). The five built-in phases below stay as they were.
+      finalStatus = await runTeamPlan({ run, config: { ...config, team: config.team }, bus, store, browser: browserOpt, desktop: desktopSession, readDecisionsLog });
+    } else {
+      let phaseIdx = 0;
+      let retryFeedback: string | undefined;
+      // The actual sequence for this run -- starts as every phase, shrinks by at most
+      // SKIPPABLE_PHASES when the Planner suggests it and pipeline code allows it (see below).
+      let runPhases: PhaseName[] = [...PHASES];
 
-    while (phaseIdx < runPhases.length) {
-      if (control?.stopped) { haltForStop(runPhases[phaseIdx]); break; }
-      const phase = runPhases[phaseIdx];
-      const attempt = (attemptCounts[phase] ?? 0) + 1;
-      attemptCounts[phase] = attempt;
+      while (phaseIdx < runPhases.length) {
+        if (control?.stopped) { haltForStop(runPhases[phaseIdx]); break; }
+        const phase = runPhases[phaseIdx];
+        const attempt = (attemptCounts[phase] ?? 0) + 1;
+        attemptCounts[phase] = attempt;
 
-      bus.emitEvent({ type: "phase-start", runId: run.id, phase, attempt, ts: new Date().toISOString() });
-      const record = store.startPhase(run.id, phase, attempt);
+        bus.emitEvent({ type: "phase-start", runId: run.id, phase, attempt, ts: new Date().toISOString() });
+        const record = store.startPhase(run.id, phase, attempt);
 
-      const priorSummaries = store
-        .getPhaseSummaries(run.id)
-        .map((s) => `- ${s.name} (attempt ${s.attempt}, ${s.status}): ${s.summary ?? "(no summary)"}`)
-        .join("\n");
+        const priorSummaries = store
+          .getPhaseSummaries(run.id)
+          .map((s) => `- ${s.name} (attempt ${s.attempt}, ${s.status}): ${s.summary ?? "(no summary)"}`)
+          .join("\n");
 
-      let verdict: PhaseVerdict;
-      try {
-        verdict = await runPhase({
-          runId: run.id,
-          phase,
-          attempt,
-          task: config.task,
-          workDir: config.workDir,
-          priorSummaries,
-          retryFeedback,
-          bus,
-          store,
-          requireApproval: config.requireApproval,
-          strictApproval: config.strictApproval,
-          browser: browserOpt,
-          desktop: desktopSession,
-          abortController: control?.controller,
-        });
-      } catch (err) {
-        verdict = control?.stopped
-          ? { completed: false, outcome: "inconclusive", headline: `${phase} was stopped before it finished`, details: control.reason ?? "", concerns: [], blockingFindings: [] }
-          : {
-              completed: false,
-              outcome: "inconclusive",
-              headline: `${phase} threw an unhandled error`,
-              details: err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
-              concerns: [],
-              blockingFindings: ["Phase execution raised an exception rather than reporting a verdict."],
-            };
-      }
-
-      store.finishPhase(record.id, verdict);
-      bus.emitEvent({ type: "phase-end", runId: run.id, phase, attempt, verdict, ts: new Date().toISOString() });
-
-      if (control?.stopped) { haltForStop(phase); break; }
-
-      const decisionsLog = readDecisionsLog(config.workDir);
-      if (decisionsLog && decisionsLog !== lastSeenDecisionsLog) {
-        lastSeenDecisionsLog = decisionsLog;
-        store.indexLog(run.id, "decisions-log", decisionsLog);
-        bus.emitEvent({ type: "decisions-log-updated", runId: run.id, content: decisionsLog, ts: new Date().toISOString() });
-      }
-
-      let decision: OverseerDecision;
-      try {
-        decision = await overseerDecide({
-          task: config.task,
-          phase,
-          attempt,
-          maxRetries: config.maxRetriesPerPhase,
-          verdict,
-          priorSummaries: store.getPhaseSummaries(run.id),
-          decisionsLog,
-          trustedDecisions: store.getTrustedDecisions(run.id),
-          onUsage: (u) =>
-            bus.emitEvent({ type: "usage", runId: run.id, phase, role: "overseer", ...u, ts: new Date().toISOString() }),
-          abortController: control?.controller,
-        });
-      } catch (err) {
-        if (control?.stopped) { haltForStop(phase); break; }
-        // An Overseer API failure must not leave the run stuck "running" forever in the DB (found
-        // by test/stress/pipeline_logic.sh case C) -- treat it as a terminal failure of this run,
-        // not an exception that skips store.finishRun entirely.
-        finalStatus = "failed";
-        bus.emitEvent({
-          type: "overseer-decision",
-          runId: run.id,
-          phase,
-          decision: {
-            action: "stop",
-            reasoning: `Overseer call raised an exception: ${err instanceof Error ? err.message : String(err)}`,
-          },
-          ts: new Date().toISOString(),
-        });
-        break;
-      }
-
-      // Pipeline code has final say, not the Overseer's own text: a non-"pass" outcome can never be
-      // continued past, regardless of what action the Overseer returned (found by pipeline_logic.sh
-      // case A, where a gatekeeper no-go was waved through because the Overseer said "continue").
-      if (decision.action === "continue" && verdict.outcome !== "pass") {
-        decision = {
-          action: "repair",
-          repairTarget: phase,
-          reasoning: `${decision.reasoning} (overridden: pipeline requires outcome "pass" to continue past a phase; got "${verdict.outcome}")`,
-        };
-      }
-
-      bus.emitEvent({ type: "overseer-decision", runId: run.id, phase, decision, ts: new Date().toISOString() });
-
-      if (decision.action === "continue") {
-        // Only right as the Planner passes, and only once: apply any skip it suggested. Validated
-        // again here against the hard SKIPPABLE_PHASES allowlist -- parseVerdict already filtered
-        // it, but this is the actual authority, not a suggestion the pipeline merely trusts.
-        if (phase === "planner" && verdict.suggestedSkip?.length) {
-          for (const skip of verdict.suggestedSkip) {
-            if (!(SKIPPABLE_PHASES as readonly string[]).includes(skip) || !runPhases.includes(skip)) continue;
-            const skipRecord = store.startPhase(run.id, skip, 1);
-            const skip_verdict = skippedVerdict(`Planner suggested skipping this phase as unnecessary for a trivial task: ${verdict.headline}`);
-            store.finishPhase(skipRecord.id, skip_verdict);
-            bus.emitEvent({ type: "phase-start", runId: run.id, phase: skip, attempt: 1, ts: new Date().toISOString() });
-            bus.emitEvent({ type: "phase-end", runId: run.id, phase: skip, attempt: 1, verdict: skip_verdict, ts: new Date().toISOString() });
-            runPhases = runPhases.filter((p) => p !== skip);
-          }
+        let verdict: PhaseVerdict;
+        try {
+          verdict = await runPhase({
+            runId: run.id,
+            phase,
+            attempt,
+            task: config.task,
+            workDir: config.workDir,
+            priorSummaries,
+            retryFeedback,
+            bus,
+            store,
+            requireApproval: config.requireApproval,
+            strictApproval: config.strictApproval,
+            browser: browserOpt,
+            desktop: desktopSession,
+            abortController: control?.controller,
+          });
+        } catch (err) {
+          verdict = control?.stopped
+            ? { completed: false, outcome: "inconclusive", headline: `${phase} was stopped before it finished`, details: control.reason ?? "", concerns: [], blockingFindings: [] }
+            : {
+                completed: false,
+                outcome: "inconclusive",
+                headline: `${phase} threw an unhandled error`,
+                details: err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err),
+                concerns: [],
+                blockingFindings: ["Phase execution raised an exception rather than reporting a verdict."],
+              };
         }
-        phaseIdx = runPhases.indexOf(phase) + 1;
-        retryFeedback = undefined;
-        continue;
-      }
-      if (decision.action === "stop") {
-        // "stopped" is a clean halt (e.g. the Overseer judged the task itself ambiguous while the
-        // phase still passed); anything ending on a non-pass outcome is a "failed" run, not a
-        // neutral stop, even when the Overseer's own reasoning used the word "stop".
-        finalStatus = verdict.outcome === "pass" ? "stopped" : "failed";
-        break;
-      }
 
-      // repair: route to the named phase (same phase or an earlier one), bounded by a total budget
-      // across the whole run so e.g. a builder<->verifier ping-pong can't run forever even though
-      // neither phase alone ever exceeds its own per-phase retry limit.
-      totalRepairs += 1;
-      if (totalRepairs > config.maxTotalRepairs) {
-        finalStatus = "failed";
-        bus.emitEvent({
-          type: "overseer-decision",
-          runId: run.id,
-          phase,
-          decision: { action: "stop", reasoning: `Total repair budget (${config.maxTotalRepairs}) exhausted for this run.` },
-          ts: new Date().toISOString(),
-        });
-        break;
-      }
+        store.finishPhase(record.id, verdict);
+        bus.emitEvent({ type: "phase-end", runId: run.id, phase, attempt, verdict, ts: new Date().toISOString() });
 
-      const target =
-        decision.repairTarget && isValidRepairTarget(phase, decision.repairTarget, runPhases) ? decision.repairTarget : phase;
-      if (target === phase && attempt > config.maxRetriesPerPhase) {
-        finalStatus = "failed";
-        bus.emitEvent({
-          type: "overseer-decision",
-          runId: run.id,
-          phase,
-          decision: { action: "stop", reasoning: `Per-phase retry budget (${config.maxRetriesPerPhase}) exhausted for ${phase}.` },
-          ts: new Date().toISOString(),
-        });
-        break;
-      }
+        if (control?.stopped) { haltForStop(phase); break; }
 
-      retryFeedback = decision.feedbackForRepair ?? decision.reasoning;
-      phaseIdx = runPhases.indexOf(target);
+        const decisionsLog = readDecisionsLog(config.workDir);
+        if (decisionsLog && decisionsLog !== lastSeenDecisionsLog) {
+          lastSeenDecisionsLog = decisionsLog;
+          store.indexLog(run.id, "decisions-log", decisionsLog);
+          bus.emitEvent({ type: "decisions-log-updated", runId: run.id, content: decisionsLog, ts: new Date().toISOString() });
+        }
+
+        let decision: OverseerDecision;
+        try {
+          decision = await overseerDecide({
+            task: config.task,
+            phase,
+            attempt,
+            maxRetries: config.maxRetriesPerPhase,
+            verdict,
+            priorSummaries: store.getPhaseSummaries(run.id),
+            decisionsLog,
+            trustedDecisions: store.getTrustedDecisions(run.id),
+            onUsage: (u) =>
+              bus.emitEvent({ type: "usage", runId: run.id, phase, role: "overseer", ...u, ts: new Date().toISOString() }),
+            abortController: control?.controller,
+          });
+        } catch (err) {
+          if (control?.stopped) { haltForStop(phase); break; }
+          // An Overseer API failure must not leave the run stuck "running" forever in the DB (found
+          // by test/stress/pipeline_logic.sh case C) -- treat it as a terminal failure of this run,
+          // not an exception that skips store.finishRun entirely.
+          finalStatus = "failed";
+          bus.emitEvent({
+            type: "overseer-decision",
+            runId: run.id,
+            phase,
+            decision: {
+              action: "stop",
+              reasoning: `Overseer call raised an exception: ${err instanceof Error ? err.message : String(err)}`,
+            },
+            ts: new Date().toISOString(),
+          });
+          break;
+        }
+
+        // Pipeline code has final say, not the Overseer's own text: a non-"pass" outcome can never be
+        // continued past, regardless of what action the Overseer returned (found by pipeline_logic.sh
+        // case A, where a gatekeeper no-go was waved through because the Overseer said "continue").
+        if (decision.action === "continue" && verdict.outcome !== "pass") {
+          decision = {
+            action: "repair",
+            repairTarget: phase,
+            reasoning: `${decision.reasoning} (overridden: pipeline requires outcome "pass" to continue past a phase; got "${verdict.outcome}")`,
+          };
+        }
+
+        bus.emitEvent({ type: "overseer-decision", runId: run.id, phase, decision, ts: new Date().toISOString() });
+
+        if (decision.action === "continue") {
+          // Only right as the Planner passes, and only once: apply any skip it suggested. Validated
+          // again here against the hard SKIPPABLE_PHASES allowlist -- parseVerdict already filtered
+          // it, but this is the actual authority, not a suggestion the pipeline merely trusts.
+          if (phase === "planner" && verdict.suggestedSkip?.length) {
+            for (const skip of verdict.suggestedSkip) {
+              if (!(SKIPPABLE_PHASES as readonly string[]).includes(skip) || !runPhases.includes(skip)) continue;
+              const skipRecord = store.startPhase(run.id, skip, 1);
+              const skip_verdict = skippedVerdict(`Planner suggested skipping this phase as unnecessary for a trivial task: ${verdict.headline}`);
+              store.finishPhase(skipRecord.id, skip_verdict);
+              bus.emitEvent({ type: "phase-start", runId: run.id, phase: skip, attempt: 1, ts: new Date().toISOString() });
+              bus.emitEvent({ type: "phase-end", runId: run.id, phase: skip, attempt: 1, verdict: skip_verdict, ts: new Date().toISOString() });
+              runPhases = runPhases.filter((p) => p !== skip);
+            }
+          }
+          phaseIdx = runPhases.indexOf(phase) + 1;
+          retryFeedback = undefined;
+          continue;
+        }
+        if (decision.action === "stop") {
+          // "stopped" is a clean halt (e.g. the Overseer judged the task itself ambiguous while the
+          // phase still passed); anything ending on a non-pass outcome is a "failed" run, not a
+          // neutral stop, even when the Overseer's own reasoning used the word "stop".
+          finalStatus = verdict.outcome === "pass" ? "stopped" : "failed";
+          break;
+        }
+
+        // repair: route to the named phase (same phase or an earlier one), bounded by a total budget
+        // across the whole run so e.g. a builder<->verifier ping-pong can't run forever even though
+        // neither phase alone ever exceeds its own per-phase retry limit.
+        totalRepairs += 1;
+        if (totalRepairs > config.maxTotalRepairs) {
+          finalStatus = "failed";
+          bus.emitEvent({
+            type: "overseer-decision",
+            runId: run.id,
+            phase,
+            decision: { action: "stop", reasoning: `Total repair budget (${config.maxTotalRepairs}) exhausted for this run.` },
+            ts: new Date().toISOString(),
+          });
+          break;
+        }
+
+        const target =
+          decision.repairTarget && isValidRepairTarget(phase, decision.repairTarget, runPhases) ? decision.repairTarget : phase;
+        if (target === phase && attempt > config.maxRetriesPerPhase) {
+          finalStatus = "failed";
+          bus.emitEvent({
+            type: "overseer-decision",
+            runId: run.id,
+            phase,
+            decision: { action: "stop", reasoning: `Per-phase retry budget (${config.maxRetriesPerPhase}) exhausted for ${phase}.` },
+            ts: new Date().toISOString(),
+          });
+          break;
+        }
+
+        retryFeedback = decision.feedbackForRepair ?? decision.reasoning;
+        phaseIdx = runPhases.indexOf(target);
+      }
     }
   } catch (err) {
     // Anything else unexpected (a bug in the loop itself, a Store I/O error) still leaves a

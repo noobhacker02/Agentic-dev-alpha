@@ -242,9 +242,9 @@ Everything runs on Linux, macOS and Windows with Node 22.5+. The results below a
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 66 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `bfbccdc` (62 suites; four are new since) |
-| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | **62 of 62** at `bfbccdc` (four suites added since; their CI result is not read yet) |
-| **Windows** (`windows-latest`) | The same | **62 of 62** at `bfbccdc` (same) |
+| **Linux** | All 69 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `56746ad` (66 suites; three are new since) |
+| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | **66 of 66** at `56746ad` (three suites added since; their CI result is not read yet) |
+| **Windows** (`windows-latest`) | The same | **66 of 66** at `56746ad` (same) |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
@@ -406,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 66 suites, none of which calls a model (what CI runs)
+npm test                          # all 69 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 
