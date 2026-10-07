@@ -93,19 +93,23 @@ const CHILD = {
     import { createServer } from "node:http";
     const { BrowserSessionManager, __testHandlers } = await import(process.env.HONESTY_ROOT_URL + "dist/browser-tools.js");
     const { EventBus } = await import(process.env.HONESTY_ROOT_URL + "dist/bus.js");
+    let stormOver = false;
     const app = createServer((req, res) => {
       const path = req.url.split("?")[0];
       res.writeHead(200, { "content-type": "text/html" });
-      if (path === "/storm") return res.end('<!doctype html><title>storm</title><h1>Storm</h1><script>let i=0;const t=setInterval(()=>{const w=window.open("/pop?"+i);setTimeout(()=>{try{w.close()}catch{}},8);if(++i>=30)clearInterval(t)},15)</script>');
+      if (path === "/storm") return res.end('<!doctype html><title>storm</title><h1>Storm</h1><script>let i=0;const t=setInterval(()=>{const w=window.open("/pop?"+i);setTimeout(()=>{try{w.close()}catch{}},8);if(++i>=30){clearInterval(t);setTimeout(()=>fetch("/done"),60)}},15)</script>');
       if (path === "/pop") return res.end('<!doctype html><title>pop</title><script>for(let k=0;k<8;k++){fetch("/slow?"+Math.random()).catch(()=>{});new Image().src="/img?"+Math.random()}</script>');
       if (path === "/slow" || path === "/img") return void setTimeout(() => res.end("x"), 40);
+      if (path === "/done") { stormOver = true; return res.end("ok"); }
       res.end("<!doctype html><title>t</title><h1>ok</h1>");
     });
     await new Promise((r) => app.listen(0, "127.0.0.1", r));
     const bus = new EventBus(), sessions = new BrowserSessionManager({ videoDirFor: () => process.env.HONESTY_TMP });
     const h = __testHandlers({ runId: "x", bus, sessions, artifactDir: process.env.HONESTY_TMP });
     await h.open.handler({ url: "http://127.0.0.1:" + app.address().port + "/storm" }, {});
-    await new Promise((r) => setTimeout(r, 2500));
+    // wait for the page to say its storm is over (a busy machine stretches it from half a second to many), then let the last popups settle
+    for (let waited = 0; !stormOver && waited < 40000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 500));
     const r = await h.inspect.handler({}, {});
     await sessions.close("x", bus, "completed");
     console.log("RESULT " + JSON.stringify({ text: r.content[0].text.slice(0, 400) }));
@@ -188,7 +192,7 @@ export async function observe(root = ROOT) {
     app.close();
   }
   seen["hung-page-gives-up"] = child("hung", root, 25_000);
-  seen["popup-storm-survives"] = child("popups", root, 60_000);
+  seen["popup-storm-survives"] = child("popups", root, 90_000);
   seen["bad-status-is-502"] = child("status", root, 30_000);
   return seen;
 }

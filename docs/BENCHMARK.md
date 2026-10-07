@@ -33,7 +33,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | Suite | What it measures | First recorded | Now | Change | Why / how |
 |---|---|---|---|---|---|
 | `adversary-yield` | Confirmed findings in the latest adversary round (tracked, not scored: more can mean a better adversary) | 20 @ 7138e1b | 28 | +8 (not scored) | IMP-018 |
-| `browser-honesty` | Browser tools: a repeated failure, a query, a scrolling form, a huge page, forged text, a typed secret, a hung page, a popup storm and a bad status line all handled | 0/11 @ ecc83f2 | 11/11 | +11 (better) | IMP-017, IMP-018 |
+| `browser-honesty` | Browser tools: a repeated failure, a query, a scrolling form, a huge page, forged text, a typed secret, a hung page, a popup storm and a bad status line all handled | 0/11 @ ecc83f2 | 11/11 | +11 (better) | IMP-017, IMP-018, IMP-019 |
 | `file-hooks` | File-tool and safety hooks: paths and commands that must be denied, beside the ordinary ones that must not | 65/242 @ f10a830 | 242/242 | +177 (better) | IMP-016 |
 | `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014, IMP-018 |
 | `observability` | Page problems the agent is told about | 0/8 @ 7138e1b | 8/8 | +8 (better) | IMP-006, IMP-008, IMP-011, IMP-017, IMP-018 |
@@ -55,7 +55,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `86bd238`, 2026-10-07. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `0892fd7`, 2026-10-07. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes
@@ -66,6 +66,7 @@ Latest run: commit `86bd238`, 2026-10-07. Baselines are the first value ever rec
 | 2026-10-02 | `observability` | Probe URLs made opaque (`/p1` ...). | The first scorer reported 2 of 8; "blank" matched the URL `/blank`. The real first baseline is 1 of 8. |
 | 2026-10-02 | `observability` | The long-text probe follows the `text` tool's own pagination hint (`offset=N`), up to ten more calls. | The check needs an agent that reads a long page the way the tool tells it to. Before the `text` tool exists there is no hint, so the baseline (1 of 8) is unaffected. |
 | 2026-10-02 | `observability` | The redirect probe now requires an explicit report of the redirect, and the failed-request probe requires `404` on the same line as `missing.js`. **Baseline corrected from 1 of 8 to 0 of 8.** | Adversary round 1 (A14): the one point the old tools earned was for the redirect, scored only because `inspect` prints the current URL. The corrected number was measured, not assumed: commit `7138e1b` was built in a scratch worktree and scored with the corrected suite (0 of 8). |
+| 2026-10-07 | `browser-honesty` | The popup-storm check waits until the page reports its storm is over (a request to `/done`) plus half a second, instead of 2.5 s; the scenario (30 popups, 8 requests each, video on) is unchanged. No baseline moved: the unmodified build `ecc83f2` still scores 0 of 11 and this tree 11 of 11. | The full suite on `790771e` measured this check as failed on a loaded machine (10 of 11): the fixed wait ended mid-storm (IMP-019). |
 
 ## The two skills
 

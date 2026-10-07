@@ -19,12 +19,14 @@ if (process.argv[2] === "child") {
   const { EventBus } = await import("../dist/bus.js");
   const n = Number(process.argv[3]);
   const video = process.argv[4] === "video";
+  let stormOver = false;
   const app = createServer((req, res) => {
     const path = req.url.split("?")[0];
     res.writeHead(200, { "content-type": "text/html" });
-    if (path === "/storm") return res.end(`<!doctype html><title>storm</title><h1>Storm</h1><script>let i=0;const t=setInterval(()=>{const w=window.open('/pop?'+i);setTimeout(()=>{try{w.close()}catch{}},8);if(++i>=${n})clearInterval(t)},15)</script>`);
+    if (path === "/storm") return res.end(`<!doctype html><title>storm</title><h1>Storm</h1><script>let i=0;const t=setInterval(()=>{const w=window.open('/pop?'+i);setTimeout(()=>{try{w.close()}catch{}},8);if(++i>=${n}){clearInterval(t);setTimeout(()=>fetch('/done'),60)}},15)</script>`);
     if (path === "/pop") return res.end(`<!doctype html><title>pop</title><script>for(let k=0;k<8;k++){fetch('/slow?'+Math.random()).catch(()=>{});new Image().src='/img?'+Math.random()}</script>`);
     if (path === "/slow" || path === "/img") return void setTimeout(() => res.end("x"), 40);
+    if (path === "/done") { stormOver = true; return res.end("ok"); }
     res.end(`<!doctype html><title>t</title><h1>ok</h1>`);
   });
   await new Promise((r) => app.listen(0, "127.0.0.1", r));
@@ -35,7 +37,9 @@ if (process.argv[2] === "child") {
   const h = __testHandlers({ runId: "storm", bus, sessions, artifactDir: mkdtempSync(join(tmpdir(), "storm-art-")) });
   const call = async (name, args = {}) => { const r = await h[name].handler(args, {}); return r.content.map((c) => c.text ?? "").join("\n"); };
   await call("open", { url: `${base}/storm` });
-  await new Promise((r) => setTimeout(r, Math.max(1500, n * 40 + 800)));
+  // The page says when its storm is over: a fixed wait was too short on a busy machine, and then inspect ran in the middle of the storm (the first full-suite failure).
+  for (let waited = 0; !stormOver && waited < 60_000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 500));
   const after = await call("inspect");
   const tabsText = await call("list_tabs");
   const session = sessions.sessions.get("storm");

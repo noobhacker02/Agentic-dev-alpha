@@ -54,6 +54,7 @@ All no-API. Each was written to fail on the old code first, mutation-checked, an
 | `test:browser-frames` | Round 1, A10: `inspect` sees iframes and open shadow roots, says what it could not read, and refuses fields a person cannot see (benchmark `form-coverage`) |
 | `test:browser-popup-storm` | Round 2, A41: ten and thirty popups that open and close themselves, video on, do not end the process; a storm of 150 leaves 60 tabs |
 | `test:browser-hang` | Round 2, A31: a busy page makes every tool give up at its deadline and leave a fresh tab; a stuck tab closes quickly |
+| `test:browser-dropped-call` | IMP-019: a call the browser drops ("Resulting promise was garbage collected") is asked again once for a read (`inspect`, `text`), never repeated for an action, and reported plainly otherwise; the popup-storm tests wait for the page's own end signal |
 | `test:fatal` | Round 2, A39 and A41: an error nobody caught stops the run the ordinary way, including through the real command twice per kind of error |
 | `test:net-gate` | The forward proxy that decides where the browser may go: absolute URIs, CONNECT, WebSocket upgrades, resolution, the credential, and an upstream that answers a status HTTP does not allow |
 | `test:browser-redirect-gate` | Round 1, A2 (critical): a server-side redirect from an allowed page cannot reach a decoy host (16 ways of trying) |

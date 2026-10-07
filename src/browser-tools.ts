@@ -1215,6 +1215,16 @@ export interface CreateBrowserToolServerOptions {
 const TOOL_DEADLINE_MS = 60_000;
 class ToolDeadline extends Error {}
 
+/** Chromium drops a call it was running when the page is busy or changing (seen under CPU load right after a page opened and closed windows): Playwright reports "Resulting promise was garbage collected".
+ * The call did not complete, and the next one works. */
+const isDroppedCall = (err: unknown): boolean => /Resulting promise was garbage collected/i.test(err instanceof Error ? err.message : String(err));
+/** Tools that only look: asking again after a drop changes nothing. An action (a click, a typed value) is never repeated, because the dropped call may have happened. */
+const READ_ONLY_TOOLS = new Set(["inspect", "text", "notices", "list_tabs", "screenshot"]);
+const droppedCallText = (toolName: string): string =>
+  READ_ONLY_TOOLS.has(toolName)
+    ? `Error: the browser dropped this ${toolName} twice because the page was busy or changing (a page that opens and closes windows can do this). Nothing was changed. Wait a moment and call ${toolName} again.`
+    : `Error: the browser dropped this ${toolName} because the page was busy or changing, so it may or may not have happened. Call inspect to see the page before deciding whether to do it again.`;
+
 /** A page's title, or a stand-in when the page does not answer in time: a tool that looks at every tab must not be held up by the one that is stuck (A31). */
 async function pageTitle(page: Page, ms: number): Promise<string> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1265,14 +1275,21 @@ function instrumented(
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       // (Promise.race keeps a handler on `run`, so a call we gave up on that fails later, when its tab is closed, is not an unhandled rejection: no catch of our own is needed)
-      result = await Promise.race([fn(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ToolDeadline()), deadlineMs); })]);
+      const attempt = async (): Promise<{ text: string }> => {
+        try { return await fn(); } catch (err) {
+          if (isDroppedCall(err) && READ_ONLY_TOOLS.has(toolName)) return await fn(); // a read changes nothing: asking once more is safe
+          throw err;
+        }
+      };
+      result = await Promise.race([attempt(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ToolDeadline()), deadlineMs); })]);
     } catch (err) {
       isError = true;
       if (err instanceof ToolDeadline) {
         const session = opts.sessions.get(opts.runId);
         const recovery = session ? await leaveStuckTab(session) : "";
         result = { text: `Error: the page is not responding: ${toolName} waited ${Math.round(deadlineMs / 1000)} s and gave up. A script on the page may be stuck in a loop (or the page is hung some other way).${recovery}` };
-      } else result = { text: `Error: ${err instanceof Error ? err.message : String(err)}` };
+      } else if (isDroppedCall(err)) result = { text: droppedCallText(toolName) };
+      else result = { text: `Error: ${err instanceof Error ? err.message : String(err)}` };
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -1413,7 +1430,7 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
           label = target.label;
           full = await onTarget(target, (el) => (el as ElementHandle).evaluate((n: any) => String(n.innerText ?? n.textContent ?? "")));
         } else {
-          full = await tab.page.locator("body").innerText().catch(() => "");
+          full = await tab.page.locator("body").innerText().catch((err) => { if (isDroppedCall(err)) throw err; return ""; }); // a dropped read is retried, not reported as an empty page
           // The frames' text follows the page's own, each under a heading that says which frame it came from.
           const readable = await readableFrames(tab.page);
           readerNotes = readable.notes;
