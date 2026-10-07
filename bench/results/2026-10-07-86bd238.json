@@ -16,7 +16,7 @@
         ],
         "silent": []
       },
-      "ms": 5787
+      "ms": 5700
     },
     "safety": {
       "value": 26,
@@ -44,6 +44,14 @@
             "high": 6,
             "medium": 12,
             "low": 1
+          },
+          "triage": {
+            "findings": 20,
+            "byDisposition": {
+              "FIXED": 6,
+              "SPEC": 14
+            },
+            "notFixedAboveLow": 14
           }
         },
         "round-02": {
@@ -54,10 +62,19 @@
             "high": 3,
             "medium": 13,
             "low": 11
+          },
+          "triage": {
+            "findings": 31,
+            "byDisposition": {
+              "FIXED": 25,
+              "SCHEDULED": 5,
+              "REJECTED": 1
+            },
+            "notFixedAboveLow": 2
           }
         }
       },
-      "ms": 1
+      "ms": 2
     },
     "form-coverage": {
       "value": 8,
@@ -75,7 +92,7 @@
         ],
         "missed": []
       },
-      "ms": 11104
+      "ms": 10131
     },
     "team-invariants": {
       "value": 500,
@@ -85,7 +102,7 @@
         "mutants": 400,
         "wrong": {}
       },
-      "ms": 66
+      "ms": 61
     },
     "team-sizing": {
       "value": 28,
@@ -94,7 +111,7 @@
         "oversizedPlans": 0,
         "misses": []
       },
-      "ms": 22
+      "ms": 21
     },
     "file-hooks": {
       "value": 242,
@@ -103,7 +120,7 @@
         "wrongRows": 0,
         "examples": []
       },
-      "ms": 39
+      "ms": 34
     },
     "shell-readonly": {
       "value": 216,
@@ -113,9 +130,17 @@
         "ranWithoutPrompt": 0,
         "examples": []
       },
-      "ms": 16
+      "ms": 12
+    },
+    "browser-honesty": {
+      "value": 11,
+      "max": 11,
+      "detail": {
+        "failed": []
+      },
+      "ms": 20372
     }
   },
-  "commit": "ecc83f2",
+  "commit": "86bd238",
   "date": "2026-10-07"
 }

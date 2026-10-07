@@ -182,7 +182,7 @@ Verified this session (by running; each about the working tree, not about a push
 
 - Round 2 batches 3 to 6 on the tree that became `922e709`: `test:fatal` (including the real command, twice per kind of error), `test:browser-popup-storm`, `test:browser-hang`, `test:browser-observability` (all 22 sections, twice), `test:net-gate`,
   `test:checkpoint`, `test:bench-integrity`, `test:bench-suites`, `test:adversary-round`; benchmark `browser-honesty` 0 of 11 on the old build `ecc83f2` in every run since the popup scenario was made harsher, 11 of 11 here.
-  Mutation checks: 66 mutants on the browser, gate and fatal code (15 survivors accounted for in IMP-017: 8 closed by new assertions, 1 redundant line deleted, 6 redundant layers or unexercised guards named), 29 on `checkpoint`, 14 on the baseline check, 0 survivors.
+  Mutation checks: 66 mutants on the browser, gate and fatal code (16 first-pass survivors, all accounted for in IMP-017: 8 closed by new assertions and killed on rerun, 1 redundant line deleted, 7 equivalent or redundant layers or an unexercised guard, named), 29 on `checkpoint` and 14 on the baseline check, 0 survivors.
 - Dev-Skill: `tests/handoff_hook_test.py` (3 mutants), `improvement_log_test.py` (16 entries), `scanner_copies_test.py`, `bench_skill_test.py`, `tests/stress/scan_stress2.py` (9 of 11, its two documented holes).
 
 Not verified:
