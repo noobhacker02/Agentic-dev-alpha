@@ -38,7 +38,7 @@ const server = createServer((req, res) => {
     return;
   }
   if (host === "evil.example") return html(res, "EVIL-TITLE", "<h1>EVIL-PAGE-TEXT</h1>");
-  if (host === "ats.example") return html(res, "ATS", "<h1>ATS-FORM-TEXT</h1>");
+  if (host === "ats.example") return html(res, u.pathname === "/popup-page" ? "ATS-POPUP-TITLE" : "ATS", "<h1>ATS-FORM-TEXT</h1>");
   if (host === "internal.example") return html(res, "INTERNAL", "<h1>INTERNAL-TEXT</h1>");
   // jobs.example
   switch (u.pathname) {
@@ -49,6 +49,8 @@ const server = createServer((req, res) => {
     case "/frame-evil": return html(res, "frame", `<h1>FRAME-HOST</h1><iframe src="${E()}/inframe"></iframe>`);
     case "/frame-ats": return html(res, "frame", `<h1>FRAME-HOST</h1><iframe src="http://ats.example:${P}/apply"></iframe>`);
     case "/frame-redirect": return html(res, "frame", `<h1>FRAME-HOST</h1><iframe src="/r?to=${encodeURIComponent(E() + "/inframe-redirect")}"></iframe>`);
+    case "/popup-ok": return html(res, "popup", `<button id="p" onclick="window.open('http://ats.example:${P}/popup-page')">open listed popup</button>`);
+    case "/popup-redirect": return html(res, "popup", `<button id="p" onclick="window.open('/r?to=${encodeURIComponent(E() + "/stall")}')">open redirecting popup</button>`);
     case "/popup": return html(res, "popup", `<button id="p" onclick="window.open('${E()}/popup')">open popup</button>`);
     case "/ws-evil": return html(res, "ws", `<script>try { new WebSocket("ws://evil.example:${P}/sock") } catch (e) {}</script>ws-evil`);
     case "/ws-ok": return html(res, "ws", `<p id="out">waiting</p><script>const s = new WebSocket("ws://jobs.example:${P}/echo"); s.onopen = () => s.send("hi"); s.onmessage = (m) => { document.getElementById("out").textContent = "WS-" + m.data; };</script>`);
@@ -220,6 +222,32 @@ try {
     noEvilShown("iframe redirect");
     assert.ok(events.some((e) => e.type === "browser-notice" && e.kind === "blocked" && /evil\.example/.test(e.text)), "no notice says the frame landed off the list");
     console.log("[ok] an iframe redirected off the list is blanked and its text never reaches the agent");
+  }
+
+  // 5b. A popup that a redirect carries off the list has committed before the page is reported: it is still blanked, noticed, and its title and address are not listed (adversary round 3, A58)
+  {
+    await fresh();
+    await call("open", { url: J("/popup-redirect") });
+    await settle(200);
+    await call("click", { ref: await refOf("open redirecting popup") });
+    for (const wait of [150, 600, 1500]) {
+      await settle(wait);
+      const tabs = await call("list_tabs");
+      const lines = tabs.text.split("\n[Page notices")[0]; // the notice that follows names the host on purpose; the listing must not
+      assert.ok(!/EVIL|evil\.example/.test(lines), `list_tabs showed the redirected popup's title or address:\n${tabs.text}`);
+    }
+    const t2 = await call("switch_tab", { tabId: "t2" });
+    assert.ok(!/evil\.example/.test(t2.text.split("\n[Page notices")[0]), `switch_tab showed the redirected popup's address:\n${t2.text}`);
+    noEvilShown("popup redirect");
+    assert.ok(events.some((e) => e.type === "browser-notice" && e.kind === "blocked" && /evil\.example/.test(e.text)), "no notice says the popup landed off the list");
+    // control: a popup to a listed host is listed with its title
+    await fresh();
+    await call("open", { url: J("/popup-ok") });
+    await settle(200);
+    await call("click", { ref: await refOf("open listed popup") });
+    await settle(600);
+    assert.ok(/ATS-POPUP-TITLE/.test((await call("list_tabs")).text), "control: a popup to a listed host was hidden");
+    console.log("[ok] a popup carried off the list by a redirect is blanked and noticed, and list_tabs and switch_tab do not print its title or address; a popup to a listed host is listed");
   }
 
   // 6. WebSockets: to an unlisted host never connects; the denied host and a private address are the gate's

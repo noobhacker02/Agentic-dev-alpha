@@ -109,6 +109,8 @@ export interface LockHolder {
   /** The start time of the process that took the lock, to tell it from a different process that was given the same pid later. */
   start?: string;
   host: string;
+  /** The PID namespace of the process that took the lock (Linux). A pid means nothing outside it, so a holder in another namespace cannot be proven gone from here. */
+  ns?: string;
   nonce: string;
   since: string;
 }
@@ -118,12 +120,19 @@ export interface LockEnv {
   host?: string;
   isAlive?: (pid: number) => boolean;
   startOf?: (pid: number) => string | undefined;
+  /** This process's PID namespace, as a string that differs between namespaces (Linux: the target of /proc/self/ns/pid). */
+  nsOf?: () => string | undefined;
   now?: () => Date;
   /** Tests only: runs at the two points where another process could step in during a recovery ("stale-found": a stale lock has been read; "before-remove": about to remove it, mutex held). */
   between?: (stage: "stale-found" | "before-remove") => void;
 }
 
 export type LockResult = { ok: true; release(): void; staleRecovered?: LockHolder } | { ok: false; error: string; holder?: LockHolder };
+
+/** The PID namespace of this process, where the operating system has the idea: "pid:[4026531836]" on Linux, undefined elsewhere or when it cannot be read. */
+export function pidNamespace(): string | undefined {
+  try { return readlinkSync("/proc/self/ns/pid"); } catch { return undefined; }
+}
 
 export function isPidAlive(pid: number): boolean {
   try {
@@ -182,7 +191,8 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
   const alive = env.isAlive ?? isPidAlive;
   const startOf = env.startOf ?? processStartTime;
   const now = env.now ?? (() => new Date());
-  const mine: LockHolder = { pid, start: startOf(pid), host, nonce: randomBytes(16).toString("hex"), since: now().toISOString() };
+  const ns = (env.nsOf ?? pidNamespace)();
+  const mine: LockHolder = { pid, start: startOf(pid), host, ...(ns ? { ns } : {}), nonce: randomBytes(16).toString("hex"), since: now().toISOString() };
   const tmp = `${lockPath}.${mine.nonce}.tmp`;
   // A lock that cannot be made (the directory is gone, the disk is read-only, the filesystem has no hard links) is a refusal with a reason, not a crash.
   const failed = (err: unknown): LockResult => {
@@ -212,6 +222,7 @@ export function acquireProfileLock(lockPath: string, env: LockEnv = {}): LockRes
         recovered = undefined; // a broken file has no holder to report
       } else {
         if (holder.host !== host) return { ok: false, holder, error: `this profile is locked by pid ${holder.pid} on another computer (${holder.host}); you are on ${host}. Remove ${lockPath} yourself if that machine is not using it` };
+        if (holder.ns !== undefined && ns !== undefined && holder.ns !== ns) return { ok: false, holder, error: `this profile is locked by pid ${holder.pid} in another process namespace (a container or sandbox on this computer, ${holder.ns}); its pid means nothing here, so it cannot be told to be gone. Close that run, or remove ${lockPath} yourself if it is not running` };
         let stale = !alive(holder.pid);
         if (!stale) {
           const current = startOf(holder.pid);

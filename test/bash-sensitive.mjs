@@ -16,17 +16,21 @@ mkdirSync(join(work, ".agent-loop", "profiles", "linkedin", "Default"), { recurs
 mkdirSync(join(work, ".git"), { recursive: true });
 mkdirSync(join(work, ".github"), { recursive: true });
 mkdirSync(join(work, "docs"), { recursive: true });
-for (const f of ["notes.txt", ".env", ".env.local", ".env.example", ".gitignore", "key.pem", "id_rsa", "secrets.json", "src/a.ts", "docs/environment.md", ".git/config", ".agent-loop/profiles/linkedin/Default/Cookies"]) writeFileSync(join(work, f), "x\n");
+mkdirSync(join(work, ".config", "gh"), { recursive: true });
+mkdirSync(join(work, ".aws"), { recursive: true });
+for (const f of ["notes.txt", ".env", ".env.local", ".env.example", ".gitignore", "key.pem", "id_rsa", "secrets.json", "src/a.ts", "docs/environment.md", ".envrc", ".env-prod", ".env_local", ".htpasswd", "terraform.tfstate", "terraform.tfstate.backup", "prod.tfvars", "kubeconfig", "gcp-key.json", ".vault_pass", ".bash_history", "keystore.jks", "AuthKey_ABC.p8", "vault.kdbx", ".config/gh/hosts.yml", ".aws/config", "kubeconfig.md", "history.txt", ".envelope", "notes.tfvars.md", ".git/config", ".agent-loop/profiles/linkedin/Default/Cookies"]) writeFileSync(join(work, f), "x\n");
 if (posix) { symlinkSync(join(work, ".env"), join(work, "innocent.txt")); symlinkSync(join(work, "notes.txt"), join(work, ".env.shadow")); } // a harmless file under a credential's name, and a credential under a harmless name
 
 const quiet = (cmd) => { const p = approvalPlan("Bash", { command: cmd }, work); return p?.readOnly === true; };
 
-const ordinary = ["cat notes.txt", "ls", "ls src", "cat src/a.ts", "head -n 3 notes.txt", "grep -n x notes.txt", "cat docs/environment.md", "cat .env.example", "cat .gitignore", "ls .github", "git status", "git diff", "cd src && ls", "cat notes.txt | sort", "wc -l notes.txt", "find src -name '*.ts'"];
+const ordinary = ["cat kubeconfig.md", "cat history.txt", "cat .envelope", "cat notes.tfvars.md", "cat notes.txt", "ls", "ls src", "cat src/a.ts", "head -n 3 notes.txt", "grep -n x notes.txt", "cat docs/environment.md", "cat .env.example", "cat .gitignore", "ls .github", "git status", "git diff", "cd src && ls", "cat notes.txt | sort", "wc -l notes.txt", "find src -name '*.ts'"];
 for (const c of ordinary) assert.ok(quiet(c), `control: ${c} asked but is ordinary reading inside --dir`);
 
 const asks = [
   "cat .env", "cat ./.env", "cat src/../.env", "head -n 1 .env.local", "grep TOKEN .env", "sed -n p .env", "tail -n 2 .env.local", "wc -c .env",
   "cat .agent-loop/profiles/linkedin/Default/Cookies", "ls .agent-loop/profiles", "ls .agent-loop", "head -c 100 .agent-loop/profiles/linkedin/Default/Cookies", "grep -r li_at .agent-loop", "find .agent-loop -type f",
+  // the names a project keeps its secrets under besides .env (adversary round 3, A60)
+  "cat .envrc", "cat .env-prod", "cat .env_local", "cat .htpasswd", "cat terraform.tfstate", "cat terraform.tfstate.backup", "cat prod.tfvars", "cat kubeconfig", "cat gcp-key.json", "cat .vault_pass", "cat .bash_history", "cat keystore.jks", "cat AuthKey_ABC.p8", "cat vault.kdbx", "cat .config/gh/hosts.yml", "cat .aws/config",
   "cat key.pem", "cat id_rsa", "cat secrets.json", "cat .git/config", "ls .git",
   "cd .agent-loop && ls", "cd .agent-loop/profiles && cat linkedin/Default/Cookies", "grep x < .env", "cat notes.txt .env", "cat notes.txt | grep x; cat .env",
   ...(posix ? ["cat innocent.txt", "cat .env.shadow"] : []), // the file tools judge the name as written too, so the shell does not guess it is harmless

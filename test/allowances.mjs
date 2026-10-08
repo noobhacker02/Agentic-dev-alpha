@@ -181,4 +181,21 @@ const bad = (raw) => { const r = parseAllowances(raw); assert.ok(!r.ok, `accepte
   assert.ok(!asDir.ok && /not a file/i.test(asDir.errors.join()), "a directory was read as the config");
   console.log("[ok] no config means nothing is allowed; the file is checked for shape, size, unknown keys, platform names, and (on POSIX) that nobody else can write it and that it is not a link");
 }
+// 8. A name the rules cannot parse must not slip past the deny list (adversary round 3, A57): browsers resolve "x_y.ads.example" and the resolver may answer; it is under a denied domain
+{
+  const a = ok({ allow: ["example.org"], deny: ["ads.example.org"] });
+  const { livePolicy } = await import("../dist/allowances.js");
+  const p = livePolicy(a);
+  for (const h of ["x_y.ads.example.org", "_dmarc.ads.example.org", "a b.ads.example.org", "x_y.ADS.Example.ORG.", "ads_.ads.example.org"]) {
+    assert.equal(p.allowHost(h), false, `${JSON.stringify(h)} is under a denied domain but the net gate let it through`);
+    assert.notEqual(hostStatus(a, h), "allowed", `${JSON.stringify(h)} counted as allowed`);
+  }
+  assert.equal(hostStatus(a, "x_y.ads.example.org"), "denied");
+  // controls: an unparseable name that is not under a denied domain is still unlisted (not denied), and ordinary names keep working
+  assert.equal(hostStatus(a, "x_y.other.example"), "unlisted");
+  assert.equal(p.allowHost("x_y.other.example"), true, "an unrelated odd name was refused (the gate refuses more than the deny list)");
+  assert.equal(p.allowHost("cdn.example.net"), true);
+  assert.equal(p.allowHost("ads.example.org"), false);
+  console.log("[ok] a name with an underscore or a space under a denied domain is denied, not 'unlisted'");
+}
 console.log("\nALL ALLOWANCES TESTS PASSED");

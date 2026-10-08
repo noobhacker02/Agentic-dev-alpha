@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Security
+- **Round 3 on S2 (LIVE mode): the upload hold covers the channels it missed, and six more holes in the LIVE rules are closed** (adversary round 3: A52 to A54 high, A55 to A58 medium, A59 and A60 low; `docs/IMPROVEMENTS.md` IMP-031). A shared worker, an XHR with method `OPTIONS` and a body, a WebSocket
+  to another listed platform, and a page that stored the file's bytes and reloaded all got the attached file out; a name such as `x_y.ads.example` slipped past the deny list; a popup carried off the list by
+  a redirect was listed with its title and address; a lock written in another PID namespace read as stale; `.envrc`, Terraform state and `kubeconfig` were not credential files. Each new section fails on
+  the previous `src/`; two mutants of the browser rules are caught. A56 (a WebSocket inside a dedicated worker) and A61 (plain http to a listed name) are scheduled for S5 and stated as open in the threats table.
+  Also: `test:login` no longer counts directories in the shared temp directory (it failed when two suites ran at once).
 - **Read-only auto-approval is an allow-list of safe forms, and the path hooks judge what the file tools will open** (adversary round 2: A51 critical, A27 high, A28, A29, A30, A44; `docs/IMPROVEMENTS.md` IMP-016). A fresh-context adversary
   made the real approval hook run `sed '1e CMD'`, `sed w`, `rg --pre`, `git remote set-url`, `sort -o` and a read through a symlink with no prompt, and showed `~/x` slipping past path scope. Now `sed` is read-only only as a plain
   `p`, `d`, `q` or one `s///`, `git` only in reading forms, output and program-running flags ask, every path is judged by its real location, a glob, brace, tilde or variable asks, `~` means the home directory as the tools

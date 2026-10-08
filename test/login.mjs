@@ -15,6 +15,10 @@ import { BrowserSessionManager, __testHandlers } from "../dist/browser-tools.js"
 import { liveBrowserPolicy } from "../dist/browser-policy.js";
 import { EventBus } from "../dist/bus.js";
 
+// The leftover-directory check in section 7 lists the temp directory, so another run of this suite (or another suite) at the same time would be counted as a leak (seen on 423d2e8 when two full runs overlapped).
+// This process gets its own temp directory; os.tmpdir() reads these variables on every call.
+{ const own = mkdtempSync(join(tmpdir(), "login-test-tmp-")); process.env.TMPDIR = own; process.env.TMP = own; process.env.TEMP = own; }
+
 const posix = process.platform !== "win32";
 const PASSWORD = "hunter2-correct-horse"; // devskill:allow (a made-up password the simulated person types, to prove it never leaks)
 const SESSION = "SESSIONVALUE7f3a9c1e";

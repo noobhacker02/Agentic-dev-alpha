@@ -421,4 +421,26 @@ if (posix) {
   console.log("[ok] a directory the user cannot look into is reported, not assumed fine; a live process owned by someone else counts as alive");
 }
 
+// 16. A lock written in another process namespace (a container, bwrap, unshare --pid) names a pid that means nothing here: it cannot be proven stale (adversary round 3, A59)
+{
+  const dir = scratch();
+  const lock = join(dir, "x.lock");
+  const env = (pid, extra = {}) => ({ pid, host: "h", isAlive: () => false, startOf: () => "boot-1", ...extra });
+  const a = acquireProfileLock(lock, env(1001, { nsOf: () => "pid:[4026531836]" }));
+  assert.ok(a.ok);
+  const other = acquireProfileLock(lock, env(1002, { nsOf: () => "pid:[4026532999]" }));
+  assert.ok(!other.ok && /another process namespace|container/i.test(other.error), `a lock from another process namespace was taken: ${JSON.stringify(other)}`);
+  assert.ok(readFileSync(lock, "utf8").includes('"pid":1001'), "the other namespace's lock was replaced");
+  // control: the same namespace with a dead holder is recovered, and a holder with no namespace recorded (an older lock, another OS) is judged by pid and start time as before
+  const same = acquireProfileLock(lock, env(1003, { nsOf: () => "pid:[4026531836]" }));
+  assert.ok(same.ok, `control: a dead holder in the same namespace was not recovered: ${JSON.stringify(same)}`);
+  same.release();
+  const legacy = acquireProfileLock(lock, env(1004, { nsOf: () => undefined }));
+  assert.ok(legacy.ok);
+  const next = acquireProfileLock(lock, env(1005, { nsOf: () => "pid:[4026531836]" }));
+  assert.ok(next.ok, `control: a holder with no namespace recorded was treated as foreign: ${JSON.stringify(next)}`);
+  next.release();
+  console.log("[ok] a lock whose holder is in another PID namespace is held, not recovered; the same namespace, and a holder with none recorded, are judged by pid and start time as before");
+}
+
 console.log("\nALL PROFILE TESTS PASSED");

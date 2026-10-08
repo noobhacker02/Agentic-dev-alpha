@@ -32,14 +32,14 @@ Deterministic suites need no model and no network. Suites that use a real model 
 <!-- bench:table:start -->
 | Suite | What it measures | First recorded | Now | Change | Why / how |
 |---|---|---|---|---|---|
-| `adversary-yield` | Confirmed findings in the latest adversary round (tracked, not scored: more can mean a better adversary) | 20 @ 7138e1b | 0 | -20 (not scored) | IMP-018 |
+| `adversary-yield` | Confirmed findings in the latest adversary round (tracked, not scored: more can mean a better adversary) | 20 @ 7138e1b | 10 | -10 (not scored) | IMP-018, IMP-031 |
 | `browser-honesty` | Browser tools: a repeated failure, a query, a scrolling form, a huge page, forged text, a typed secret, a hung page, a popup storm and a bad status line all handled | 0/11 @ ecc83f2 | 11/11 | +11 (better) | IMP-017, IMP-018, IMP-019 |
-| `file-hooks` | File-tool and safety hooks: paths and commands that must be denied, beside the ordinary ones that must not | 65/242 @ f10a830 | 242/242 | +177 (better) | IMP-016 |
+| `file-hooks` | File-tool and safety hooks: paths and commands that must be denied, beside the ordinary ones that must not | 65/242 @ f10a830 | 242/242 | +177 (better) | IMP-016, IMP-031 |
 | `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014, IMP-018 |
-| `live-gate` | LIVE gate: address and URL forms, requests, sockets, redirect landings, public addresses and file destinations classified right (allowed ones allowed, the rest refused) | 0/156 @ b695f8c | 156/156 | +156 (better) | IMP-030 |
+| `live-gate` | LIVE gate: address and URL forms, requests, sockets, redirect landings, public addresses and file destinations classified right (allowed ones allowed, the rest refused) | 0/156 @ b695f8c | 156/156 | +156 (better) | IMP-030, IMP-031 |
 | `observability` | Page problems the agent is told about | 0/8 @ 7138e1b | 8/8 | +8 (better) | IMP-006, IMP-008, IMP-011, IMP-017, IMP-018 |
 | `safety` | Dangerous commands the safety net denies | 26/26 @ 7138e1b | 26/26 | no change | IMP-001, IMP-006 |
-| `shell-readonly` | Shell commands that run without a prompt: ordinary reading quiet, everything that writes, runs code or reads outside asks | 106/216 @ f10a830 | 216/216 | +110 (better) | IMP-016 |
+| `shell-readonly` | Shell commands that run without a prompt: ordinary reading quiet, everything that writes, runs code or reads outside asks | 106/216 @ f10a830 | 216/216 | +110 (better) | IMP-016, IMP-031 |
 | `team-invariants` | Generated team plans: valid accepted, every invalid one rejected for the right rule (V1 to V8, V10 to V12, V15) | 500/500 @ 1845dc7 | 500/500 | no change | IMP-015 |
 | `team-sizing` | Labelled tasks composed into the expected size band with the mandatory roles; oversized plans counted | 28/28 @ 1845dc7 | 28/28 | no change | IMP-015 |
 | `router` | Labelled tasks routed to the right flow, or to a question | not built | not built | planned in S3 | - |
@@ -55,7 +55,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `393dda5`, 2026-10-08. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `423d2e8`, 2026-10-08. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes

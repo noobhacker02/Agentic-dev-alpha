@@ -5,9 +5,9 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-07T19:36:42Z
-Covers agent-loop commit: b126b6e
-Covers Dev-Skill commit: 7c92fc7
+Updated: 2026-10-08T06:31:34Z
+Covers agent-loop commit: 423d2e8
+Covers Dev-Skill commit: 7cbdabb
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
 else, this paragraph is wrong and should be corrected.
@@ -154,6 +154,8 @@ when its latest adversary round has no open confirmed finding at medium or above
 
 ## Next step
 
+0. **Where the work stands (2026-10-08).** S2 increments 4 and 5 part one are committed (`393dda5` pushed; `423d2e8` committed, **not pushed**: the full suite on that exact commit failed `test:login` (a flake of the test itself: it counted directories in the shared temp directory while another run was going) and `test:bench-table` (the benchmark file was stale). Both are fixed in the next commit, which is the one to run the guarded suite on (`scratchpad/suite-then-push.sh <short-commit>`), then push, then read CI for `393dda5` and that commit on all three systems. **Adversary round 3 (A52 to A61) is triaged** (`docs/adversary/round-03-triage.md`): A52 to A55, A57 to A60 are fixed with tests that fail on the old `src/` (IMP-031); **A56** (a WebSocket inside a dedicated worker) and **A61** (plain http to a listed name) are scheduled for S5 and written into the threats table as open. Left for the S2 stage-close rule: a round that finds nothing open at medium or above (this round's fixes have had no second look), CI read on the commits above, and README suite counts (79 suites now). Then S3.
+
 1. **CI is green on Linux, macOS and Windows at agent-loop `4e5bccf`** (increment 3's fixes; it was green at `bbdb587`, IMP-027, too) (S2 increment 2, IMP-027, read from the Actions API: `Tests` and `Cross-platform` both succeeded; the full local suite and `pipeline_logic.sh` had passed on that exact commit). Increment 3 (IMP-028) is pushed and CI-green on all three systems at `4e5bccf` (local full suite 76 of 76 plus `pipeline_logic.sh` on that exact commit). CI at `e9da57a` was red on macOS and Windows with two real bugs (fixed); its Linux job stalled at the browser install step, an infrastructure stall that ran no tests. It was green at `58aaba4` (IMP-026) and at `b695f8c` (IMP-025) too (IMP-025), after the full local suite 71 of 71 plus `pipeline_logic.sh` on that exact commit. The Windows job had been red at `a035a87` (`test:team-run-cli` used an absolute `--import` path, now scanned for by `test:windows-imports`; `test:ui-plain` found `AL.mascot` undefined, **cause not established**, the UI harness now names a page script that failed to load). Everything before it was green too. Dev-Skill `d2a7159` (SKILL-019, lesson 32) is pushed; its repository registers no workflow run for a branch push, so it is confirmed by its four local test files only.
    **Rules that came out of it:** a test that touches timing is run under four busy loops for six runs before it is called stable; a mutation check starts with an unmutated control, and 0 survivors on a first pass is a reason to look; an event or a spawn that depends on who runs it (root here, a normal user on CI) is run as both when a branch depends on it; a mistake made twice becomes a scan.
 2. **Needs you (a decision, nothing blocks on it):** the compaction summaries in `docs/handoff/compactions/` are committed to a public repository (`checkpoint` stages them). The redactor is fixed (SKILL-015) and changed 0 lines of the
@@ -161,7 +163,7 @@ when its latest adversary round has no open confirmed finding at medium or above
 3. **The job agent is the priority (user, 2026-10-07: "go ahead with the job agent").** Order, from the spec: **S2** LIVE mode (increments 2 to 5 above) then **S3** router and flows, **S4** watchdog, serial queue, ledger, governor, goal loop, a minimal Needs-you CLI, **S5** job-apply flow with a local fake job board and a red team, then S6 (UI), S6b, S7 (real-model run). Each increment: test first, mutation check, docs, full suite on the exact commit, push on green, read CI on three systems.
    **Team composition (S3a) is parked**, built as far as: roster, composer, validator, identity, write scope, the plan-driven engine, the diff audit, `--team auto|fixed5|<file>` (default `fixed5`) and the planner's skip (IMP-015, 020 to 024; all pushed and CI-green). Left there: 2.2b part 2b-2 the Overseer's bounded append and split (its test must also kill the mutant that leaves the engine's current plan stale after a skip), V14's re-check of the real diff, repair by the owner of the files a finding names; 2.2c the variable-length stepper and the terminal and persona for unknown roles; 2.2d benchmark rows, a mutation check of the whole stage and an adversary round.
    Round 2 leftovers: A22 (before S5), A23 and A45 (S4), A43 (S2 ports), A25 and A26 part 2 (S5), A38's generic event cap, A42's LIVE-mode refusal (S2).
-4. Adversary round 3 (a new fresh-context agent) after S3a part two, not before: round 2's findings are fixed or scheduled by stage.
+4. Adversary round 3 was run on S2 (not after S3a part two as first planned): see item 0. A round 4 on S2's fixes (a new fresh-context agent) closes S2 if it finds nothing open at medium or above.
 
 ## Verified and not verified
 

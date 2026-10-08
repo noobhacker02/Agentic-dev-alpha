@@ -99,13 +99,15 @@ export const SENSITIVE_PATH_RE = new RegExp(
   String.raw`(^|[/\\])(` +
     [
       String.raw`\.ssh[/\\](id_rsa|id_ed25519|id_dsa|id_ecdsa)(\.pub)?`,
-      String.raw`\.aws[/\\]credentials`,
+      String.raw`\.aws[/\\](credentials|config)`,
       String.raw`\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|\.my\.cnf|\.boto|\.s3cfg`,
       String.raw`\.claude[/\\]\.credentials\.json|credentials\.json`,
       // .env and its variants (.env.local, .env.production); the files meant to be committed as templates are not secrets
-      String.raw`\.env(\.(?!(example|sample|template|dist|defaults?)$)[^/\\]+)?`,
+      String.raw`\.env([._-](?!(example|sample|template|dist|defaults?)$)[^/\\]+)?|\.envrc`,
+      // other files that hold secrets by convention (adversary round 3, A60): web-server passwords, infrastructure state and variables, cluster and CLI logins, key stores, a vault password, shell history
+      String.raw`\.htpasswd|\.vault_pass(word)?|kubeconfig|[^/\\]+\.(tfstate(\.backup)?|tfvars(\.json)?)|\.config[/\\]gh[/\\]hosts\.yml|[^/\\]+-key\.json|\.[a-z]+_history`,
       String.raw`\.docker[/\\]config\.json|\.kube[/\\]config|\.gnupg([/\\].*)?`,
-      String.raw`id_(rsa|ed25519|dsa|ecdsa)|[^/\\]+\.(pem|key|p12|pfx)|secrets?\.(ya?ml|json|toml)`,
+      String.raw`id_(rsa|ed25519|dsa|ecdsa)|[^/\\]+\.(pem|key|p12|pfx|jks|keystore|p8|kdbx)|secrets?\.(ya?ml|json|toml)`,
       // agent-loop's own home (the login profile, the audit database, a roster): nothing an agent should read, and a roster an agent writes is the threat G10
       String.raw`\.agent-loop([/\\].*)?`,
       // .git holds the config and attributes that make an auto-approved `git status` or `git diff` run a program (core.fsmonitor, a diff driver), and remotes with tokens in them

@@ -97,6 +97,10 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T21. The test-run helper's `undefined` triggered a default parameter (`creds: undefined`) and `slice(-0)` returned the whole array (A50).** Count 2 (`undefined` default: net-gate helper and team-roster `write()`; `slice(-0)`: 1). Fix: `null` means none; guard zero.
 
+**T22. A test that counts leftovers in a shared directory (`agent-loop-login-*` in the system temp directory) fails when anything else runs at the same time.** Count 1 (`test:login` on `423d2e8`, two full runs overlapping; reproduced by running the test twice at once). Fix: the test gives its own process a private temp directory (`TMPDIR`, `TMP`, `TEMP`). Rule: a check of "nothing left behind" lists only what this process could have made; reproduce a suspected concurrency flake by running two at once before changing anything.
+
+**T23. A new test passed against the mutant it was written for, because the test ran the attack too early.** Count 1 (IMP-031, the reload test: the bytes were sent from an inline script, which runs before `DOMContentLoaded`, and the old code only ended the hold at `DOMContentLoaded`, so the old code held it as well). Found only by running the test against the mutant after it passed. Fix: the sender waits for the event the rule keys on. Rule: a mutation check is run for every new rule, and "it passed on the new code" is not a result.
+
 ## 2. Platform differences (macOS, Windows, root vs normal user)
 
 **P1. macOS CI: a forbidden directory that does not exist yet and sits under a symlink (`/var`) kept its unresolved prefix, so "the profile would contain this directory" was missed (`test:profile`, e9da57a).** Count 1.
@@ -164,6 +168,10 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 **S12. `checkpoint` could push secrets from a fresh clone (no scanner installed) and to any branch (A32, A33).** Count 1. Fix: runs the repository's own scanner and refuses when absent; designated branch and expected origin (`test/checkpoint.mjs`).
 
 **S13. The compaction redactor missed ordinary secret spellings (A34: `GITHUB_TOKEN`, `DB_PASSWORD`, `client_secret`, `Cookie`, `Authorization`, Bearer, JWT).** Count 1. Fix: Dev-Skill `handoff_hook.py` (SKILL-015, `tests/handoff_hook_test.py`). Open decision: summaries are committed to a public repo (HANDOFF "Needs you").
+
+**S14. A verdict of "equivalent mutant" that was a belief (the hold treats `OPTIONS` as a plain read: "nothing sends a body with OPTIONS") and was wrong (A53: an XHR with method `OPTIONS` and a body carried the whole file).** Count 2 (the first was the unresolved-path mutant, IMP-028). Rule: an "equivalent" verdict is a claim; build the counterexample before writing it down, or call it unproven.
+
+**S15. A reviewer's suggested fix would have done nothing, and only a probe showed it (A52: "hold every request with no frame" -- a shared worker's `fetch` never reaches the context's `route()`).** Count 1. Rule: before building a fix for a channel, print what the interception point actually sees for that channel; a fix that is tested only through the attack that found the hole can pass for the wrong reason.
 
 ## 4. Tooling and process
 
@@ -245,7 +253,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 21, Platform 10, Security 13, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 75 entries** (T1 to T21, P1 to P10, S1 to S13, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 23, Platform 10, Security 15, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 79 entries** (T1 to T23, P1 to P10, S1 to S15, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

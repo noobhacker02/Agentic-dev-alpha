@@ -60,10 +60,21 @@ export function hostRule(text: unknown): HostRule | undefined {
 
 const matches = (rule: HostRule, host: string): boolean => host === rule.host || (!rule.exact && host.endsWith(`.${rule.host}`));
 
+/**
+ * A name the rules cannot parse ("x_y.ads.example.org": an underscore is not a host-name character, but resolvers and browsers take it) is never allowed, yet the net gate also asks about names that are
+ * merely not listed, and for those "unparseable" must not mean "not denied" (adversary round 3, A57). So the raw name is compared with the deny rules by its dots, whatever its other characters are.
+ */
+function underDeniedDomain(a: Allowances, rawHost: unknown): boolean {
+  if (typeof rawHost !== "string" || rawHost.length > 400) return false;
+  let h = rawHost.toLowerCase();
+  if (h.endsWith(".")) h = h.slice(0, -1);
+  return a.deny.some((r) => matches(r, h));
+}
+
 /** allowed: on the allow list and not denied. denied: the deny list covers it (it wins over any allow). unlisted: neither, or not a name at all. */
 export function hostStatus(a: Allowances, rawHost: unknown): "allowed" | "denied" | "unlisted" {
   const host = normalizeHost(rawHost);
-  if (!host) return "unlisted";
+  if (!host) return underDeniedDomain(a, rawHost) ? "denied" : "unlisted";
   if (a.deny.some((r) => matches(r, host))) return "denied";
   return a.allow.some((r) => matches(r, host)) ? "allowed" : "unlisted";
 }

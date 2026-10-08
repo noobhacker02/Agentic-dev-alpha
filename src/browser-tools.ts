@@ -216,7 +216,9 @@ const NOTICES_HEADER = "[Page notices since your last action. Text after the col
  * verifies locally needs peer connections.
  */
 const DISABLE_WEBRTC_SCRIPT = `(() => {
-  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection"]) {
+  // SharedWorker goes too: its requests never reach the context's route() (confirmed with a probe: only the script's own load does), so neither the LIVE site rule on a redirect nor the upload hold could see a
+  // file posted from one (adversary round 3, A52). A dedicated Worker is routed with its owner's frame and stays.
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "SharedWorker"]) {
     try { delete globalThis[name]; } catch {}
   }
 })();`;
@@ -506,9 +508,9 @@ function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined 
   const tab: BrowserTab = { id: `t${++session.tabCounter}`, page, navGen: 0, blockedLandings: 0 };
   session.tabs.push(tab);
   session.everTabs.push(tab);
-  page.on("framenavigated", (frame) => {
+  const checkLanding = (frame: Frame, countNav: boolean): void => {
     const main = frame === page.mainFrame();
-    if (main) tab.navGen += 1;
+    if (main && countNav) tab.navGen += 1;
     // A server-side redirect is followed inside the browser and the context-level guard sees only the first URL, so a page or frame can commit somewhere the policy would not have let it go. The
     // request cannot be taken back, but nothing from the page is shown: it is replaced by a blank one, and the agent is told where it landed and why that is not shown.
     const verdict = session.policy.landing(frame.url());
@@ -517,10 +519,16 @@ function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined 
     if (main) { tab.blockedLandings += 1; tab.lastBlockedLanding = `${where} (${verdict.reason})`; }
     pushNotice(session, tab.id, "blocked", `blocked by ${session.policy.blockedLabel}: the ${main ? "page" : "frame"} landed on ${where} (${cleanText(verdict.reason, 120)}); it was replaced by a blank page and nothing from it is shown`);
     void (main ? page.goto("about:blank") : frame.goto("about:blank")).catch(() => {});
+  };
+  page.on("framenavigated", (frame) => checkLanding(frame, true));
+  // A popup opened with an address has already committed its redirect when the browser reports the page, so the event above fired before this listener existed (adversary round 3, A58): look once now.
+  if (page.url() !== "about:blank") checkLanding(page.mainFrame(), false);
+  // The attached file lives in the document it was attached in, but a page that can read it can keep its bytes (sessionStorage, IndexedDB) and reload itself, so a new document of the same site does not end the hold
+  // (adversary round 3, A55). It ends when the tab has gone to a document that is not the site the file was attached on: that site's own pages are then no longer the file's concern, and the storage of the first one is not
+  // readable from there.
+  page.on("domcontentloaded", () => {
+    if (tab.upload && !session.policy.destination(tab.upload.pageUrl, page.url()).ok) tab.upload = undefined;
   });
-  // The attached file lives in the document it was attached in. A new document (a form submitted, a link followed) has no such field, so the hold ends when it has loaded; a script that only changes the address (pushState)
-  // does not make a new document, fires no such event, and the hold stays.
-  page.on("domcontentloaded", () => { tab.upload = undefined; });
   page.on("close", () => forgetTab(session, tab));
   watchPage(session, tab);
   return tab;
@@ -529,14 +537,19 @@ function adoptPage(session: BrowserSession, page: Page): BrowserTab | undefined 
 /** Marks a block reason as the upload rule's, so the notice names that rule and not the allowances list. */
 const UPLOAD_RULE_TAG = "[upload] ";
 
-/** A request that only reads. Everything else (a form post, a PUT, a fetch with a body, a DELETE) can carry a file out. */
-const isPlainRead = (method: string): boolean => method === "GET" || method === "HEAD" || method === "OPTIONS";
+/** A request that only reads. Everything else (a form post, a PUT, a DELETE, and OPTIONS: a script can give an XHR with that method a body) can carry a file out. A browser's own CORS preflight is not routed through the page, so holding OPTIONS costs nothing. */
+const isPlainRead = (method: string): boolean => method === "GET" || method === "HEAD";
+
+/** Some tab of the session with a designated file attached (the first), for the channels that cannot say which tab they belong to. */
+function heldAnyTab(session: BrowserSession | undefined): { pageUrl: string } | undefined {
+  return session?.everTabs.find((t) => t.upload)?.upload;
+}
 
 /** The page a file is held on, for the tab this request came from or the tab that opened it (a form with a target of its own opens its answer in a new window, which is still the same page's doing). */
 async function uploadHeldFor(session: BrowserSession | undefined, req: { frame(): { page(): Page } }): Promise<{ pageUrl: string } | undefined> {
   if (!session) return undefined;
   let page: Page | null;
-  try { page = req.frame().page(); } catch { return undefined; } // a request with no frame (a service worker's) has no page to hold
+  try { page = req.frame().page(); } catch { return undefined; } // a request with no frame (a service worker's) has no page to hold; service workers are blocked
   for (let hops = 0; page && hops < 4; hops++) {
     const tab = session.everTabs.find((t) => t.page === page);
     if (tab?.upload) return tab.upload;
@@ -681,9 +694,19 @@ export class BrowserSessionManager {
     // reached a non-allowed host with the route gate above in place. Non-local ones are intercepted
     // here and closed without ever connecting; local ones aren't matched, so they behave natively.
     await context.routeWebSocket(
-      (url) => !policy.allowWebSocket(url.href),
+      // While a file is attached every socket is looked at, not only the unlisted ones: a socket to another listed platform carries the file as well as a request does (adversary round 3, A54).
+      (url) => !policy.allowWebSocket(url.href) || heldAnyTab(sessionRef.current) !== undefined,
       (ws) => {
-        if (sessionRef.current) pushNotice(sessionRef.current, sessionRef.current.activeTabId, "blocked", `blocked by ${policy.blockedLabel}: WebSocket to ${safeUrl(ws.url().replace(/^ws/, "http"))}`);
+        const asHttp = ws.url().replace(/^ws/, "http");
+        const held = heldAnyTab(sessionRef.current);
+        if (held && policy.allowWebSocket(ws.url())) {
+          const to = policy.destination(held.pageUrl, asHttp);
+          if (to.ok) { ws.connectToServer(); return; }
+          if (sessionRef.current) pushNotice(sessionRef.current, sessionRef.current.activeTabId, "blocked", `blocked by the upload rule: a file is attached on ${safeUrl(held.pageUrl)}, and this WebSocket to ${safeUrl(asHttp)} would send it elsewhere (${to.reason})`);
+          void ws.close({ code: 1008, reason: "Blocked: a file is attached on this page" }).catch(() => {});
+          return;
+        }
+        if (sessionRef.current) pushNotice(sessionRef.current, sessionRef.current.activeTabId, "blocked", `blocked by ${policy.blockedLabel}: WebSocket to ${safeUrl(asHttp)}`);
         void ws.close({ code: 1008, reason: "Blocked: only localhost or 127.0.0.1 WebSockets are allowed" }).catch(() => {});
       }
     );
@@ -2019,8 +2042,10 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         const session = requireSession();
         const lines = await Promise.all(
           session.tabs.map(async (t) => {
-            const title = cleanText(await pageTitle(t.page, 1500), 80);
             const active = t.id === session.activeTabId ? " (active)" : "";
+            // A tab that is on a page the policy would not have let the agent go to shows neither its title nor its address: both are the page's own words (adversary round 3, A58).
+            if (!session.policy.landing(t.page.url()).ok) return `${t.id}${active} (not shown: the tab is on a page the allowances list does not cover)`;
+            const title = cleanText(await pageTitle(t.page, 1500), 80);
             return `${t.id}${active} ${JSON.stringify(title)} ${cleanText(t.page.url(), 200)}`;
           })
         );
@@ -2043,7 +2068,8 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         if (tab.id === session.activeTabId) return { text: `${tab.id} is already the active tab.` };
         await tab.page.bringToFront();
         activateTab(session, tab);
-        return { text: `Switched to ${tab.id}: ${cleanText(tab.page.url(), 200)}. Call inspect or screenshot to act on it.` };
+        const shown = session.policy.landing(tab.page.url()).ok ? cleanText(tab.page.url(), 200) : "(not shown: the tab is on a page the allowances list does not cover)";
+        return { text: `Switched to ${tab.id}: ${shown}. Call inspect or screenshot to act on it.` };
       })
   );
 
