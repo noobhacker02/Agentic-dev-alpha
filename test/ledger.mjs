@@ -216,6 +216,34 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
     j.close();
   }
 
+  // A90: pulling a future-stamped row back must not leave the clock a day ahead (which reopens the daily and hourly caps for the five applications done an hour ago)
+  {
+    now = T0;
+    const caps5 = { perDay: 5, perHour: 5, perSiteDay: 5, minGapMs: 0 };
+    const k = fresh(clock, caps5);
+    for (let i = 0; i < 5; i++) k.confirm(k.intend({ site: "s", company: `K${i}`, title: "T" }, "h").seq);
+    now = T0 + HOUR;
+    const { DatabaseSync } = await import("node:sqlite");
+    const raw = new DatabaseSync(join(dir, `l${n}.db`));
+    raw.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, note, url) VALUES ('s:future','s','Future','T','confirmed','h',?, '', '')").run(T0 + HOUR + 5 * DAY);
+    raw.close();
+    k.close();
+    const k2 = new Ledger(join(dir, `l${n}.db`), clock, caps5); // another process opens the file and finds the row from the future
+    const v = k2.mayStart({ site: "s", company: "New", title: "T" });
+    assert.ok(!v.ok, "five of five applications done an hour ago, and the cap reopened after a future-stamped row was pulled back");
+    k2.close();
+  }
+  // A92: a re-application after the 30 days the duplicate check allows is not refused by the database
+  {
+    now = T0;
+    const k = fresh(clock, { ...DEFAULT_CAPS, minGapMs: 0 });
+    k.confirm(k.intend(job("77"), "h").seq);
+    now = T0 + 31 * DAY;
+    assert.ok(k.mayStart(job("77")).ok);
+    const again = k.intend(job("77"), "h");
+    assert.ok(again.ok, `intend refused a posting that mayStart allowed: ${JSON.stringify(again)}`);
+    k.close();
+  }
   // a cap of 0 is never, with no time to wait; the pause of a site is remembered
   now = T0;
   const z = fresh(clock, { perDay: 0, perHour: 5, perSiteDay: 5, minGapMs: 0 });

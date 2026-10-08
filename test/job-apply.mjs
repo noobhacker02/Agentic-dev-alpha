@@ -264,6 +264,114 @@ const reset = () => { for (const k of Object.keys(board.applications)) delete bo
   console.log("[ok] round 4: a late checkbox and select, a checked box with its words outside its name, an id that imitates a flag, a forbidden ask past the 80th character or in parentheses or beside a misleading name, unanswerable look-alike questions, a wrong page, a form in a frame, a decoy button, a confirmation that was already on the page and an 'Apply now' that is not proof all send nothing wrong; the clean form is submitted");
 }
 
+// 7. Adversary round 5 (A80 to A96): each page below made the second version do the wrong thing
+{
+  const parked = async (name, chaos, re, { scam, extraFacts, job = "1" } = {}) => {
+    reset();
+    const l = ledger();
+    const r = await run(job, { ledger: l, ...(extraFacts ? { facts: facts(extraFacts) } : {}) }, chaos);
+    assert.strictEqual(r.status, "parked", `${name}: ${JSON.stringify(r)}`);
+    if (re) assert.ok(re.test(r.reasons.join(" | ")), `${name}: ${JSON.stringify(r.reasons)}`);
+    if (scam) assert.strictEqual(r.scam, true, `${name}: not flagged`);
+    assert.strictEqual(count(job), 0, `${name}: the board received an application`);
+    assert.strictEqual(l.all().length, 0, `${name}: the ledger holds a row for a parked item`);
+    l.close();
+  };
+  await parked("a typed signature under an attestation (A81)", "signature", /attestation/);
+  await parked("an attestation past the first 3000 characters (A81)", "farattest", /attestation/);
+  await parked("a negated sponsorship and authorisation question (A95)", "negated", /without visa sponsorship|not authorized/);
+  await parked("questions about a spouse or a sponsor's name (A87)", "spouse", /spouse|Sponsor name/);
+  await parked("a reference block with bare Name, Email and Phone (A88)", "refblock", /ask for/);
+  await parked("a captcha box on the form (A83)", "captchaform", /captcha/);
+  await parked("a page longer than the flow reads (A81)", "huge", /longer than the flow reads/);
+  await parked("more elements than the listing shows (A84)", "many60", /more interactive elements/);
+  await parked("an already-ticked box that calls itself a button (A85)", "rolebtn", /already checked/);
+  await parked("a radio the page selected (A93)", "radiopre", /already selected/);
+  await parked("a real submit button named something else and a plain 'Apply' in another form (A94)", "realcustom", /no plain submit|not all in one form|more than one button/);
+  await parked("a second field that could take the résumé (A96)", "twocv", /more than one field that could take the résumé/);
+  {
+    // A94: and the decoy form received nothing
+    assert.ok(!board.requests.includes("POST /jobs/1/decoy"), "the decoy form was submitted");
+  }
+  // the page names a different job that contains these words (A89)
+  reset();
+  {
+    const l = ledger();
+    const r = await applyToJob({ tools, facts: facts(), ledger: l, resume: "resume", job: JOB("1"), applyUrl: `${board.url}/jobs/5/apply`, jobUrl: `${board.url}/jobs/5` });
+    assert.ok(r.status === "parked" && /does not look like the posting/.test(r.reasons.join()), JSON.stringify(r));
+    assert.strictEqual(count("5"), 0);
+    l.close();
+  }
+  await parked("a page for another job that lists this one under 'similar jobs' (A89)", "wrongjob,similar", /does not look like/);
+  // honeypots hidden in seven ways, one page each (two on one page would park as "two fields ask for the website"): none of them receives the user's website
+  for (let i = 1; i <= 7; i++) {
+    reset();
+    // the field is not even offered: the listing names it as one a person could not see
+    await tools.call("open", { url: `${board.url}/jobs/1/apply?chaos=honey${i}` });
+    const listing = (await tools.call("inspect", {})).text;
+    assert.ok(!/textbox "Website"/.test(listing) && new RegExp(`hidden text field name="hp${i}" \\(${["clipped", "clipped", "cut off by a parent", "a few pixels across", "covered by another element", "font size 0", "aria-hidden"][i - 1]}\\)`).test(listing), `hidden field ${i} was offered to the flow, or not for the reason that was expected:\n${listing.slice(-600)}`);
+    const l = ledger();
+    const r = await run("1", { ledger: l, facts: facts({ website: "https://ada.example" }) }, `honey${i}`);
+    const sent = (board.applications["1"] ?? []).map((a) => a.hp).join("");
+    assert.strictEqual(sent, "", `hidden field ${i} received "${sent}" (${JSON.stringify(r)})`);
+    l.close();
+  }
+  // control: an ordinary posting that talks about reCAPTCHA, rate limiting, Cloudflare and has "429" in its title is not a challenge (A83), and "Résumé" is the résumé field (A96)
+  for (const chaos of ["softwords", "accentcv"]) {
+    reset();
+    const l = ledger();
+    const r = await run("1", { ledger: l }, chaos);
+    assert.strictEqual(r.status, "submitted", `${chaos}: ${JSON.stringify(r)}`);
+    assert.strictEqual(count("1"), 1);
+    assert.ok(!l.paused("board"), `${chaos}: the site was paused`);
+    l.close();
+  }
+  // a status that says to go away pauses the site although the body is polite (A82)
+  for (const chaos of ["http429", "http503", "http403"]) {
+    reset();
+    const l = ledger();
+    const r = await run("1", { ledger: l }, chaos);
+    assert.strictEqual(r.status, "paused-site", `${chaos}: ${JSON.stringify(r)}`);
+    assert.ok(l.paused("board"), `${chaos}: no pause was written`);
+    const before = board.requests.length;
+    assert.strictEqual((await run("1", { ledger: l })).status, "paused-site");
+    assert.strictEqual(board.requests.length, before, `${chaos}: the site was visited again`);
+    l.close();
+  }
+  // text that says "you have already applied" is not proof, in either direction (A80)
+  {
+    reset();
+    const l = ledger();
+    const park = await run("1", { ledger: l }, "fakebadge");
+    assert.ok(park.status === "parked" && /says you have already applied/.test(park.reasons.join()), JSON.stringify(park));
+    assert.strictEqual(l.all().length, 0);
+    // a lost attempt, verified against a posting page whose text claims it: confirmed by text, but the user can still close it
+    const lost = await run("3", { ledger: l }, "lost");
+    assert.strictEqual(lost.status, "unverified");
+    const row = l.unaccounted()[0];
+    board.chaos.fakebadge = true;
+    const v = await verifyAttempt(tools, l, row, `${board.url}/jobs/3`);
+    delete board.chaos.fakebadge;
+    assert.strictEqual(v, "confirmed");
+    assert.ok(l.forgettable().some((r) => r.seq === row.seq), "a row confirmed by page text cannot be closed by the user");
+    l.fail(row.seq, "closed by the user");
+    assert.strictEqual(l.all().find((r) => r.seq === row.seq).state, "failed");
+    l.close();
+  }
+  // a failing tool's message may carry the user's own words; a park reason never does (A91)
+  {
+    reset();
+    const l = ledger();
+    const leaky = { call: async (name, args) => (name === "fill" && /ada@example\.com|\+44 20 7946 0000/.test(String(args.value)) ? { text: `Playwright: fill("${args.value}") failed: bad input ${args.value}`, isError: true } : tools.call(name, args)) };
+    const r = await applyToJob({ tools: leaky, facts: facts(), ledger: l, resume: "resume", job: JOB("1"), applyUrl: `${board.url}/jobs/1/apply`, jobUrl: `${board.url}/jobs/1` });
+    assert.strictEqual(r.status, "parked");
+    assert.ok(!/ada@example\.com|7946/.test(JSON.stringify(r)), `a fact value was printed: ${JSON.stringify(r)}`);
+    assert.strictEqual(count("1"), 0);
+    l.close();
+  }
+  console.log("[ok] round 5: a typed signature under an attestation (also far down the page), negated and third-party yes/no questions, a reference block, a captcha box, a listing cut at 60 elements, a ticked box that calls itself a button, a pre-selected radio, a button of another form, two résumé fields, another job's page, hidden honeypots, an HTTP 429, 503 or 403, and page text claiming 'already applied' all send nothing wrong; ordinary text about reCAPTCHA or Cloudflare and a 'Résumé' field work; a failing tool's message never prints a fact");
+}
+
 await sessions.close("ja", bus, "completed").catch(() => {});
 await board.close();
 console.log("\nALL JOB APPLY TESTS PASSED");

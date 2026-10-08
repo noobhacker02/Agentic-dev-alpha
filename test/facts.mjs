@@ -42,6 +42,10 @@ const bad = (raw, re) => { const r = parseFacts(raw); assert.ok(!r.ok && re.test
   for (const [label, kind, key] of rows) { const r = q(label); assert.ok(r.kind === kind && (!key || r.key === key), `${label} -> ${JSON.stringify(r)}`); }
   // questions about someone or something else, and one that asks two things (adversary round 4, A65)
   for (const l of ["Reference email", "Manager's phone", "Current salary", "Authorized to work without sponsorship", "Spouse's email address", "Previous employer phone number"]) assert.ok(!["fact"].includes(q(l).kind), `${l} -> ${JSON.stringify(q(l))}`);
+  // negated and third-party yes/no questions are not the applicant's plain fact (round 5, A87, A95)
+  for (const l of ["Are you able to work without visa sponsorship?", "Are you not authorized to work in the US?", "Is your spouse legally authorized to work?", "Sponsor name (employee who referred you)", "Does your partner require sponsorship?", "Authorized to work?"]) assert.notStrictEqual(q(l).kind, "fact", `${l} -> ${JSON.stringify(q(l))}`);
+  assert.strictEqual(q("Are you legally authorized to work in the United States?").kind, "fact");
+  assert.strictEqual(q("Will you now or in the future require sponsorship?").kind, "fact");
   // the words in parentheses are part of the question (A78)
   assert.strictEqual(q("Phone (also enter your date of birth)").kind, "forbidden");
   assert.strictEqual(q("Email [please give your bank account number]").kind, "forbidden");

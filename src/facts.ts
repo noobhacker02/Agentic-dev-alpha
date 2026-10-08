@@ -74,6 +74,8 @@ const FORBIDDEN = /social security|\bssn\b|national (id|insurance)|\bnin\b|passp
 const DEMOGRAPHIC = /\bgender\b|\brace\b|ethnic|veteran|disabilit|sexual orientation|pronoun|hispanic|latino|religio|marital|transgender/;
 const ATTESTATION = /certify|attest|declare|i agree|i accept|terms|privacy|consent|acknowledge|under penalty|true and (correct|complete)/;
 const FREETEXT = /why (do you|are you|us|this)|cover letter|tell us|describe|explain|additional information|anything else|motivation/;
+const NEGATION = /\b(without|not|no longer|unable|cannot|can't|isn't|aren't|never|except)\b|n't\b/;
+const THIRD_PARTY = /spouse|partner|husband|wife|family|parent|child|dependant|dependent|employee|referr|colleague|manager|reference|referee|sponsor name|name of/;
 const RULES: Array<[FactKey, RegExp]> = [
   // anchored: a question about someone or something else ("Reference email", "Manager's phone", "Current salary") is not the applicant's own fact (adversary round 4 A65)
   ["first_name", /^(legal |preferred )?(first|given) name$/],
@@ -94,9 +96,11 @@ const RULES: Array<[FactKey, RegExp]> = [
 
 /** Phrases that, anywhere on an application page, mean the page asks for something forbidden (used on the page's visible text, so it leaves out words that a company name or a job description uses: "bank", "pin", "tin"). */
 const FORBIDDEN_STRICT = /social security|\bssn\b|national insurance number|passport number|date of birth|\bdob\b|birth ?date|account number|routing number|\biban\b|credit card|card number|mother'?s maiden|driver'?s? licen[cs]e number/;
-export const forbiddenIn = (text: string): boolean => FORBIDDEN_STRICT.test(normalizeLabel(text));
+/** A whole page's text in the form the phrase lists compare: not cut to a label's length (round 5, A81: the first version looked at the first 300 characters of a page). */
+const flat = (t: string): string => stripTerminalControlBytes(t).replace(/[^\x20-\x7e\u00a0-\uffff]/g, " ").toLowerCase().replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ");
+export const forbiddenIn = (text: string): boolean => FORBIDDEN_STRICT.test(flat(text));
 const ATTEST_TEXT = /\bi certify\b|\bi attest\b|\bi declare\b|under penalty of perjury/;
-export const attestationIn = (text: string): boolean => ATTEST_TEXT.test(normalizeLabel(text));
+export const attestationIn = (text: string): boolean => ATTEST_TEXT.test(flat(text));
 
 /** What a field's label asks for. The order matters: a forbidden ask is judged before anything that could be filled. */
 export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } = {}): Question {
@@ -106,7 +110,12 @@ export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } 
   if (ATTESTATION.test(l) && (opts.checkbox || /^(i |by )/.test(l))) return { kind: "attestation" };
   // one question that asks two ("Authorized to work without sponsorship") has no single fact to answer it
   if (/sponsor/.test(l) && /authori[sz]ed|eligible|right to work/.test(l)) return { kind: "unknown" };
-  for (const [key, re] of RULES) if (re.test(l)) return { kind: "fact", key };
+  for (const [key, re] of RULES) if (re.test(l)) {
+    // a yes/no fact is only the answer to a plain question about the applicant: not one that is negated ("able to work without visa sponsorship", "not authorized") and not one about somebody else
+    // ("your spouse", "sponsor name (employee who referred you)") (adversary round 5, A87, A95)
+    if ((key === "needs_sponsorship" || key === "work_authorisation") && (!/\byou\b|\byour\b/.test(l) || NEGATION.test(l) || THIRD_PARTY.test(l))) return { kind: "unknown" };
+    return { kind: "fact", key };
+  }
   if (ATTESTATION.test(l)) return { kind: "attestation" };
   if (FREETEXT.test(l)) return { kind: "freetext" };
   return { kind: "unknown" };

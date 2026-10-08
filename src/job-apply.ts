@@ -8,7 +8,7 @@ import { jobKey, type Job, type Ledger, type Row } from "./ledger.js";
 
 export interface Tools { call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> }
 
-export interface PageElement { ref: string; role: string; name: string; value?: string; checked?: boolean; options?: string[]; required: boolean; disabled: boolean; /** Set when the element lives in a frame (the frame's own name). */ frame?: string }
+export interface PageElement { ref: string; role: string; name: string; value?: string; checked?: boolean; options?: string[]; required: boolean; disabled: boolean; /** Set when the element lives in a frame (the frame's own name). */ frame?: string; /** The form it belongs to (an index of the page's forms), when the page tied it to one. */ form?: number }
 
 const LINE = /^\[(s\d+e\d+)\] ([\w-]+) ("(?:[^"\\]|\\.)*") ?(.*)$/;
 const jstr = (s: string): string => { try { return String(JSON.parse(s)); } catch { return ""; } };
@@ -48,7 +48,11 @@ export function parseElements(inspectText: string): PageElement[] {
       const w = /^[\w-]+/.exec(rest.slice(i));
       if (!w) break;
       i += w[0].length;
-      if (rest[i] === "=") {
+      if (rest[i] === "=" && /\d/.test(rest[i + 1] ?? "")) {
+        const n = /^\d+/.exec(rest.slice(i + 1))![0];
+        kv[w[0]] = n;
+        i += 1 + n.length;
+      } else if (rest[i] === "=") {
         const v = readJson(rest, i + 1);
         if (!v) break;
         kv[w[0]] = v.text;
@@ -61,7 +65,7 @@ export function parseElements(inspectText: string): PageElement[] {
       ref: m[1]!, role: m[2]!, name: jstr(m[3]!), ...(kv.value !== undefined ? { value: jstr(kv.value) } : {}),
       ...(flags.has("unchecked") ? { checked: false } : flags.has("checked") ? { checked: true } : {}),
       ...(opts ? { options: opts } : {}), required: flags.has("required"), disabled: flags.has("disabled"),
-      ...(kv.frame !== undefined ? { frame: jstr(kv.frame) } : {}),
+      ...(kv.frame !== undefined ? { frame: jstr(kv.frame) } : {}), ...(kv.form !== undefined ? { form: Number(kv.form) } : {}),
     });
   }
   return out;
@@ -74,12 +78,12 @@ export function parseElements(inspectText: string): PageElement[] {
  */
 export const CHALLENGE = new RegExp([
   "verify (that )?you(?:'|\u2019)?re (a )?human", "verify you are (a )?human", "are you (a )?(human|robot)", "captcha", "unusual (activity|traffic)", "automated (queries|requests|access)", "too many requests", "rate limit",
-  "access (to this page )?(has been )?denied", "temporarily blocked", "checking your browser", "just a moment", "attention required", "security check", "press (&|and) hold", "cloudflare",
+  "access (to this page )?(has been )?denied", "temporarily blocked", "checking your browser", "press (&|and) hold",
   "bestätigen sie, dass sie (ein )?mensch", "sind sie ein roboter", "v[ée]rifi(ez|er) que vous [êe]tes (un )?humain", "[êe]tes-vous un robot", "verifica que eres humano", "demasiadas solicitudes", "zu viele anfragen", "trop de requ[êe]tes",
 ].join("|"), "i");
-const CHALLENGE_TITLE = /\b429\b|^\s*(access denied|forbidden)\b/i;
+const CHALLENGE_TITLE = /^\s*(error[: ]*)?(429|403)\b|^\s*(access denied|forbidden)\b/i;
 export const CONFIRMED = /application (was )?(received|submitted|sent)|thank you for applying|successfully (applied|submitted)/i;
-export const ALREADY_APPLIED = /you have already applied|already applied|application submitted on/i;
+export const ALREADY_APPLIED = /\byou(?:'|\u2019)?(?:ve| have) already applied\b|\bapplication submitted on\b/i;
 /** Words of a page that failed: such a page is never a confirmation, whatever else it says (A63). */
 const ERRORISH = /something went wrong|\berror\b|\bfailed\b|try again|unable to|could not|not (been )?(submitted|received|sent)|invalid|\b50\d\b|\b40\d\b/i;
 
@@ -108,8 +112,48 @@ const titleOf = (inspect: string): string => /^Title: (.*)$/m.exec(inspect)?.[1]
 const labelKey = (e: { name: string; role: string }): string => `${e.role}|${normalizeLabel(e.name)}`;
 const plain = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, " ").trim();
 
-/** The page on which a challenge, a rate limit or a refusal shows: judged on the title and the visible text, which is where such pages say it. */
-export const challenged = (inspect: string): boolean => CHALLENGE.test(`${titleOf(inspect)}\n${visible(inspect)}`) || CHALLENGE_TITLE.test(titleOf(inspect));
+/**
+ * The page on which a challenge, a rate limit or a refusal shows. The title decides on its own; the body decides only on a page that is short and has no form to fill, which is what an interstitial is: a posting
+ * or an application form that merely mentions "reCAPTCHA", "rate limiting" or "Cloudflare" in its text is not one (adversary round 5, A83).
+ */
+export const challenged = (inspect: string): boolean => {
+  const title = titleOf(inspect);
+  if (CHALLENGE_TITLE.test(title) || CHALLENGE_STRONG.test(title)) return true;
+  const body = visible(inspect);
+  const fields = parseElements(inspect).filter((e) => e.role !== "button" && e.role !== "link").length;
+  return CHALLENGE.test(body) && fields < 3 && body.length < 400;
+};
+/** A captcha on a form that has fields: not a site to pause, a step only a person can take. */
+const CAPTCHA_ON_FORM = /captcha|i(?:'|\u2019)?m not a robot|are you (a )?(human|robot)/i;
+const CHALLENGE_STRONG = /^\s*(just a moment|attention required|security check|verify you are human|access denied|checking your browser)/i;
+/** The status line of an `open` answer ("HTTP 429."): a site that says 429, 403 or 503 is asked to rest, not asked again. */
+const httpStatus = (openText: string): number | undefined => { const m = /\bHTTP (\d{3})\b/.exec(openText); return m ? Number(m[1]) : undefined; };
+
+/** All of the page's text, a section at a time, up to a limit; `complete` is false if the limit cut it short. */
+async function readAll(tools: Tools): Promise<{ text: string; complete: boolean }> {
+  let out = "";
+  let offset = 0;
+  for (let i = 0; i < 6; i++) {
+    const r = await tools.call("text", offset ? { offset, length: 8000 } : { length: 8000 });
+    out += `\n${r.text}`;
+    const more = /\(more: call text with offset=(\d+)\)/.exec(r.text);
+    if (!more) return { text: out, complete: true };
+    offset = Number(more[1]);
+  }
+  return { text: out, complete: false };
+}
+
+/** The same text without accents, so "Résumé" is "resume". */
+const bare = (s: string): string => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+/** The job's title as a page names itself: the title or a heading is the job title (after "Apply:" or "Apply for", before "at Company" or "- Company"), not just a text that contains it (A89: "Senior Platform Engineer" is not "Platform Engineer"). */
+function namesJob(title: string, text: string, job: Job): boolean {
+  const want = plain(job.title);
+  const wrapper = (c: string): string => plain(c).replace(/^(apply( to| for)?|job application( for)?|application( for)?)\s+/, "").replace(/\s+(at|@)\s+.*$/, "").replace(/\s+(careers?|jobs?)$/, "").trim();
+  const candidates = [title, ...title.split(/\s[-|\u2013\u2014:\u00b7]\s/), ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 4)];
+  return candidates.some((c) => wrapper(c) === want || wrapper(c.replace(/\s[-|\u2013\u2014]\s.*$/, "")) === want);
+}
+/** What a failing tool says, with the user's own words taken out of it: a park reason is printed. */
+const redact = (text: string, secrets: string[]): string => secrets.filter((v) => v.length >= 3).reduce((t, v) => t.split(v).join("[your fact]"), text);
 
 /** The one submit button: its whole name is one of a few plain phrases. A page with two, or with none, parks; "Send me job alerts" and "Submit and apply to 50 similar jobs" are not it (A68). */
 const SUBMIT_NAME = /^(submit( application)?|apply|send application|submit my application)$/;
@@ -121,45 +165,66 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   const start = d.ledger.mayStart(d.job);
   if (!start.ok) return { status: start.duplicateOf ? "duplicate" : "capped", why: start.why, ...(start.waitMs ? { waitMs: start.waitMs } : {}) };
   const pauseSite = (why: string): void => d.ledger.pause(d.job.site, why);
+  // the user's own words, to take out of anything that is printed
+  const secrets = Object.values(d.facts.facts).map((f) => f!.value);
 
   const opened = await d.tools.call("open", { url: d.applyUrl });
-  if (opened.isError) return { status: "error", why: `the application page could not be opened: ${textOf(opened).slice(0, 200)}` };
+  if (opened.isError) return { status: "error", why: `the application page could not be opened: ${redact(textOf(opened), secrets).slice(0, 200)}` };
+  // a status that says "slow down" or "go away" is the site speaking, whatever the body says (A82)
+  const code = httpStatus(textOf(opened));
+  if (code === 429 || code === 403 || code === 503 || code === 401) { pauseSite(`HTTP ${code}`); return { status: "paused-site", why: `the site answered HTTP ${code}; the site is paused and is not retried by the agent` }; }
+  if (code !== undefined && code >= 400) return { status: "error", why: `the application page answered HTTP ${code}` };
   let page = textOf(await d.tools.call("inspect", {}));
   if (challenged(page)) { pauseSite("a challenge or a rate limit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit; the site is paused and is not retried by the agent" }; }
-  if (ALREADY_APPLIED.test(visible(page))) return { status: "duplicate", why: "the site shows that you already applied" };
-
+  // the whole readable text of the page, not the first 3000 characters the listing shows (A81)
+  const { text: full, complete } = await readAll(d.tools);
   const reasons: string[] = [];
   let scam = false;
+  // text on the page that says "you already applied" is the page's word, not the ledger's: ask, do not decide (A80)
+  if (ALREADY_APPLIED.test(visible(page)) || ALREADY_APPLIED.test(full)) reasons.push("the page says you have already applied; if that is true there is nothing to do, and if it is not, apply by hand: page text is not proof either way");
   const text = `${titleOf(page)}\n${visible(page)}`;
-  // 0. Is this the posting it was told about? A link that leads to another job, or a page that is not a form for it, parks (A76)
-  if (!plain(text).includes(plain(d.job.title))) reasons.push(`the page does not look like the posting "${d.job.title.slice(0, 60)}" (its title is not on the page)`);
+  // 0. Is this the posting it was told about? The page names this job, not one that merely contains the words (A76, A89)
+  if (!namesJob(titleOf(page), visible(page), d.job)) reasons.push(`the page does not look like the posting "${d.job.title.slice(0, 60)}" (neither its title nor its first lines name that job)`);
 
   // 1. Decide for every field, in code, before anything is touched
-  const all = parseElements(page).filter((e) => !e.disabled);
+  const everything = parseElements(page);
+  const all = everything.filter((e) => !e.disabled);
   const fields = pageFields(all);
+  if (!complete) reasons.push("the page is longer than the flow reads (48,000 characters); it cannot be sure what the rest says");
+  if (/\d+ more elements not shown/.test(page)) reasons.push("the page has more interactive elements than the listing shows (60); the flow cannot see all of the form");
+  // a box or button that is already ticked or selected is an answer the page gave, whatever its role says or whether it is marked disabled (A85, A93)
+  for (const e of everything) if (e.checked === true) reasons.push(`"${e.name.slice(0, 60)}" came already ${e.role === "radio" ? "selected" : "checked"}; the flow does not send an answer it did not choose`);
   if (fields.some((e) => e.frame !== undefined)) reasons.push("part of the form is inside a frame (a page of another origin may be behind it); the flow does not fill frames");
-  if (forbiddenIn(visible(page)) && fields.some((e) => e.role === "textbox")) { reasons.push("the page asks for an identity number, a birth date or a bank detail somewhere on it, which a real employer does not need before an offer (a likely scam)"); scam = true; }
-  if (attestationIn(visible(page)) && fields.some((e) => e.role === "checkbox")) reasons.push("the page carries a legal attestation (\"I certify ...\") next to a checkbox; only you can make it");
-  const plan = new Map<string, { value: string; ref: string; role: string; label: string }>();
-  let resumeRef: string | undefined;
+  if ((forbiddenIn(visible(page)) || forbiddenIn(full)) && fields.some((e) => e.role === "textbox")) { reasons.push("the page asks for an identity number, a birth date or a bank detail somewhere on it, which a real employer does not need before an offer (a likely scam)"); scam = true; }
+  if (attestationIn(visible(page)) || attestationIn(full)) reasons.push("the page carries a legal attestation (\"I certify ...\"); a box, a typed name or a click can be the signature, and only you can make it");
+  if (everything.some((e) => CAPTCHA_ON_FORM.test(e.name))) reasons.push("the form carries a captcha; only a person can pass one");
+  const plan = new Map<string, { value: string; ref: string; role: string; label: string; form?: number; key: string }>();
+  const factUses = new Map<string, number>();
+  const resumeRefs: PageElement[] = [];
   for (const f of fields) {
     if (f.frame !== undefined) continue;
     if (f.role === "file-input") {
-      if (/resume|\bcv\b|curriculum/i.test(f.name)) resumeRef = f.ref;
+      if (/\b(resume|cv|curriculum)\b/.test(bare(f.name))) resumeRefs.push(f);
       else if (f.required) reasons.push(`"${f.name.slice(0, 60)}" is a required file and only the résumé is designated`);
       continue;
     }
-    // a box that arrives already ticked is an answer the page gave, not one the flow chose
-    if (f.role === "checkbox" && f.checked === true) { reasons.push(`"${f.name.slice(0, 60)}" came already checked; the flow does not send an answer it did not choose`); continue; }
+    if (f.checked === true) continue; // reported above
     const info: FieldInfo = { label: f.name, required: f.required || /\*\s*$/.test(f.name), role: f.role, ...(f.options ? { options: f.options.filter((o) => o && !/^(select|--|choose)/i.test(o)) } : {}) };
     const p = planField(info, d.facts);
     if (p.action === "park") { reasons.push(p.why); if (p.scam) scam = true; }
-    else if (p.action === "fill") plan.set(labelKey(f), { value: p.value, ref: f.ref, role: f.role, label: f.name });
+    else if (p.action === "fill") { plan.set(labelKey(f), { value: p.value, ref: f.ref, role: f.role, label: f.name, key: p.key, ...(f.form !== undefined ? { form: f.form } : {}) }); factUses.set(p.key, (factUses.get(p.key) ?? 0) + 1); }
   }
-  if (!resumeRef) reasons.push("the form has no résumé field the flow can use");
+  // the same fact asked twice ("Email" for you and "Email" for a reference) has no safe answer (A88)
+  for (const [k, n] of factUses) if (n > 1) reasons.push(`${n} fields ask for "${k}"; one of them may be about someone else (a reference), and the flow cannot tell which`);
+  if (resumeRefs.length !== 1) reasons.push(resumeRefs.length ? "the form has more than one field that could take the résumé" : "the form has no résumé field the flow can use");
   const submits = all.filter((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
   if (submits.length !== 1) reasons.push(submits.length ? "the page has more than one button that could submit the application" : "the page has no plain submit button the flow can find");
-  if (reasons.length) return { status: "parked", reasons, scam };
+  // the button must belong to the very form the fields are in; a button of another form (a one-click "similar jobs" form) is not this application's (A94)
+  const forms = new Set<number | undefined>([...plan.values()].map((p) => p.form).concat(resumeRefs.map((r) => r.form)));
+  forms.add(submits[0]?.form);
+  if (reasons.length === 0 && (forms.size !== 1 || [...forms][0] === undefined)) reasons.push("the fields and the submit button are not all in one form the page tied them to; the flow does not guess which button sends this application");
+  if (reasons.length) return { status: "parked", reasons: reasons.map((r) => redact(r, secrets)), scam };
+  const resumeRef = resumeRefs[0]!.ref;
   const before = new Map<string, PageElement[]>();
   for (const f of fields) (before.get(labelKey(f)) ?? before.set(labelKey(f), []).get(labelKey(f))!).push(f);
   const preText = visible(page);
@@ -167,14 +232,15 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   // 2. Fill
   for (const [, p] of plan) {
     const r = p.role === "combobox" ? await d.tools.call("select_option", { ref: p.ref, values: [p.value] }) : await d.tools.call("fill", { ref: p.ref, value: p.value });
-    if (r.isError) return { status: "parked", reasons: [`"${p.label.slice(0, 60)}" could not be filled: ${textOf(r).slice(0, 120)}`], scam: false };
+    if (r.isError) return { status: "parked", reasons: [`"${p.label.slice(0, 60)}" could not be filled: ${redact(textOf(r), secrets).slice(0, 120)}`], scam: false };
   }
   const up = await d.tools.call("upload", { ref: resumeRef, file: d.resume });
-  if (up.isError) return { status: "parked", reasons: [`the résumé was not attached: ${textOf(up).slice(0, 160)}`], scam: false };
+  if (up.isError) return { status: "parked", reasons: [`the résumé was not attached: ${redact(textOf(up), secrets).slice(0, 160)}`], scam: false };
 
   // 3. The form diff: what is on the page now is what was planned, and nothing else has changed, appeared or been ticked (A66)
   page = textOf(await d.tools.call("inspect", {}));
-  const after = parseElements(page).filter((e) => !e.disabled);
+  const afterAll = parseElements(page);
+  const after = afterAll.filter((e) => !e.disabled);
   const wrong: string[] = [];
   const afterFields = pageFields(after);
   const seenAfter = new Map<string, PageElement[]>();
@@ -194,10 +260,11 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
       else if (e.role === "textbox" && (e.value ?? "").trim()) wrong.push(`"${e.name.slice(0, 60)}" came with a value the page put there ("${(e.value ?? "").slice(0, 30)}"); the flow does not send what it did not write`);
     });
   }
-  if (forbiddenIn(visible(page)) || attestationIn(visible(page)) && afterFields.some((e) => e.role === "checkbox")) wrong.push("the page now asks for something it did not ask before the fields were filled");
-  if (wrong.length) return { status: "parked", reasons: wrong, scam: false };
+  for (const e of afterAll) if (e.checked === true) wrong.push(`"${e.name.slice(0, 60)}" is checked`);
+  if (forbiddenIn(visible(page)) || attestationIn(visible(page))) wrong.push("the page now asks for something it did not ask before the fields were filled");
+  if (wrong.length) return { status: "parked", reasons: wrong.map((r) => redact(r, secrets)), scam: false };
   const submit = after.filter((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
-  if (submit.length !== 1) return { status: "parked", reasons: ["the submit button is no longer the single plain one"], scam: false };
+  if (submit.length !== 1 || submit[0]!.form !== [...forms][0]) return { status: "parked", reasons: ["the submit button is no longer the single plain one in the form"], scam: false };
 
   // 4. Intent, then the click. The form hash is of the labels only: the values are the user's and do not belong in the ledger
   const hash = createHash("sha256").update(JSON.stringify([...plan.keys()].map((k) => labelHash(k)).sort())).digest("hex").slice(0, 16);
@@ -223,7 +290,7 @@ export async function verifyAttempt(tools: Tools, ledger: Ledger, row: Row, jobU
   if (opened.isError) return "unknown";
   const page = textOf(await tools.call("inspect", {}));
   if (challenged(page)) { ledger.pause(row.site, "a challenge or a rate limit while verifying"); return "unknown"; }
-  if (ALREADY_APPLIED.test(visible(page))) { ledger.confirm(row.seq, "verified on the site"); return "confirmed"; }
+  if (ALREADY_APPLIED.test(visible(page))) { ledger.confirm(row.seq, "verified on the site (the page said so; page text can be wrong)"); return "confirmed"; }
   return "unknown";
 }
 

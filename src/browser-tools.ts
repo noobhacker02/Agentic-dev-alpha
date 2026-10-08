@@ -860,6 +860,8 @@ interface ElementDescription {
   id: string;
   value: string | null;
   checked: boolean | null;
+  /** Which form of the document the element belongs to (its index among `document.forms`, counting `form=` ties), or -1 for none. */
+  form: number;
   /** The page marks the field as required (the attribute or aria-required): the job flow parks a required field it cannot answer, and leaves an optional one alone. */
   required: boolean;
   options: string[] | null;
@@ -915,6 +917,7 @@ function describeElementInPage(el: any): ElementDescription {
     checked: tag === "input" && (type === "checkbox" || type === "radio") ? Boolean(el.checked) : null,
     options: tag === "select" ? Array.from(el.options as ArrayLike<any>).slice(0, 12).map((o: any) => String(o.label || o.text)) : null,
     disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+    form: el.form ? Array.from(doc.forms).indexOf(el.form) : -1,
     required: el.required === true || el.getAttribute("aria-required") === "true",
     shadow: root !== doc,
   };
@@ -930,6 +933,7 @@ function formatRefLine(ref: string, d: ElementDescription, frame?: string): stri
   if (d.options) parts.push(`options=${JSON.stringify(d.options.map((o) => cleanText(o, 40)))}`);
   if (d.disabled) parts.push("disabled");
   if (d.required) parts.push("required");
+  if (d.form >= 0) parts.push(`form=${d.form}`);
   // Where it lives, last, and quoted like every other piece of page text (a frame's name is the page's own).
   if (frame) parts.push(`frame=${JSON.stringify(frame)}`);
   if (d.shadow) parts.push("in-shadow-root");
@@ -952,6 +956,29 @@ function humanProblem(el) {
   }
   const r = el.getBoundingClientRect();
   if (r.width <= 1 || r.height <= 1) return "1px or smaller";
+  if (r.width < 12 || r.height < 10) return "a few pixels across";
+  // the other ways a page hides a field from a person and leaves it for a program (adversary round 5, A86): a zero font size, a clip, a clip-path, a parent that shows none of it, a label for assistive technology that is told to ignore it, another element on top
+  const own = win.getComputedStyle(el);
+  if (own.fontSize === "0px") return "font size 0";
+  for (let a = el; a && a.nodeType === 1; a = a.parentElement) {
+    if (a.getAttribute && a.getAttribute("aria-hidden") === "true") return "aria-hidden";
+    const cs = win.getComputedStyle(a);
+    if (cs.clipPath && cs.clipPath !== "none") return "clipped";
+    if (cs.clip && cs.clip !== "auto" && cs.position === "absolute" && cs.clip.split(" ").join("").includes("(0px,0px,0px,0px)")) return "clipped";
+    if (a !== el && a !== doc.body && a !== doc.documentElement && cs.overflow !== "visible") {
+      const ab = a.getBoundingClientRect();
+      if (ab.width <= 1 || ab.height <= 1 || r.bottom <= ab.top || r.top >= ab.bottom || r.right <= ab.left || r.left >= ab.right) { if (!(/(auto|scroll)/.test(cs.overflowX + cs.overflowY))) return "cut off by a parent"; }
+    }
+  }
+  // (inside a scrolling panel a field below the panel's edge is reachable by scrolling, and what is under its place on the screen says nothing about it)
+  let inScroller = false;
+  for (let a = el.parentElement; a && a !== doc.body && a !== doc.documentElement; a = a.parentElement) { const o = win.getComputedStyle(a); if (/(auto|scroll|overlay)/.test(o.overflowX + o.overflowY)) { inScroller = true; break; } }
+  if (!inScroller && r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= win.innerWidth && r.bottom <= win.innerHeight) {
+    const rootNode = el.getRootNode && el.getRootNode();
+    const top = (rootNode && rootNode.elementFromPoint ? rootNode : doc).elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const labelled = el.labels ? Array.from(el.labels).some((l) => l.contains(top)) : false;
+    if (top && top !== el && !el.contains(top) && !labelled) return "covered by another element";
+  }
   const de = doc.documentElement, sx = win.scrollX, sy = win.scrollY;
   const outsideDocument = (b) => b.right + sx <= 0 || b.bottom + sy <= 0 || b.left + sx >= Math.max(de.scrollWidth, win.innerWidth) || b.top + sy >= Math.max(de.scrollHeight, win.innerHeight);
   // A person can scroll a scrollable panel, so a field further down inside one is reachable; a field outside the panel's own scrollable content (left: -9999px inside a dialog) is not.
@@ -1181,7 +1208,7 @@ async function takeRefSnapshot(session: BrowserSession, tab: BrowserTab, query?:
         continue;
       }
       const d = await el.evaluate(describeElementInPage).catch(
-        (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false, required: false, shadow: false })
+        (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false, form: -1, required: false, shadow: false })
       );
       if (query && !`${d.role} ${d.name} ${d.id}`.toLowerCase().includes(query)) {
         await handle.dispose();
@@ -1622,8 +1649,9 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         // LIVE mode: a redirect the browser followed before anything could stop it landed off the list. The page was replaced by a blank one, which interrupts this very navigation, so
         // the error that comes back is Playwright's, not ours: say what happened and show nothing from the page.
         const refusedLanding = () => new Error(`Refused: the page redirected to ${tab.lastBlockedLanding}. It was replaced by a blank page and nothing from it is shown.`);
+        let response: Awaited<ReturnType<Page["goto"]>> = null;
         try {
-          await tab.page.goto(url, { waitUntil: "domcontentloaded" });
+          response = await tab.page.goto(url, { waitUntil: "domcontentloaded" });
         } catch (err) {
           if (tab.blockedLandings > landedBefore) throw refusedLanding();
           throw err;
@@ -1631,7 +1659,8 @@ export function __testHandlers(opts: CreateBrowserToolServerOptions) {
         if (tab.blockedLandings > landedBefore) throw refusedLanding();
         const landed = tab.page.url();
         const where = landed !== url && landed !== `${url}/` ? ` Landed on ${safeUrl(landed)} (redirected).` : "";
-        return { text: `Opened ${url} in ${tab.id}.${where} Title: ${cleanText(await tab.page.title(), 200)}` };
+        const status = response ? ` HTTP ${response.status()}.` : "";
+        return { text: `Opened ${url} in ${tab.id}.${where}${status} Title: ${cleanText(await tab.page.title(), 200)}` };
       })
   );
 

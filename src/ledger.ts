@@ -44,8 +44,8 @@ export class Ledger {
     const cols = this.db.prepare("PRAGMA table_info(applications)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "url")) this.db.exec("ALTER TABLE applications ADD COLUMN url TEXT NOT NULL DEFAULT ''");
     this.db.exec("CREATE TABLE IF NOT EXISTS site_pauses (site TEXT PRIMARY KEY, at INTEGER NOT NULL, why TEXT NOT NULL)");
-    // one live row per posting, enforced by the database (an older ledger that already holds two cannot take the index and keeps the check in `intend`)
-    try { this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS applications_live_key ON applications(key) WHERE state IN ('intended','confirmed')"); } catch { /* duplicates from before the index */ }
+    // (a unique index on the live key would refuse a re-application after the 30 days the duplicate check allows it: the write transaction in `intend` is what keeps two rows apart, A92)
+    this.db.exec("DROP INDEX IF EXISTS applications_live_key"); // devskill:allow (removes this program's own stale index from its own ledger; no data is dropped)
     const last = this.db.prepare("SELECT MAX(at) AS m FROM applications").get() as { m: number | null };
     this.floor = last.m ?? 0; // a floor further ahead than the clock may be trusted is pulled back by the first `now()`
   }
@@ -61,9 +61,10 @@ export class Ledger {
 
   /** Rows (and the remembered time) stamped further ahead than the clock may be trusted are pulled back to the limit, once, so they age out like any other row and a single forward jump does not freeze the ledger (A73). */
   private repair(): void {
-    const limit = this.clock() + MAX_LEAD_MS;
-    this.db.prepare("UPDATE applications SET at = ? WHERE at > ?").run(limit, limit);
-    this.floor = Math.min(this.floor, limit);
+    // rows from the future are treated as written now: the freeze is then at most one window, and the clock the caps run on is the real one (round 5, A90: pulling them back to the limit left the clock a day ahead)
+    const real = this.clock();
+    this.db.prepare("UPDATE applications SET at = ? WHERE at > ?").run(real, real + MAX_LEAD_MS);
+    this.floor = real;
   }
 
   private rows(sql: string, ...args: Array<string | number>): Row[] {
@@ -118,7 +119,9 @@ export class Ledger {
   }
   confirm(seq: number, note = ""): void { this.db.prepare("UPDATE applications SET state = 'confirmed', note = ? WHERE seq = ? AND state = 'intended'").run(note.slice(0, 200), seq); }
   /** The attempt provably did not go through (the site says it was not received): the row stops counting and the posting can be tried again. */
-  fail(seq: number, note = ""): void { this.db.prepare("UPDATE applications SET state = 'failed', note = ? WHERE seq = ? AND state = 'intended'").run(note.slice(0, 200), seq); }
+  fail(seq: number, note = ""): void { this.db.prepare("UPDATE applications SET state = 'failed', note = ? WHERE seq = ? AND (state = 'intended' OR (state = 'confirmed' AND note LIKE 'verified on the site%'))").run(note.slice(0, 200), seq); }
+  /** What the user may close as not received: attempts with no confirmation, and rows the program confirmed only because a page said so (page text can be wrong, A80). */
+  forgettable(): Row[] { return this.rows("SELECT * FROM applications WHERE state = 'intended' OR (state = 'confirmed' AND note LIKE 'verified on the site%') ORDER BY seq"); }
   /** A site that showed a challenge or a rate limit is paused until the user says otherwise; the pause survives the process (A72). */
   pause(site: string, why: string): void { this.db.prepare("INSERT OR REPLACE INTO site_pauses (site, at, why) VALUES (?, ?, ?)").run(siteOf(site), this.now(), why.slice(0, 200)); }
   paused(site: string): { at: number; why: string } | undefined {

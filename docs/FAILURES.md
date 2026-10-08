@@ -105,6 +105,12 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T25. A slice shipped with the full suite green, and a reviewer found 18 holes in it in 14 minutes: every test had been written by the code's own author, so they covered the cases the author imagined.** Count 1 (IMP-033: 5 high). Rule: an adversary round is part of the slice, not a later stage; it runs before the slice is called done, and its findings become a section of the same tests.
 
+**T26. A regular expression with a backslash inside a template string that is sent to the page: the template turned `\s` into `s`, the clip check never fired, and nothing in the build or the first tests said so.** Count 1 (IMP-034, found by a test that asserted the reason each hidden field is hidden for). Rule: page-side source written inside a template string avoids backslashes (use `split`/`join`, or `\\s`), and each check in it has a test that fails when it is removed.
+
+**T27. A test that asserted only the outcome ("nothing hidden was sent") passed against four mutants because a different check had stopped the same page for another reason.** Count 2 (T23 was the first). Rule: assert the cause, not just the effect, when more than one check can produce the same effect.
+
+**T28. The fix for one finding was too narrow (A68's decoy fix compared button names; A94 got past it with a differently named real button).** Count 1. Rule: a fix is tested against the family of the attack (the same goal by another route), not only the instance reported.
+
 **S16. Flags read from the whole of a line that includes the page's own words (`disabled`, `required` found inside an `id`).** Count 1 (A75). Rule: a parser of mixed trusted and untrusted text reads token by token and skips every quoted value whole; test it with the flag word inside each untrusted field.
 
 ## 2. Platform differences (macOS, Windows, root vs normal user)
@@ -259,7 +265,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 25, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 82 entries** (T1 to T25, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 28, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 85 entries** (T1 to T28, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, T27, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

@@ -42,10 +42,10 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
   try { ledger = new Ledger(join(home, "ledger.db"), Date.now, caps.value); } catch (err) { return fail(`the ledger ${clean(join(home, "ledger.db"))} cannot be opened: ${clean(String((err as Error).message ?? err))}`); }
   if (forget !== undefined) {
     const n = Number(forget);
-    const row = Number.isInteger(n) ? ledger.unaccounted().find((r) => r.seq === n) : undefined;
+    const row = Number.isInteger(n) && n > 0 ? ledger.forgettable().find((r) => r.seq === n) : undefined;
     if (row) ledger.fail(row.seq, "closed by the user: not received");
     ledger.close();
-    return row ? { out: `Closed ledger #${row.seq} (${clean(row.company, 60)}, ${clean(row.title, 80)}) as not received. That posting can be applied to again.\n`, err: "", code: 0 } : fail(`no unaccounted attempt has the number ${clean(forget, 20)}; agent-loop apply --verify lists them`);
+    return row ? { out: `Closed ledger #${row.seq} (${clean(row.company, 60)}, ${clean(row.title, 80)}) as not received. That posting can be applied to again.\n`, err: "", code: 0 } : fail(`no attempt that can be closed has the number ${clean(forget, 20)}; agent-loop apply --verify lists them`);
   }
   if (resumeSite !== undefined) {
     const was = ledger.unpause(resumeSite);
