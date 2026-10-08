@@ -101,6 +101,8 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T23. A new test passed against the mutant it was written for, because the test ran the attack too early.** Count 1 (IMP-031, the reload test: the bytes were sent from an inline script, which runs before `DOMContentLoaded`, and the old code only ended the hold at `DOMContentLoaded`, so the old code held it as well). Found only by running the test against the mutant after it passed. Fix: the sender waits for the event the rule keys on. Rule: a mutation check is run for every new rule, and "it passed on the new code" is not a result.
 
+**T24. A mutant survived because a second code path produced the same answer in every case the tests used (the ledger's lookup by the site's id was covered by its lookup by company and title).** Count 1 (IMP-032). Fix: a case where only the first path can answer (the same id, an edited title). Rule: when a mutant survives, ask which other path covered it, then write the case that only the mutated path can answer.
+
 ## 2. Platform differences (macOS, Windows, root vs normal user)
 
 **P1. macOS CI: a forbidden directory that does not exist yet and sits under a symlink (`/var`) kept its unresolved prefix, so "the profile would contain this directory" was missed (`test:profile`, e9da57a).** Count 1.
@@ -253,7 +255,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 23, Platform 10, Security 15, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 79 entries** (T1 to T23, P1 to P10, S1 to S15, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 24, Platform 10, Security 15, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 80 entries** (T1 to T24, P1 to P10, S1 to S15, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

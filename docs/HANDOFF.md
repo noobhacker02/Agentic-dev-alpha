@@ -5,8 +5,8 @@ single place that says what was asked, what was decided, where things are, what 
 **Update it at the end of every stage, after every commit that changes direction, and whenever the user adds a requirement.**
 `test/handoff.mjs` fails if it falls more than 8 commits behind, or loses a section.
 
-Updated: 2026-10-08T06:31:34Z
-Covers agent-loop commit: 423d2e8
+Updated: 2026-10-08T18:36:45Z
+Covers agent-loop commit: aa99bed
 Covers Dev-Skill commit: 7cbdabb
 
 Reading of the word "automcator" in the user's last message: auto-compaction of the conversation. If the user meant something
@@ -153,6 +153,8 @@ when its latest adversary round has no open confirmed finding at medium or above
 | S7 real-model end to end, pipeline-vs-plain, team-vs-fixed, CI on three systems | not started |
 
 ## Next step
+
+00. **The user moved S5 up (2026-10-08): "build the job agent first".** First slice built (IMP-032): `src/facts.ts`, `src/ledger.ts`, `src/job-apply.ts`, `src/apply-command.ts` (`agent-loop apply`), the fake board `test/fixtures/job-board.mjs`, suites `facts`, `ledger`, `job-apply`, `apply-cli` (83 suites in the chain). Tested against the fake board only. **Next, in this order:** (a) adversary round on this slice with a NEW fresh-context agent, (b) `--verify` for unconfirmed attempts and a bench suite `job-redteam`, (c) a model-backed reader for forms the engine parks, radio groups, multi-page forms, (d) LinkedIn Easy Apply and ATS playbooks against fake boards, (e) the watchdog and goal loop (S4: `agent-loop goal`), (f) the router (S3). S2 round 4 is still owed. CI at `aa99bed` is green on all three systems (79 suites); the four new suites are not read yet.
 
 0. **Where the work stands (2026-10-08).** S2 increments 4 and 5 part one are committed (`393dda5` pushed; `423d2e8` committed, **not pushed**: the full suite on that exact commit failed `test:login` (a flake of the test itself: it counted directories in the shared temp directory while another run was going) and `test:bench-table` (the benchmark file was stale). Both are fixed in the next commit, which is the one to run the guarded suite on (`scratchpad/suite-then-push.sh <short-commit>`), then push, then read CI for `393dda5` and that commit on all three systems. **Adversary round 3 (A52 to A61) is triaged** (`docs/adversary/round-03-triage.md`): A52 to A55, A57 to A60 are fixed with tests that fail on the old `src/` (IMP-031); **A56** (a WebSocket inside a dedicated worker) and **A61** (plain http to a listed name) are scheduled for S5 and written into the threats table as open. Left for the S2 stage-close rule: a round that finds nothing open at medium or above (this round's fixes have had no second look), CI read on the commits above, and README suite counts (79 suites now). Then S3.
 

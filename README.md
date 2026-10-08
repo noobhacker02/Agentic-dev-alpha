@@ -242,9 +242,9 @@ Everything runs on Linux, macOS and Windows with Node 22.5+. The results below a
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 79 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `4e5bccf` (76 suites; the two added since, `uploads` and `upload-form`, are not read yet) |
-| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `4e5bccf` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 76). Two suites added since; their CI is not read yet |
-| **Windows** (`windows-latest`) | The same | Green at `4e5bccf` (same). It was red at `e9da57a` (`test:login`: a Ctrl-C during the window's opening was lost; fixed) and at `a035a87` (`test:team-run-cli`, an absolute `--import` path, now scanned for by `test:windows-imports`; and `test:ui-plain`, cause not established, not seen again at `b695f8c`, `58aaba4`, `bbdb587` or `4e5bccf`) |
+| **Linux** | All 79 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `aa99bed` (79 suites, read from the Actions API). The four suites added since (`facts`, `ledger`, `job-apply`, `apply-cli`) are not read yet |
+| **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `aa99bed` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 79). Four suites added since; their CI is not read yet |
+| **Windows** (`windows-latest`) | The same | Green at `aa99bed` (same). It was red at `e9da57a` (`test:login`: a Ctrl-C during the window's opening was lost; fixed) and at `a035a87` (`test:team-run-cli`, an absolute `--import` path, now scanned for by `test:windows-imports`; and `test:ui-plain`, cause not established, not seen again at `b695f8c`, `58aaba4`, `bbdb587` or `4e5bccf`) |
 
 Running them on macOS and Windows for the first time found real bugs that "it uses Node's cross-platform APIs" had hidden: on Windows
 the server answered 404 to the page's own scripts (`normalize()` turns `/persona.js` into `\persona.js`), and the CLI printed report
@@ -402,11 +402,21 @@ verified before and after every action; a swapped window locks the session. The 
 used. The approval prompt shows the window as it was captured with a marker on the exact spot a click would land, and typed text verbatim; there's a side panel with every capture, and `agent-loop insights` counts desktop use. Tested against the real driver on Linux/X11; macOS and Windows are not yet verified. Full reference,
 controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
+## Job applications (first slice)
+
+`agent-loop apply <application page> --site <platform> --company "<company>" --title "<job title>"` applies to **one** job and tells you what happened. It is the first piece of the job agent, and it is deliberately small: the decisions that matter are made by code, not by a model, so they can be tested.
+
+What it does, in order: checks the ledger (already applied? a cap reached? an earlier attempt that was never confirmed?), opens the page, **stops at once on a challenge or a rate limit** and pauses the site (it never tries to get past one), reads every field, and decides each one from your `facts.json`. Anything it cannot answer **parks and asks you, with nothing sent**: a required fact you have not given, a demographic question, a legal attestation, a written answer with no template, and any ask for an identity number, a birth date, a bank detail or a password (which a real employer does not need before an offer, so it is also flagged as a likely scam). Then it fills, attaches the résumé you designated by name in `uploads.json`, **checks the filled form against its plan** (a value the page put there itself parks it), writes an `intended` row to the ledger, clicks submit, and marks the row `confirmed` only when the page says so. A crash or a lost answer leaves `intended`, which blocks a retry until it is verified on the site.
+
+Your files live in your agent-loop directory (`~/.agent-loop`): `facts.json` (`{"facts": {"email": "me@example.com", "years_experience": "7", ...}}`, each fact has a disclosure class), `uploads.json`, `allowances.json` (LIVE mode), and an optional `caps.json` (`perDay` 30, `perHour` 10, `perSiteDay` 30, `minGapSeconds` 60 by default; the model cannot change them). Exit codes: 0 applied or already applied, 1 error, 3 parked (needs you), 4 site paused, 5 sent but not confirmed, 6 capped.
+
+**What has been tested:** against a local fake job board only (`test/fixtures/job-board.mjs`, with a challenge page, a rate limit, an identity-number ask, a demographic question, an attestation, a prefilled hidden field, an instruction in a label, and a server that records the application and then fails to answer). `test:job-apply` and `test:apply-cli` count what the board's server accepted. **Not tested:** any real job site, a form this engine cannot read (it handles text fields, selects, checkboxes and one résumé upload; radio groups and multi-page forms park), and a model reading an unfamiliar form. Use `--test` for a local board; LIVE mode needs your allowances file and an `agent-loop login <site>` first.
+
 ## Testing
 
 ```bash
 npm run build
-npm test                          # all 79 suites, none of which calls a model (what CI runs)
+npm test                          # all 83 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 

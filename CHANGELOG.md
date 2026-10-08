@@ -5,6 +5,9 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The job agent's first slice: `agent-loop apply`** (`docs/IMPROVEMENTS.md` IMP-032). Applies to one job from your `facts.json`, once: facts have disclosure classes, a ledger keeps an application from going out twice (and blocks a retry of an unconfirmed one until it is verified on the site), caps are counted from the ledger, a challenge or a rate limit pauses the site, and anything it cannot answer (a demographic question, a legal attestation, a written answer, an ask for an identity number or a birth date) parks with nothing sent. Tested against a local fake job board only (`test:facts`, `test:ledger`, `test:job-apply`, `test:apply-cli`); never against a real site.
+
 ### Security
 - **Round 3 on S2 (LIVE mode): the upload hold covers the channels it missed, and six more holes in the LIVE rules are closed** (adversary round 3: A52 to A54 high, A55 to A58 medium, A59 and A60 low; `docs/IMPROVEMENTS.md` IMP-031). A shared worker, an XHR with method `OPTIONS` and a body, a WebSocket
   to another listed platform, and a page that stored the file's bytes and reloaded all got the attached file out; a name such as `x_y.ads.example` slipped past the deny list; a popup carried off the list by

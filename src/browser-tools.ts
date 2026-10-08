@@ -860,6 +860,8 @@ interface ElementDescription {
   id: string;
   value: string | null;
   checked: boolean | null;
+  /** The page marks the field as required (the attribute or aria-required): the job flow parks a required field it cannot answer, and leaves an optional one alone. */
+  required: boolean;
   options: string[] | null;
   disabled: boolean;
   /** In a shadow root rather than the document itself. */
@@ -913,6 +915,7 @@ function describeElementInPage(el: any): ElementDescription {
     checked: tag === "input" && (type === "checkbox" || type === "radio") ? Boolean(el.checked) : null,
     options: tag === "select" ? Array.from(el.options as ArrayLike<any>).slice(0, 12).map((o: any) => String(o.label || o.text)) : null,
     disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+    required: el.required === true || el.getAttribute("aria-required") === "true",
     shadow: root !== doc,
   };
 }
@@ -926,6 +929,7 @@ function formatRefLine(ref: string, d: ElementDescription, frame?: string): stri
   if (d.checked !== null) parts.push(d.checked ? "checked" : "unchecked");
   if (d.options) parts.push(`options=${JSON.stringify(d.options.map((o) => cleanText(o, 40)))}`);
   if (d.disabled) parts.push("disabled");
+  if (d.required) parts.push("required");
   // Where it lives, last, and quoted like every other piece of page text (a frame's name is the page's own).
   if (frame) parts.push(`frame=${JSON.stringify(frame)}`);
   if (d.shadow) parts.push("in-shadow-root");
@@ -1177,7 +1181,7 @@ async function takeRefSnapshot(session: BrowserSession, tab: BrowserTab, query?:
         continue;
       }
       const d = await el.evaluate(describeElementInPage).catch(
-        (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false, shadow: false })
+        (): ElementDescription => ({ role: "generic", name: "", id: "", value: null, checked: null, options: null, disabled: false, required: false, shadow: false })
       );
       if (query && !`${d.role} ${d.name} ${d.id}`.toLowerCase().includes(query)) {
         await handle.dispose();
@@ -1567,6 +1571,9 @@ const isTypedCharacter = (key: string): boolean => (key.split("+").pop() ?? "").
 
 const refArg = z.string().optional().describe("An element ref from the latest inspect, like s1e3 (preferred)");
 const selectorArg = z.string().optional().describe("A CSS selector, if there's no ref for the element");
+
+/** The same tool definitions under a name production code may use (the job flow calls the tools it hands a model, directly). */
+export const browserToolHandlers = (opts: CreateBrowserToolServerOptions) => __testHandlers(opts);
 
 /** The browser tool definitions, keyed by name. Exported (as __testHandlers) so tests can call a
  * handler directly without standing up a real MCP client/transport -- the same reasoning

@@ -19,6 +19,7 @@ import { PersonaDirector, insightsLine, parseHumor, type HumorLevel } from "./pe
 import { roast, roastWithModel, type Habits } from "./roast.js";
 import { rosterCommand, teamCommand, type CommandResult } from "./team/cli-commands.js";
 import { loginCommand } from "./login.js";
+import { applyCommand } from "./apply-command.js";
 import { resolveTeamOption } from "./team/cli-run.js";
 import { installFatalHandlers } from "./fatal.js";
 
@@ -254,6 +255,14 @@ async function main() {
     return;
   }
 
+  if (cmd === "apply") {
+    const r: CommandResult = await applyCommand(parseArgs(argv.slice(1)));
+    if (r.out) process.stdout.write(r.out);
+    if (r.err) process.stderr.write(r.err);
+    process.exitCode = r.code;
+    return;
+  }
+
   if (cmd !== "run") {
     console.log(`agent-loop — multi-agent dev-loop orchestrator
 
@@ -261,6 +270,7 @@ Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark] [--plain] [--max-cost <usd>]
          [--team auto|fixed5|<plan.json>] [--cap <n>] [--trust-project]
   agent-loop login <site> [--url <login page>]
+  agent-loop apply <application page> --site <platform> --company "<company>" --title "<job title>" [--job-id <id>] [--job-url <posting>] [--resume <name>] [--test]
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
   agent-loop doctor [--dir <workDir>] [--data-dir <path>] [--desktop]
   agent-loop lineage [--run <id|latest>] [--json|--markdown] [--dir <workDir>] [--data-dir <path>]
@@ -323,6 +333,7 @@ Usage:
                    the team is this size. Offline: no model, no network. Reads the PATHS in --dir, never the text inside
                    the files. Exits 2 when no team fits --cap (default 12). To run a composed team: agent-loop run ... --team auto.
 
+  apply            Apply to one job from your facts.json, once (ledger.db keeps it from being sent twice); anything it cannot answer parks and asks you
   login            Log in to a site once, by hand, in a browser window that keeps its profile in your agent-loop directory
                    (~/.agent-loop/profiles/<site>, readable only by you, never inside a project). <site> is a platform name
                    from "platforms" in ~/.agent-loop/allowances.json. Close the window when you are done. agent-loop does not
