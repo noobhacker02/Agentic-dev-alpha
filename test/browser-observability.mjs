@@ -152,7 +152,7 @@ try {
     const ctxListeners = {};
     const ctx = { on: (ev, fn) => { (ctxListeners[ev] ??= []).push(fn); } };
     const emitCtx = (ev, arg) => (ctxListeners[ev] ?? []).forEach((fn) => fn(arg));
-    const mkPage = () => { const l = {}; return { l, on: (ev, fn) => { (l[ev] ??= []).push(fn); }, mainFrame: () => ({}) }; };
+    const mkPage = () => { const l = {}; return { l, on: (ev, fn) => { (l[ev] ??= []).push(fn); }, mainFrame: () => ({}), url: () => "about:blank" }; };
     const emitPage = (pg, ev, arg) => (pg.l[ev] ?? []).forEach((fn) => fn(arg));
     const { notices, tabIds } = __testWatchContext(ctx);
     const popup = mkPage(), second = mkPage();
