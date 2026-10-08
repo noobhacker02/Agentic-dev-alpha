@@ -490,6 +490,104 @@ const reset = () => { for (const k of Object.keys(board.applications)) delete bo
   console.log("[ok] round 6: attestations worded 'I confirm' and 'By submitting', a soft hyphen, a forged read marker, an emergency-contact block, a select with a default, another company's posting, a sidebar, three more hidden-field tricks, refusal pages that say thank you, a challenge page in more words, a fact in another spelling, a host paused under another label and the same page under another label, and a row closed in flight all send nothing wrong; a reCAPTCHA footer and job titles like '403(b) Plan Administrator' are not challenges");
 }
 
+// 9. Adversary round 7 (A114 to A127)
+{
+  // A114: a plain "Apply" button inside an iframe is not "in the same form" as the main fields, however its form number reads
+  reset(); board.framePosts = [];
+  {
+    const l = ledger();
+    const r = await run("1", { ledger: l }, "framebtn");
+    assert.strictEqual(r.status, "parked", JSON.stringify(r));
+    assert.ok(/frame/.test(r.reasons.join(" | ")), `parked, but not because of the frame: ${JSON.stringify(r.reasons)}`);
+    assert.strictEqual(board.framePosts.length, 0, "the frame's form was posted");
+    assert.strictEqual(count("1"), 0); assert.strictEqual(l.all().length, 0);
+    l.close();
+  }
+  // A125 and A119: verifying does not trust a page that is not the posting, does not visit a paused site, and a "slow down" status pauses it
+  {
+    reset();
+    const l = ledger();
+    assert.strictEqual((await run("3", { ledger: l }, "lost")).status, "unverified");
+    const row = l.unaccounted()[0];
+    assert.strictEqual(await verifyAttempt(tools, l, row, `${board.url}/jobs/3?chaos=myapps`), "unknown", "a 'My applications' page confirmed an application");
+    assert.strictEqual(l.unaccounted().length, 1);
+    // control: the posting itself, showing the badge, confirms
+    assert.strictEqual(await verifyAttempt(tools, l, row, `${board.url}/jobs/3`), "confirmed");
+    l.close();
+    reset();
+    const l2 = ledger();
+    assert.strictEqual((await run("3", { ledger: l2 }, "lost")).status, "unverified");
+    const r2 = l2.unaccounted()[0];
+    l2.pause("board", "test");
+    board.requests.length = 0;
+    assert.strictEqual(await verifyAttempt(tools, l2, r2, `${board.url}/jobs/3`), "unknown");
+    assert.strictEqual(board.requests.length, 0, "a paused platform was visited while verifying");
+    l2.unpause("board");
+    assert.strictEqual(await verifyAttempt(tools, l2, r2, `${board.url}/jobs/3?chaos=polite429`), "unknown");
+    assert.ok(l2.paused("board"), "a 429 while verifying did not pause the platform");
+    l2.close();
+  }
+  // A126: a value the page cut short (maxlength) is a piece of the user's own e-mail: the park reason does not print it
+  reset();
+  {
+    const l = ledger();
+    const r = await run("1", { ledger: l }, "maxlen");
+    assert.strictEqual(r.status, "parked", JSON.stringify(r));
+    assert.ok(/does not hold what was filled/.test(r.reasons.join(" ")), JSON.stringify(r.reasons));
+    assert.ok(!/ada@e|ada@/i.test(JSON.stringify(r)), `a piece of the e-mail was printed: ${JSON.stringify(r.reasons)}`);
+    assert.strictEqual(count("1"), 0); assert.strictEqual(l.all().length, 0);
+    l.close();
+  }
+  // A121 and A123: an ARIA checkbox that arrives ticked, and a value the page put in a number box
+  for (const [chaos, re] of [["ariatick", /checked/], ["numbers", /value the page put there/]]) {
+    reset();
+    const l = ledger();
+    const r = await run("1", { ledger: l }, chaos);
+    assert.strictEqual(r.status, "parked", `${chaos}: ${JSON.stringify(r)}`);
+    assert.ok(re.test(r.reasons.join(" ")), `${chaos}: ${JSON.stringify(r.reasons)}`);
+    assert.strictEqual(count("1"), 0); assert.strictEqual(l.all().length, 0);
+    l.close();
+  }
+  // A117: the company named in a sidebar, far from the heading, is not the posting's company
+  reset();
+  {
+    const l = ledger();
+    const r = await run("2", { ledger: l, job: { ...JOB("2"), company: "Acme" } }, "alsohiring");
+    assert.strictEqual(r.status, "parked", JSON.stringify(r));
+    assert.ok(/does not look like the posting/.test(r.reasons.join(" ")), JSON.stringify(r.reasons));
+    assert.strictEqual(count("2"), 0); assert.strictEqual(l.all().length, 0);
+    // control: the company the page is headed with is accepted
+    reset();
+    assert.strictEqual((await run("2", { ledger: l }, "alsohiring")).status, "submitted");
+    l.close();
+  }
+  // A116: the status of the answer to the submit is read; a 429 with a polite page pauses the site and the next application is not sent
+  reset();
+  {
+    const l = ledger();
+    const r = await run("1", { ledger: l }, "submit429");
+    assert.strictEqual(r.status, "paused-site", JSON.stringify(r));
+    assert.ok(r.seq, "the attempt stays unaccounted for"); assert.ok(l.paused("board"), "the site was not paused");
+    const next = await run("2", { ledger: l });
+    assert.strictEqual(next.status, "paused-site", JSON.stringify(next));
+    assert.strictEqual(count("2"), 0, "the next application was sent to a site that said slow down");
+    l.close();
+  }
+  // A120: a page that submits during the fill. The intent is written before the first thing is touched, and a navigation is never reported as "nothing was sent"
+  reset();
+  {
+    const l = ledger();
+    const r = await run("1", { ledger: l }, "uploadsubmit");
+    assert.ok(count("1") >= 1, "the fixture did not submit during the fill");
+    assert.ok(r.status === "unverified" || r.status === "submitted", `the page sent an application during the fill and the engine said ${JSON.stringify(r)}`);
+    assert.strictEqual(l.all().length, 1, "no ledger row for an application the page sent");
+    const second = await run("1", { ledger: l }, "uploadsubmit");
+    assert.notStrictEqual(second.status, "submitted", JSON.stringify(second));
+    assert.strictEqual(count("1"), 1, `the application was sent ${count("1")} times`);
+    l.close();
+  }
+}
+
 await sessions.close("ja", bus, "completed").catch(() => {});
 await board.close();
 console.log("\nALL JOB APPLY TESTS PASSED");

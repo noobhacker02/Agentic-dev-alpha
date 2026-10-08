@@ -115,7 +115,11 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T30. A check written as `endsWith(",0)")` to find a transparent colour matched `rgb(0, 0, 0)`: every black text field was called hidden and the happy path stopped sending.** Count 1 (IMP-035; found by the first run of the test). Rule: a test of "the clean page is still submitted" runs in the same file as every new hiding check, and runs first.
 
+**T31. A test of a changed message was written against the old behaviour twice.** Count 1 (IMP-037). Two existing assertions encoded `exit 0` for "an earlier attempt has no confirmation", which A124 showed to be wrong; the fix made them fail and they were changed with the reason beside them. Rule: when a fix changes an observable that older tests assert, change the test in the same commit and say why in a comment, so the old assertion is not mistaken for a requirement.
+
 **S16. Flags read from the whole of a line that includes the page's own words (`disabled`, `required` found inside an `id`).** Count 1 (A75). Rule: a parser of mixed trusted and untrusted text reads token by token and skips every quoted value whole; test it with the flag word inside each untrusted field.
+
+**S17. The intent row was written after the first side effect, and an identifier was only meaningful inside one document.** Count 1 (IMP-037; round 7, A120 and A114). A page that submits itself while the form is filled (a file input or select that submits on change) sent a real application before the ledger knew, and the program said "Nothing was sent"; a `form=0` in a frame matched `form=0` of the page. Rule: write the record **before** the first action that can have the effect, and take it back only when you can show nothing happened; and an identifier that is scoped (a form number, a ref) is compared together with its scope (the frame).
 
 ## 2. Platform differences (macOS, Windows, root vs normal user)
 
@@ -269,7 +273,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 30, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 87 entries** (T1 to T30, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, T27, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 31, Platform 10, Security 17, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 89 entries** (T1 to T31, P1 to P10, S1 to S17, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, T27, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

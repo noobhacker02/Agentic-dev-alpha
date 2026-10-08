@@ -19,14 +19,27 @@ const base = mkdtempSync(join(tmpdir(), "suite-tmp-"));
 chmodSync(base, 0o755);
 console.log(`[run-suites] ${free().toFixed(1)} GB free in ${tmpdir()} at the start`);
 
+const live = new Set();
+const killTree = (child) => {
+  try {
+    if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    else process.kill(-child.pid, "SIGKILL");
+  } catch { try { child.kill("SIGKILL"); } catch { /* already gone */ } }
+};
+// an interrupt ends the running suite's whole tree and removes the temporary directories instead of leaving gigabytes behind (A127)
+const bail = (sig) => () => { for (const c of live) killTree(c); try { rmSync(base, { recursive: true, force: true }); } catch { /* best effort */ } process.exit(sig === "SIGINT" ? 130 : 143); };
+process.on("SIGINT", bail("SIGINT")); process.on("SIGTERM", bail("SIGTERM"));
+
 const run = (suite) => new Promise((resolve) => {
   const mine = mkdtempSync(join(base, `${suite.replace(/[^a-z0-9-]/g, "")}-`));
   chmodSync(mine, 0o755);
-  const child = spawn("npm", ["run", "-s", suite], { shell: true, env: { ...process.env, TMPDIR: mine, TMP: mine, TEMP: mine } });
+  // its own process group (POSIX), so a timeout or an interrupt ends npm and everything under it: `child.kill()` on a shell ends only the shell and the suite runs on (adversary round 7, A127)
+  const child = spawn("npm", ["run", "-s", suite], { shell: true, detached: process.platform !== "win32", env: { ...process.env, TMPDIR: mine, TMP: mine, TEMP: mine } });
+  live.add(child);
   let out = "";
   child.stdout.on("data", (d) => (out += d)); child.stderr.on("data", (d) => (out += d));
-  const timer = setTimeout(() => { out += `\n[run-suites] timed out after ${timeoutMs / 60000} min\n`; child.kill(); }, timeoutMs);
-  child.on("close", (code) => { clearTimeout(timer); try { rmSync(mine, { recursive: true, force: true }); } catch { /* left for the final sweep */ } resolve({ code, out }); });
+  const timer = setTimeout(() => { out += `\n[run-suites] timed out after ${timeoutMs / 60000} min\n`; killTree(child); }, timeoutMs);
+  child.on("close", (code) => { clearTimeout(timer); live.delete(child); try { rmSync(mine, { recursive: true, force: true }); } catch { /* left for the final sweep */ } resolve({ code, out }); });
 });
 
 const failed = [];

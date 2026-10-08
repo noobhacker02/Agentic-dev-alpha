@@ -68,7 +68,8 @@ const count = (id) => (board.applications[id] ?? []).length;
   assert.ok(r.code === 5 && /Sent, not confirmed: .*\(ledger #2\)/.test(r.out), JSON.stringify(r));
   assert.strictEqual(count("3"), 1);
   const retry = await apply("3");
-  assert.ok(retry.code === 0 && /no confirmation: verify it/.test(retry.out), JSON.stringify(retry));
+  // an earlier attempt with no confirmation is not "done": exit 5, like "sent, not confirmed" (A124); a confirmed duplicate stays 0 (section 2)
+  assert.ok(retry.code === 5 && /no confirmation: verify it/.test(retry.out), JSON.stringify(retry));
   assert.strictEqual(count("3"), 1, "an unconfirmed attempt was sent a second time by a new process");
   // control: the clean form for the posting that parked is submitted
   r = await apply("2");
@@ -91,7 +92,7 @@ const count = (id) => (board.applications[id] ?? []).length;
   assert.strictEqual(count("4"), 0, "verifying sent an application");
   // the site showing 'Apply now' is no proof: the retry is still refused until the user closes the row
   const blocked = await apply("4");
-  assert.ok(blocked.code === 0 && /no confirmation: verify it/.test(blocked.out) && count("4") === 0, JSON.stringify(blocked));
+  assert.ok(blocked.code === 5 && /no confirmation: verify it/.test(blocked.out) && count("4") === 0, JSON.stringify(blocked));
   const seq = /--forget (\d+)/.exec(v.out)[1];
   const bad = await run(["--forget", "9999"]);
   assert.ok(bad.code === 1 && /no attempt that can be closed has the number 9999/.test(bad.err), JSON.stringify(bad));
@@ -120,6 +121,13 @@ const count = (id) => (board.applications[id] ?? []).length;
   const lifted = await run(["--resume-site", "board"]);
   assert.ok(lifted.code === 0 && /no longer paused/.test(lifted.out), JSON.stringify(lifted));
   assert.ok(/was not paused/.test((await run(["--resume-site", "board"])).out));
+  // A118: an empty platform name (an unset shell variable) must not lift every pause
+  {
+    await run(["--test", `${board.url}/jobs/7/apply?chaos=challenge`, ...fresh]);
+    for (const blank of ["", "  "]) { const r = await run(["--resume-site", blank]); assert.ok(r.code === 1 && /needs the platform name/.test(r.err), JSON.stringify(r)); }
+    assert.ok(/Site paused/.test((await run([`${board.url}/jobs/7/apply`, "--test", ...fresh])).out), "an empty --resume-site lifted the pause");
+    assert.ok((await run(["--resume-site", "board"])).code === 0);
+  }
   // a cap of 0: the person is not told "Infinity"
   put("caps.json", { minGapSeconds: 0, perDay: 0 });
   const zero = await run(["--test", `${board.url}/jobs/7/apply`, "--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "99"]);

@@ -102,7 +102,7 @@ export interface ApplyDeps {
 export type ApplyResult =
   | { status: "submitted"; seq: number }
   | { status: "parked"; reasons: string[]; scam: boolean }
-  | { status: "duplicate" | "capped"; why: string; waitMs?: number }
+  | { status: "duplicate" | "capped"; why: string; waitMs?: number; /** The earlier attempt has no confirmation: not "done", the user verifies it (A124). */ unconfirmed?: boolean }
   | { status: "paused-site"; why: string; seq?: number }
   | { status: "unverified"; seq: number; why: string }
   | { status: "error"; why: string };
@@ -131,6 +131,7 @@ export const challenged = (inspect: string, jobTitle?: string): boolean => {
 const CAPTCHA_ON_FORM = /captcha|i(?:'|\u2019)?m not a robot|are you (a )?(human|robot)/i;
 const CHALLENGE_STRONG = /^\s*(just a moment|attention required|security check|verify you are human|verifying you are human|access denied|checking your browser|checking if the site connection)/i;
 /** The status line of an `open` answer ("HTTP 429."): a site that says 429, 403 or 503 is asked to rest, not asked again. */
+const inspectStatus = (inspect: string): number | undefined => { const m = /^HTTP: (\d{3})$/m.exec(inspect); return m ? Number(m[1]) : undefined; };
 const httpStatus = (openText: string): number | undefined => { const m = /\bHTTP (\d{3})\b/.exec(openText); return m ? Number(m[1]) : undefined; };
 
 /** All of the page's text, a section at a time, up to a limit; `complete` is false if the limit cut it short. */
@@ -153,19 +154,22 @@ async function readAll(tools: Tools): Promise<{ text: string; complete: boolean 
 /** The same text without accents, so "Résumé" is "resume". */
 const bare = (s: string): string => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 /** The job's title as a page names itself: the title or a heading is the job title (after "Apply:" or "Apply for", before "at Company" or "- Company"), not just a text that contains it (A89: "Senior Platform Engineer" is not "Platform Engineer"). */
-function namesJob(title: string, text: string, job: Job): boolean {
+function namesJob(title: string, text: string, job: Job, needCompany = true): boolean {
   const want = plain(job.title);
   const wrapper = (c: string): string => plain(c).replace(/^(apply( to| for)?|job application( for)?|application( for)?)\s+/, "").replace(/\s+(at|@)\s+.*$/, "").replace(/\s+(careers?|jobs?)$/, "").trim();
   const candidates = [title, ...title.split(/\s[-|\u2013\u2014:\u00b7]\s/), ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 2)];
   const titled = candidates.some((c) => wrapper(c) === want || wrapper(c.replace(/\s[-|\u2013\u2014]\s.*$/, "")) === want);
-  // and the company is named somewhere on the page: a sidebar line or a different company's posting that carries the same words is not this job (A104)
-  return titled && plain(`${title}\n${text}`).includes(plain(job.company));
+  // and the company is named where the posting is headed (the title or the first lines), not anywhere: a sidebar's "also hiring at Acme" under another company's posting does not make it Acme's (A104, A117)
+  const head = [title, ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 6)].join("\n");
+  return titled && (!needCompany || plain(head).includes(plain(job.company)));
 }
 /** What a failing tool says, with the user's own words taken out of it: a park reason is printed. */
 const redact = (text: string, secrets: string[]): string => secrets.filter((v) => v.length >= 3).reduce((t, v) => t.split(v).join("[your fact]"), text);
 
 /** The one submit button: its whole name is one of a few plain phrases. A page with two, or with none, parks; "Send me job alerts" and "Submit and apply to 50 similar jobs" are not it (A68). */
 const SUBMIT_NAME = /^(submit( application)?|apply|send application|submit my application)$/;
+/** Roles that hold a value the page may have put there: a number, a slider and a search box are as much "an answer" as a text box (A123). */
+const VALUE_ROLES = new Set(["textbox", "spinbutton", "slider", "searchbox"]);
 const pageFields = (els: PageElement[]): PageElement[] => els.filter((e) => e.role !== "button" && e.role !== "link");
 
 export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
@@ -174,7 +178,8 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   const paused = d.ledger.paused(d.job.site) ?? (host ? d.ledger.paused(host) : undefined);
   if (paused) return { status: "paused-site", why: `${d.job.site} is paused (${paused.why}); run agent-loop apply --resume-site ${d.job.site} when you have looked at it yourself` };
   const start = d.ledger.mayStart(d.job, d.jobUrl ?? d.applyUrl);
-  if (!start.ok) return { status: start.duplicateOf ? "duplicate" : "capped", why: start.why, ...(start.waitMs ? { waitMs: start.waitMs } : {}) };
+  const refused = (v: { why: string; waitMs?: number; duplicateOf?: Row }): ApplyResult => ({ status: v.duplicateOf ? "duplicate" : "capped", why: v.why, ...(v.waitMs ? { waitMs: v.waitMs } : {}), ...(v.duplicateOf?.state === "intended" ? { unconfirmed: true } : {}) });
+  if (!start.ok) return refused(start);
   const pauseSite = (why: string): void => { d.ledger.pause(d.job.site, why); if (host) d.ledger.pause(host, why, d.job.site); };
   // the user's own words, to take out of anything that is printed
   const secrets = Object.values(d.facts.facts).map((f) => f!.value);
@@ -232,6 +237,8 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   for (const [k, n] of factUses) if (n > 1) reasons.push(`${n} fields ask for "${k}"; one of them may be about someone else (a reference), and the flow cannot tell which`);
   if (resumeRefs.length !== 1) reasons.push(resumeRefs.length ? "the form has more than one field that could take the résumé" : "the form has no résumé field the flow can use");
   const submits = all.filter((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
+  // a form number counts inside one document: a button in a frame is another document's, whatever number it carries (A114)
+  if (submits.some((e) => e.frame !== undefined)) reasons.push("a button that could submit sits in a frame; the flow does not click inside frames");
   if (submits.length !== 1) reasons.push(submits.length ? "the page has more than one button that could submit the application" : "the page has no plain submit button the flow can find");
   // the button must belong to the very form the fields are in; a button of another form (a one-click "similar jobs" form) is not this application's (A94)
   const forms = new Set<number | undefined>([...plan.values()].map((p) => p.form).concat(resumeRefs.map((r) => r.form)));
@@ -243,14 +250,30 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   for (const f of fields) (before.get(labelKey(f)) ?? before.set(labelKey(f), []).get(labelKey(f))!).push(f);
   const preText = visible(page);
 
+  // 2. The intent comes BEFORE anything is touched: a page may submit itself while it is being filled (a file input or a select that submits on change, a timer), and the row means "a request may leave from here on" (A120).
+  // If the run parks afterwards and the page provably did not move, the row is taken back; if the page navigated or an action failed the way a navigation does, the row stays and the answer is "unverified", never "nothing was sent".
+  const hash = createHash("sha256").update(JSON.stringify([...plan.keys()].map((k) => labelHash(k)).sort())).digest("hex").slice(0, 16);
+  const intent = d.ledger.intend(d.job, hash, d.jobUrl ?? d.applyUrl);
+  if (!intent.ok) return refused(intent);
+  const signature = (inspect: string): string => `${/^URL: (.*)$/m.exec(inspect)?.[1] ?? ""}\n${titleOf(inspect)}`;
+  const sig0 = signature(page);
+  const NAV = /navigat|context was destroyed|target (page|closed)|detached|protocol error/i;
+  const giveUp = async (why: string[], errorText = ""): Promise<ApplyResult> => {
+    let moved = NAV.test(errorText);
+    if (!moved) { const now = await d.tools.call("inspect", {}); moved = now.isError || signature(textOf(now)) !== sig0; }
+    if (moved) return { status: "unverified", seq: intent.seq, why: "the page changed while the form was being filled, so something may have been sent; check the site before a retry" };
+    d.ledger.retract(intent.seq);
+    return { status: "parked", reasons: why.map((r) => redact(r, secrets)), scam: false };
+  };
+
   // 2. Fill
   for (const [, p] of plan) {
     const r = p.role === "combobox" ? await d.tools.call("select_option", { ref: p.ref, values: [p.value] }) : await d.tools.call("fill", { ref: p.ref, value: p.value });
     // what the browser said may hold the value that was typed (in any spelling), so it is not shown (A101)
-    if (r.isError) return { status: "parked", reasons: [`"${p.label.slice(0, 60)}" could not be filled (the browser refused it; its message is not shown because it can repeat your own words)`], scam: false };
+    if (r.isError) return giveUp([`"${p.label.slice(0, 60)}" could not be filled (the browser refused it; its message is not shown because it can repeat your own words)`], textOf(r));
   }
   const up = await d.tools.call("upload", { ref: resumeRef, file: d.resume });
-  if (up.isError) return { status: "parked", reasons: [`the résumé was not attached: ${redact(textOf(up), secrets).slice(0, 160)}`], scam: false };
+  if (up.isError) return giveUp([`the résumé was not attached: ${redact(textOf(up), secrets).slice(0, 160)}`], textOf(up));
 
   // 3. The form diff: what is on the page now is what was planned, and nothing else has changed, appeared or been ticked (A66)
   page = textOf(await d.tools.call("inspect", {}));
@@ -263,7 +286,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   for (const [key, p] of plan) {
     const e = seenAfter.get(key)?.[0];
     if (!e) { wrong.push(`"${p.label.slice(0, 60)}" is no longer on the page`); continue; }
-    if ((e.value ?? "").trim().toLowerCase() !== p.value.trim().toLowerCase()) wrong.push(`"${p.label.slice(0, 60)}" holds "${(e.value ?? "").slice(0, 40)}" and not what was filled`);
+    if ((e.value ?? "").trim().toLowerCase() !== p.value.trim().toLowerCase()) wrong.push(`"${p.label.slice(0, 60)}" does not hold what was filled (the page changed or cut the value; it is not shown because it can be a part of your own words)`);
   }
   for (const [key, list] of seenAfter) {
     const was = before.get(key) ?? [];
@@ -272,24 +295,24 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
     list.forEach((e, k) => {
       const w = was[k]!;
       if ((e.value ?? "") !== (w.value ?? "") || e.checked !== w.checked) wrong.push(`"${e.name.slice(0, 60)}" changed after the fields were filled (not planned)`);
-      else if (e.role === "textbox" && (e.value ?? "").trim()) wrong.push(`"${e.name.slice(0, 60)}" came with a value the page put there ("${(e.value ?? "").slice(0, 30)}"); the flow does not send what it did not write`);
+      else if (VALUE_ROLES.has(e.role) && (e.value ?? "").trim()) wrong.push(`"${e.name.slice(0, 60)}" came with a value the page put there ("${(e.value ?? "").slice(0, 30)}"); the flow does not send what it did not write`);
     });
   }
   for (const e of afterAll) if (e.checked === true) wrong.push(`"${e.name.slice(0, 60)}" is checked`);
   if (forbiddenIn(visible(page)) || attestationIn(visible(page))) wrong.push("the page now asks for something it did not ask before the fields were filled");
-  if (wrong.length) return { status: "parked", reasons: wrong.map((r) => redact(r, secrets)), scam: false };
+  if (wrong.length) return giveUp(wrong, page);
   const submit = after.filter((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
-  if (submit.length !== 1 || submit[0]!.form !== [...forms][0]) return { status: "parked", reasons: ["the submit button is no longer the single plain one in the form"], scam: false };
+  if (submit.length !== 1 || submit[0]!.form !== [...forms][0] || submit[0]!.frame !== undefined) return giveUp(["the submit button is no longer the single plain one in the form"], page);
 
-  // 4. Intent, then the click. The form hash is of the labels only: the values are the user's and do not belong in the ledger
-  const hash = createHash("sha256").update(JSON.stringify([...plan.keys()].map((k) => labelHash(k)).sort())).digest("hex").slice(0, 16);
-  const intent = d.ledger.intend(d.job, hash, d.jobUrl ?? d.applyUrl);
-  if (!intent.ok) return { status: "duplicate", why: intent.why };
+  // 4. The click (the intent is already written). The form hash is of the labels only: the values are the user's and do not belong in the ledger
   const clicked = await d.tools.call("click", { ref: submit[0]!.ref });
 
   // 5. What came back. A confirmation is words that were NOT on the page before the click, on a page that is not an error and no longer offers the submit button (A63)
   const answer = textOf(await d.tools.call("inspect", {}));
   const seen = `${titleOf(answer)}\n${visible(answer)}`;
+  // the status of the answer to the submit speaks for the site, whatever the page says (A116)
+  const postCode = inspectStatus(answer);
+  if (postCode === 429 || postCode === 403 || postCode === 503 || postCode === 401) { pauseSite(`HTTP ${postCode} after a submit`); return { status: "paused-site", why: `the site answered the submit with HTTP ${postCode}; the site is paused and the attempt is verified before any retry`, seq: intent.seq }; }
   const stillAsks = parseElements(answer).some((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
   // new confirming words on a page with no error wording come first: a thank-you page with a "protected by reCAPTCHA" footer is not a challenge (A99)
   if (!clicked.isError && CONFIRMED.test(seen) && !CONFIRMED.test(preText) && !ERRORISH.test(seen) && !stillAsks) {
@@ -306,10 +329,18 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
  * button for similar jobs too, A62), so only the user closes a row as not received (`agent-loop apply --forget <n>`).
  */
 export async function verifyAttempt(tools: Tools, ledger: Ledger, row: Row, jobUrl: string): Promise<"confirmed" | "unknown"> {
+  // a site that is paused is not visited, and a status that says "slow down" pauses it here as it does in an application (A119)
+  const host = (() => { try { return `host:${new URL(jobUrl).hostname.toLowerCase()}`; } catch { return ""; } })();
+  if (ledger.paused(row.site) || (host && ledger.paused(host))) return "unknown";
   const opened = await tools.call("open", { url: jobUrl });
   if (opened.isError) return "unknown";
+  const code = httpStatus(textOf(opened));
+  if (code === 429 || code === 403 || code === 503 || code === 401) { ledger.pause(row.site, `HTTP ${code} while verifying`); if (host) ledger.pause(host, `HTTP ${code} while verifying`, row.site); return "unknown"; }
   const page = textOf(await tools.call("inspect", {}));
   if (challenged(page, row.title)) { ledger.pause(row.site, "a challenge or a rate limit while verifying"); return "unknown"; }
+  // "Application submitted" on a page that is not the posting (a redirect to "My applications") proves nothing about this posting (A125)
+  // (the title alone: the page an application leads to after it is sent often drops the company line)
+  if (!namesJob(titleOf(page), visible(page), { title: row.title, company: row.company } as Job, false)) return "unknown";
   if (ALREADY_APPLIED.test(visible(page))) { ledger.confirm(row.seq, "verified on the site (the page said so; page text can be wrong)"); return "confirmed"; }
   return "unknown";
 }

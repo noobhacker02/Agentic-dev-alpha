@@ -20,7 +20,16 @@ const norm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[
 /** `norm`, or the text as it is when nothing but punctuation was in it (so "???" and "..." stay two different titles). */
 const canon = (s: string): string => norm(s) || s.normalize("NFKC").trim().toLowerCase();
 /** A page's address without its query, fragment, trailing slash or a final "/apply": the same posting under another spelling of the address is the same posting (A106). */
-export const canonUrl = (u: string): string => { try { const x = new URL(u); return `${x.host.toLowerCase()}${x.pathname.replace(/\/apply\/?$/i, "").replace(/\/+$/, "")}`; } catch { return ""; } };
+// tracking parameters never name a posting; every other query parameter may (`?gh_jid=222`), and so may a hash route (`#/jobs/42`) (A115)
+const TRACKING = /^(utm(_.*)?|gh_src|source|ref|ref_src|referrer|lever-source|lever-origin|fbclid|gclid|igsh|src|trk|trackingid|campaign)$/i;
+export const canonUrl = (u: string): string => {
+  try {
+    const x = new URL(u);
+    const q = [...x.searchParams.entries()].filter(([k]) => !TRACKING.test(k)).map(([k, v]) => `${k.toLowerCase()}=${v}`).sort().join("&");
+    const route = /^#[/!]/.test(x.hash) ? x.hash.toLowerCase() : "";
+    return `${x.host.toLowerCase()}${x.pathname.replace(/\/apply\/?$/i, "").replace(/\/+$/, "")}${q ? `?${q}` : ""}${route}`;
+  } catch { return ""; }
+};
 const siteOf = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
 /** The identity of a posting: the site's job id when it has one, else the company and title. The platform and the id are compared without case or edge spaces (A71). */
 export const jobKey = (j: Job): string => (j.jobId?.trim() ? `${siteOf(j.site)}:${j.jobId.trim()}` : `${siteOf(j.site)}:${canon(j.company)}|${canon(j.title)}`);
@@ -92,7 +101,7 @@ export class Ledger {
   /** May one more application start now? Counted from the ledger: confirmed and intended rows both count (an intended one may have gone through). */
   mayStart(job: Job, url = ""): Verdict {
     const dup = this.duplicate(job, url);
-    if (dup) return { ok: false, why: dup.state === "intended" ? `an earlier attempt at this posting (#${dup.seq}) has no confirmation: verify it before trying again` : `already applied to this posting (#${dup.seq})`, duplicateOf: dup };
+    if (dup) return { ok: false, why: dup.state === "intended" ? `an earlier attempt at this posting (#${dup.seq}: ${dup.company} / ${dup.title}) has no confirmation: verify it before trying again` : `already applied to this posting (#${dup.seq}: ${dup.company} / ${dup.title})`, duplicateOf: dup };
     const now = this.now();
     const live = (since: number): Row[] => this.rows("SELECT * FROM applications WHERE state IN ('intended','confirmed') AND at >= ?", since);
     const day = live(now - DAY), hour = day.filter((r) => r.at >= now - HOUR);
@@ -108,13 +117,13 @@ export class Ledger {
   }
 
   /** Written before the submit click. Returns the row number, or refuses if the posting is already accounted for (a second intent for the same posting is the double-apply this table exists to stop). */
-  intend(job: Job, formHash: string, url = ""): { ok: true; seq: number } | { ok: false; why: string; waitMs?: number } {
+  intend(job: Job, formHash: string, url = ""): { ok: true; seq: number } | { ok: false; why: string; waitMs?: number; duplicateOf?: Row } {
     // the check and the insert are one write transaction: another process cannot slip an `intended` row in between (A69)
     this.db.exec("BEGIN IMMEDIATE");
     try {
       // the whole decision is made again here, inside the write lock: the caps and the duplicate check done at the start of a run may be out of date by the time the form is filled, with other runs going at once (A105)
       const again = this.mayStart(job, url);
-      if (!again.ok) { this.db.exec("ROLLBACK"); return { ok: false, why: again.why, ...(again.waitMs ? { waitMs: again.waitMs } : {}) }; }
+      if (!again.ok) { this.db.exec("ROLLBACK"); return { ok: false, why: again.why, ...(again.waitMs ? { waitMs: again.waitMs } : {}), ...(again.duplicateOf ? { duplicateOf: again.duplicateOf } : {}) }; }
       const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 500));
       this.db.exec("COMMIT");
       return { ok: true, seq: Number(r.lastInsertRowid) };
@@ -126,6 +135,8 @@ export class Ledger {
   }
   /** True if this call is the one that confirmed the row; false if it was no longer `intended` (the user closed it meanwhile, A107). */
   confirm(seq: number, note = ""): boolean { return Number(this.db.prepare("UPDATE applications SET state = 'confirmed', note = ? WHERE seq = ? AND state = 'intended'").run(note.slice(0, 200), seq).changes) > 0; }
+  /** The intent was written before anything was touched and nothing left the browser (the run parked): the row is taken back so it does not block the posting or use a cap slot (A120). Only an `intended` row can be retracted. */
+  retract(seq: number): boolean { return Number(this.db.prepare("DELETE FROM applications WHERE seq = ? AND state = 'intended'").run(seq).changes) > 0; }
   /** The attempt provably did not go through (the site says it was not received): the row stops counting and the posting can be tried again. */
   fail(seq: number, note = "", opts: { minAgeMs?: number } = {}): boolean {
     const row = this.forgettable().find((r) => r.seq === seq);

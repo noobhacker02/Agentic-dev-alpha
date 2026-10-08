@@ -32,7 +32,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 <!-- bench:table:start -->
 | Suite | What it measures | First recorded | Now | Change | Why / how |
 |---|---|---|---|---|---|
-| `adversary-yield` | Confirmed findings in the latest adversary round (tracked, not scored: more can mean a better adversary) | 20 @ 7138e1b | 17 | -3 (not scored) | IMP-018, IMP-031 |
+| `adversary-yield` | Confirmed findings in the latest adversary round (tracked, not scored: more can mean a better adversary) | 20 @ 7138e1b | 14 | -6 (not scored) | IMP-018, IMP-031 |
 | `browser-honesty` | Browser tools: a repeated failure, a query, a scrolling form, a huge page, forged text, a typed secret, a hung page, a popup storm and a bad status line all handled | 0/11 @ ecc83f2 | 11/11 | +11 (better) | IMP-017, IMP-018, IMP-019 |
 | `file-hooks` | File-tool and safety hooks: paths and commands that must be denied, beside the ordinary ones that must not | 65/242 @ f10a830 | 242/242 | +177 (better) | IMP-016, IMP-031 |
 | `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014, IMP-018 |
@@ -55,7 +55,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `2f4b705`, 2026-10-08. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `c653d4d`, 2026-10-08. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes

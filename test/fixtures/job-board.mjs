@@ -24,17 +24,18 @@ export async function startBoard(opts = {}) {
     ${c.banner ? `<p>Thank you for applying to ${job.company} last week. Application received emails come from no-reply.</p>` : ""}
     ${c.sidebar ? `<nav>Platform Engineer</nav>` : ""}<h1>Apply: ${c.wrongjob ? "Janitor at Other Corp" : `${job.title} at ${c.othercompany ? "Globex" : job.company}`}</h1>
     ${c.similar ? `<p>Similar jobs: Platform Engineer, Data Engineer</p>` : ""}
+    ${c.framebtn ? `<iframe src="/jobs/${job.id}/frame-apply" width="600" height="200"></iframe>` : ""}
     ${c.iframe ? `<iframe src="http://localhost:${board.port}/jobs/${job.id}/frame" width="600" height="300"></iframe>` : ""}
     <form id="f" method="post" enctype="multipart/form-data" action="/jobs/${job.id}/apply${qs}">
       <label for="name">Full name *</label><input id="name" name="name" required>
-      <label for="email">Email *</label><input id="email" name="email" type="email" required>
+      <label for="email">Email *</label><input id="email" name="email" type="email" required${c.maxlen ? ' maxlength="5"' : ""}>
       <label for="phone">Phone</label><input id="phone" name="phone">
       <label for="auth">Are you legally authorised to work in this country? *</label>
       <select id="auth" name="auth" required><option value="">Select</option><option>Yes</option><option>No</option></select>
       <label for="spons">Will you now or in the future require visa sponsorship? *</label>
       <select id="spons" name="spons" required><option value="">Select</option><option>Yes</option><option>No</option></select>
       <label for="years">How many years of professional experience do you have? *</label><input id="years" name="years" required>
-      <label for="cv">${c.accentcv ? "Résumé" : "Resume"} *</label><input id="cv" name="cv" type="file" required>
+      <label for="cv">${c.accentcv ? "Résumé" : "Resume"} *</label><input id="cv" name="cv" type="file" required${c.uploadsubmit ? ' onchange="this.form.submit()"' : ""}>
       ${c.twocv ? `<label for="cv2">Additional CV (optional)</label><input id="cv2" name="cv2" type="file">` : ""}
       <label for="cover">Cover letter</label><textarea id="cover" name="cover"></textarea>
       ${c.ssn ? `<label for="ssn">Social Security Number *</label><input id="ssn" name="ssn" required>` : ""}
@@ -58,6 +59,8 @@ export async function startBoard(opts = {}) {
       ${c.captchaform ? `<label><input type="checkbox" id="rc" name="rc"> I'm not a robot</label>` : ""}
       ${c.many60 ? Array.from({ length: 65 }, (_, i) => `<input aria-label="Extra ${i}" name="x${i}">`).join("") : ""}
       ${c.rolebtn ? `<input type="checkbox" checked role="button" aria-disabled="true" aria-label="Share my data with partners" name="share">` : ""}
+      ${c.ariatick ? `<div role="checkbox" aria-checked="true" aria-label="Share my data with partners" tabindex="0"></div><input type="hidden" name="share2" value="yes">` : ""}
+      ${c.numbers ? `<label for="nn">Referral count</label><input id="nn" name="nn" type="number" value="3">` : ""}
       ${c.radiopre ? `<label><input type="radio" name="consent" checked> Share my details with partners</label>` : ""}
       ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (c["honey" + i] ? [
         `<input aria-label="Website" name="hp1" style="position:absolute;clip:rect(0,0,0,0)">`,
@@ -72,6 +75,7 @@ export async function startBoard(opts = {}) {
         `<input aria-label="Website" name="hp10" style="color:transparent;background:transparent;border:0">`,
       ][i - 1] : "")).join("")}
       ${c.huge ? `<p>${"Plain words about the company and its benefits. ".repeat(1400)}</p>` : ""}
+      ${c.alsohiring ? `<aside>Also hiring at Acme: Platform Engineer, Site Reliability Engineer</aside>` : ""}
       ${c.fakebadge ? `<p>Tip: if you have already applied you will see "You have already applied" here.</p>` : ""}
       ${c.late ? `<script>document.getElementById("f").addEventListener("input", () => { if (document.getElementById("late")) return; const d = document.createElement("div"); d.id = "late"; d.innerHTML = '<label for="g2">Gender</label><select id="g2" name="g2"><option value="">Select</option><option selected>Male</option></select><label><input type="checkbox" name="cert2" checked> I certify that all statements are true</label>'; document.getElementById("f").insertBefore(d, document.getElementById("go")); });</script>` : ""}
       ${c.hiddenattest ? `<p>I certify under penalty of perjury that the information above is true.</p><input type="checkbox" checked name="agree" aria-label="Confirm">` : ""}
@@ -83,7 +87,7 @@ export async function startBoard(opts = {}) {
       ${c.decoy ? `<button type="button" id="alerts">Send me job alerts</button>` : ""}
       ${c.twosubmit ? `<button type="button" id="ap2">Apply</button>` : ""}
       ${c.prechecked ? `<label><input type="checkbox" checked name="news"> Subscribe to our newsletter</label>` : ""}
-      <button id="go" type="submit">${c.realcustom ? "Finish" : "Submit application"}</button>
+      <button id="go" type="submit">${c.realcustom || c.framebtn ? "Finish" : "Submit application"}</button>
     </form>
     ${c.decoy ? `<form id="g" method="post" action="/jobs/${job.id}/decoy"><button id="dec">Submit and apply to 50 similar jobs</button></form>` : ""}
     ${c.realcustom ? `<form id="g2" method="post" action="/jobs/${job.id}/decoy"><button id="dec2">Apply</button></form>` : ""}`;
@@ -98,6 +102,8 @@ export async function startBoard(opts = {}) {
       const c = chaosFor(url);
       if (c.ratelimit && url.pathname !== "/") return html(res, 429, "Too Many Requests", "<h1>429</h1><p>Too many requests. Try again later.</p>");
       if (url.pathname === "/" ) return html(res, 200, "Jobs", `<h1>Jobs</h1><ul>${board.jobs.map((j) => `<li><a href="/jobs/${j.id}">${j.title} at ${j.company}</a></li>`).join("")}</ul>`);
+      if (/^\/jobs\/\d+\/frame-apply$/.test(url.pathname)) return html(res, 200, "Embedded", `<form method="post" action="/jobs/1/frame-post"><button>Apply</button></form>`);
+      if (/^\/jobs\/\d+\/frame-post$/.test(url.pathname)) { (board.framePosts ??= []).push(url.pathname); return html(res, 200, "Frame", "<p>ok</p>"); }
       const fr = /^\/jobs\/(\d+)\/(frame|frame-typed|decoy)$/.exec(url.pathname);
       if (fr && fr[2] === "frame") return html(res, 200, "Embedded form", `<label for="fp">Phone *</label><input id="fp" name="fp" required><label for="fe">Email *</label><input id="fe" name="fe" required><script>document.addEventListener("input", () => fetch("/jobs/${fr[1]}/frame-typed"));</script>`);
       if (fr) return html(res, 200, fr[2], "<p>ok</p>");
@@ -108,6 +114,7 @@ export async function startBoard(opts = {}) {
         const mark = body.includes(RESUME_MARK);
         const field = (n) => { const r = new RegExp(`name="${n}"\\r\\n\\r\\n([^\\r]*)`).exec(body.toString("latin1")); return r ? r[1] : ""; };
         (board.applications[job.id] ??= []).push({ resume: mark, email: field("email"), name: field("name"), ref: field("ref"), ssn: field("ssn"), hp: [1,2,3,4,5,6,7,8,9,10].map((i) => field("hp" + i)).join(""), sig: field("sig"), cv2: body.toString("latin1").includes('name="cv2"; filename="') && !body.toString("latin1").includes('name="cv2"; filename=""') });
+        if (c.submit429) return html(res, 429, "Please wait", `<h1>Thanks for your interest</h1><p>${"We are receiving a lot of applications right now and need a little time. ".repeat(8)}</p>`);
         if (c.errorthanks) { res.writeHead(500, { "content-type": "text/html" }); return res.end("<!doctype html><title>Error</title><h1>Something went wrong</h1><p>We could not process your application. Thank you for applying anyway.</p>"); }
         if (c.lost) { res.writeHead(500, { "content-type": "text/html" }); return res.end(`<!doctype html><title>Error</title><h1>500</h1><p>Something went wrong.</p>${c.banner ? `<p>Thank you for applying to ${job.company} last week.</p>` : ""}`); }
         if (c.refused) return html(res, 200, "Application", `<h1>Sorry</h1><p>Your application couldn't be processed. Thank you for applying.</p>`);
@@ -123,6 +130,8 @@ export async function startBoard(opts = {}) {
         if (applied(job.id)) return html(res, 200, "Applied", `<h1>${job.title}</h1><p class="badge">You have already applied</p>`);
         return html(res, 200, `Apply ${c.wrongjob ? "Janitor" : job.title}${c.softwords ? " Req 429" : ""}`, form(job, c, url.search));
       }
+      if (c.polite429) return html(res, 429, job.title, `<h1>${job.title}</h1><p>${job.company}</p><p>${"We are very busy and appreciate your patience while you wait. ".repeat(10)}</p>`);
+      if (c.myapps) return html(res, 200, "My applications", `<h1>My applications</h1><ul><li>Some Other Job at Elsewhere Inc. Application submitted on 2026-01-02</li></ul>`);
       if (c.challenge) return html(res, 200, "Verify", "<h1>Verify you are human</h1><p>Unusual activity detected.</p>");
       return html(res, 200, job.title, `<h1>${job.title}</h1><p>${job.company}</p>${c.ratetext ? `<p>We use rate limiting on our public API.</p>` : ""}${c.fakebadge ? `<p class="badge">You have already applied</p>` : ""}${applied(job.id) && !c.nobadge ? `<p class="badge">You have already applied</p>` : `<a id="apply" href="/jobs/${job.id}/apply">Apply now</a>`}${c.nobadge ? `<p>Similar jobs: <a href="/jobs/2">Apply now</a></p>` : ""}`);
     });

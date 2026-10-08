@@ -51,6 +51,7 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
     if (recent) return fail(`ledger #${row!.seq} is only ${Math.round((Date.now() - row!.at) / 1000)} seconds old and may still be in flight in another run; wait, or add --even-if-recent if you are sure it is not`);
     return closed && row ? { out: `Closed ledger #${row.seq} (${clean(row.company, 60)}, ${clean(row.title, 80)}) as not received. That posting can be applied to again.\n`, err: "", code: 0 } : fail(`no attempt that can be closed has the number ${clean(forget, 20)}; agent-loop apply --verify lists them`);
   }
+  if (resumeSite !== undefined && !resumeSite.trim()) return fail("--resume-site needs the platform name (for example --resume-site linkedin); an empty name would lift every pause");
   if (resumeSite !== undefined) {
     const was = ledger.unpause(resumeSite);
     ledger.close();
@@ -115,7 +116,8 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
   const what = `${clean(company!, 60)}, ${clean(title!, 80)}`;
   switch (r.status) {
     case "submitted": return { out: `Applied: ${what} (ledger #${r.seq}, confirmed by the site).\n`, err: "", code: 0 };
-    case "duplicate": return { out: `Not applied: ${what}. ${clean(r.why)}\n`, err: "", code: 0 };
+    // a posting already applied to is done (0); one whose earlier attempt has no confirmation is not: the user verifies it, like any other "sent, not confirmed" (5) (A124)
+    case "duplicate": return { out: `Not applied: ${what}. ${clean(r.why)}\n`, err: "", code: r.unconfirmed ? 5 : 0 };
     case "capped": return { out: `Not applied yet: ${what}. ${clean(r.why)}${r.waitMs && Number.isFinite(r.waitMs) ? ` (opens in about ${Math.ceil(r.waitMs / 60000)} min)` : ""}.\n`, err: "", code: 6 };
     case "parked": return { out: `Needs you: ${what}. Nothing was sent.\n${r.reasons.map((x) => `  - ${clean(x)}`).join("\n")}${r.scam ? "\nThis posting asks for something a real employer does not ask for before an offer. It may be a scam.\n" : "\n"}`, err: "", code: 3 };
     case "paused-site": return { out: `Site paused: ${what}. ${clean(r.why)}\n`, err: "", code: 4 };

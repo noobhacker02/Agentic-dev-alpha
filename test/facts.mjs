@@ -48,6 +48,11 @@ const bad = (raw, re) => { const r = parseFacts(raw); assert.ok(!r.ok && re.test
   // a question that names a country has no fact: the user's "Yes" is about one country (round 6, A110)
   for (const l of ["Are you legally authorized to work in the United States?", "Are you authorised to work in the UK?", "Will you require sponsorship to work in Canada?"]) assert.strictEqual(q(l).kind, "unknown", l);
   assert.strictEqual(q("Will you now or in the future require sponsorship?").kind, "fact");
+  // A122: a yes/no question that goes on to ask something else is not the stored fact
+  for (const l of ["Are you authorized to work in this country and willing to undergo a background check?", "Are you legally authorized to work in this country and are you over 18?", "Are you authorized to work in this country, and willing to relocate?", "Will you require visa sponsorship? Are you willing to travel?", "Are you eligible to work and do you consent to a drug screening?"])
+    assert.notStrictEqual(q(l).kind, "fact", `${l} -> ${JSON.stringify(q(l))}`);
+  for (const l of ["Are you legally authorized to work in this country?", "Will you now or in the future require visa sponsorship?", "Do you have the right to work in this country?"])
+    assert.strictEqual(q(l).kind, "fact", `control ${l} -> ${JSON.stringify(q(l))}`);
   // invisible and full-width characters do not hide a phrase (A113); other wording of an attestation and other kinds of identity numbers (A97)
   const { attestationIn, forbiddenIn, otherPersonIn } = await import("../dist/facts.js");
   for (const t of ["I c\u00adertify that this is true", "I cer\u200btify this", "ＩＣＥＲＴＩＦＹ ｔｈａｔ", "I confirm that the details are correct", "By submitting I agree that the information is true", "Electronic signature", "Sign here"]) assert.ok(attestationIn(t) || /^ＩＣ/.test(t) ? true : false, t);

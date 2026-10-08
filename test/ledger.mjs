@@ -309,4 +309,46 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   assert.ok(DEFAULT_CAPS.perDay === 30 && DEFAULT_CAPS.perHour === 10);
   console.log("[ok] a posting's key is the site's id, or the normalised company and title; the default caps are 30 a day and 10 an hour");
 }
+
+// 8. Adversary round 7: the address test (A115)
+{
+  const l = fresh(() => now);
+  const J = (id, title, extra = {}) => job(id, { title, company: "Acme", ...extra });
+  const a = l.intend(J("111", "Platform Engineer"), "h", "https://acme.com/careers?gh_jid=111"); assert.ok(a.ok); l.confirm(a.seq);
+  // a different posting behind the same path, told apart by a query parameter, is not a duplicate
+  now += 3 * HOUR;
+  assert.ok(l.mayStart(J("222", "Data Engineer"), "https://acme.com/careers?gh_jid=222").ok, "?gh_jid=222 was taken for ?gh_jid=111");
+  // the same posting with tracking parameters, another order, or a trailing /apply is the same address
+  for (const u of ["https://acme.com/careers?gh_jid=111&utm_source=li", "https://ACME.com/careers/?utm_campaign=x&gh_jid=111", "https://acme.com/careers/apply?gh_jid=111&gh_src=abc"]) {
+    const r = l.mayStart(J("999", "Other Title"), u); assert.ok(!r.ok, `${u} should be the same address: ${JSON.stringify(r)}`);
+    assert.match(r.why, /Acme \/ Platform Engineer/, "the refusal names the row it matched");
+  }
+  // a hash route names the posting too
+  const b = l.intend(J("h1", "Site Reliability Engineer"), "h2", "https://jobs.example.com/#/job/41"); assert.ok(b.ok); l.confirm(b.seq);
+  now += 3 * HOUR;
+  assert.ok(l.mayStart(J("h2", "Backend Engineer"), "https://jobs.example.com/#/job/42").ok, "a hash-routed posting was taken for another");
+  assert.ok(!l.mayStart(J("h3", "Zzz"), "https://jobs.example.com/#/job/41").ok);
+  l.close();
+  console.log("[ok] the address test keeps the query that names a posting (not the tracking ones) and a hash route, and the refusal names the row it matched");
+}
+
+// 9. Adversary round 7 (A124): what `intend` refuses says which kind of refusal it is
+{
+  now = T0;
+  const l = fresh(clock, { ...DEFAULT_CAPS, perHour: 1, minGapMs: 0 });
+  assert.ok(l.intend(job("a1"), "h").ok);
+  const cap = l.intend(job("a2", { title: "Other", company: "Other" }), "h");
+  assert.ok(!cap.ok && /hourly cap/.test(cap.why) && !cap.duplicateOf, `a cap was reported as a duplicate: ${JSON.stringify(cap)}`);
+  const dup = l.intend(job("a1"), "h");
+  assert.ok(!dup.ok && dup.duplicateOf && dup.duplicateOf.state === "intended", `a duplicate lost its row: ${JSON.stringify(dup)}`);
+  // a row that was retracted (the run parked and nothing left) frees the slot and the posting (A120)
+  const r = fresh(clock, { ...DEFAULT_CAPS, perHour: 1, minGapMs: 0 });
+  const i = r.intend(job("b1"), "h"); assert.ok(i.ok);
+  assert.ok(r.retract(i.seq) && r.all().length === 0);
+  assert.ok(r.intend(job("b1"), "h").ok, "a retracted intent still blocked the posting");
+  const c = fresh(clock); const k = c.intend(job("c1"), "h"); c.confirm(k.seq);
+  assert.ok(!c.retract(k.seq) && c.all().length === 1, "a confirmed row was retracted");
+  l.close(); r.close(); c.close();
+  console.log("[ok] intend says whether it refused a duplicate or a cap; a retracted intent frees the posting and the slot; a confirmed row cannot be retracted");
+}
 console.log("\nALL LEDGER TESTS PASSED");
