@@ -147,7 +147,7 @@ when its latest adversary round has no open confirmed finding at medium or above
 | S3 Haiku router, flow registry, `agent-loop do` | not started |
 | S4 watchdog, queue, ledger, governor (V9/G9), minimal Needs-you store and CLI | not started |
 | S5 job-apply flow, fake job board, red team | not started |
-| S5b reel flow | design written (docs/REEL-FLOW.md); not built |
+| S5b reel flow | **stage 1 built, local commit f8f6278, not pushed, full suite not re-run on it**: `agent-loop reel <file|link> [--text f] [--project f]` (IMP-036; suites reel-intake, reel-read, reel-e2e pass alone, mutation-checked). Not built: transcript, OCR, the user's yes into the dev flow, `ideas` list/purge, URL path through LIVE, UI, any real-model run; no adversary round yet |
 | S6 UI, docs, README, media | not started |
 | S6b `agent-loop adversary` and `agent-loop learn` | not started (the loops are run by hand meanwhile) |
 | S7 real-model end to end, pipeline-vs-plain, team-vs-fixed, CI on three systems | not started |
@@ -200,7 +200,7 @@ Not verified:
   nothing in `docs/handoff/compactions/` shows it fired, so treat it as unconfirmed.
 - Art licences (second-hand note only), sound never heard by a person, desktop control only on Linux, no CI for the real-model runs.
 - The pipeline-vs-plain experiment has not been run (authorised by "use what's the problem", still to do in S7).
-- Everything about LIVE mode, the router, the watchdog, the ledger, the job flow, team composition and the reel flow: not built.
+- Everything about LIVE mode, the router, the watchdog, the ledger, the job flow, team composition: see the status table above (the reel flow has only its stage 1; real model and real Instagram never exercised).
 - macOS and Windows: the new decoy tests skip where `127.0.0.2` is not routable; the symlink test skips on Windows; neither platform has run the new tests in CI yet.
 - Real Instagram, real LinkedIn and real ATS sites: never exercised, by rule.
 
