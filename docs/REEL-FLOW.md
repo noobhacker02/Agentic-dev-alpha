@@ -1,6 +1,6 @@
 # Reel flow: send a reel, learn what it is about, build it if it is good
 
-Status: **design, written before code** (stage S5b). Nothing here is built unless a "Built" line says so.
+Status: **design, with stage 1 built** (S5b, IMP-036). Built: steps 1, 3, 4 (code half), 5, 6 and 9 for a video file or pasted text, as `agent-loop reel`; the link is canonicalised and remembered but never opened. **Not built:** the transcript, frame OCR, the user's yes wired to the dev flow (steps 7 and 8), `ideas` list/purge, the URL path through LIVE mode, the UI Send box, any real-model run. Everything else below is still design.
 
 User's request: *"if I send a reel from Instagram, it reads it and then tells me what it's about, and then if it's good enough we implement it."*
 
