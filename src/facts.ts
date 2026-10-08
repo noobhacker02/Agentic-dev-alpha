@@ -47,7 +47,7 @@ export function parseFacts(raw: unknown): ParsedFacts {
       for (const ok of Object.keys(o)) if (ok !== "value" && ok !== "class") errors.push(`${where}: unknown key "${clean(ok, 40)}"`);
       value = o.value; cls = o.class;
     }
-    if (typeof value !== "string" || !value.trim() || value.length > 300 || /[\u0000-\u001f\u007f]/.test(value)) { errors.push(`${where}: the value must be a short text with no control characters`); continue; }
+    if (typeof value !== "string" || !value.trim() || value.length > 300 || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(value)) { errors.push(`${where}: the value must be a short text with no control or direction-changing characters`); continue; }
     if (cls !== undefined && !CLASS_ORDER.includes(cls as FactClass)) { errors.push(`${where}: class must be one of ${CLASS_ORDER.join(", ")}`); continue; }
     out[k] = { value: value.trim(), class: stricter(FACT_KEYS[k], (cls as FactClass | undefined) ?? FACT_KEYS[k]) };
   }
@@ -56,7 +56,8 @@ export function parseFacts(raw: unknown): ParsedFacts {
 
 /** A label as it is compared: lower case, plain ASCII, no required-marker, one space between words. */
 export function normalizeLabel(raw: string): string {
-  return clean(raw, 300).toLowerCase().replace(/[*:]/g, " ").replace(/\(.*?\)/g, " ").replace(/\s+/g, " ").trim();
+  // Parenthesised text is part of the question ("Phone (also enter your date of birth)", adversary round 4 A78), so only the brackets go.
+  return clean(raw, 300).toLowerCase().replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ").trim();
 }
 /** A short stable key for a question (a saved answer is keyed by this, never by the raw text). */
 export const labelHash = (raw: string): string => createHash("sha256").update(normalizeLabel(raw)).digest("hex").slice(0, 12);
@@ -74,21 +75,28 @@ const DEMOGRAPHIC = /\bgender\b|\brace\b|ethnic|veteran|disabilit|sexual orienta
 const ATTESTATION = /certify|attest|declare|i agree|i accept|terms|privacy|consent|acknowledge|under penalty|true and (correct|complete)/;
 const FREETEXT = /why (do you|are you|us|this)|cover letter|tell us|describe|explain|additional information|anything else|motivation/;
 const RULES: Array<[FactKey, RegExp]> = [
-  ["first_name", /^(legal )?(first|given) name$/],
+  // anchored: a question about someone or something else ("Reference email", "Manager's phone", "Current salary") is not the applicant's own fact (adversary round 4 A65)
+  ["first_name", /^(legal |preferred )?(first|given) name$/],
   ["last_name", /^(legal )?(last|family) name$|^surname$/],
   ["full_name", /^(full |legal |your )?name$/],
-  ["email", /e-?mail/],
-  ["phone", /phone|mobile|telephone|contact number/],
-  ["city", /^(current )?(city|location|city, state)$|where are you (based|located)/],
-  ["linkedin", /linkedin/],
-  ["github", /github/],
-  ["website", /website|portfolio|personal (site|page)/],
+  ["email", /^(your |work |personal |contact |primary )?e-?mail( address)?$/],
+  ["phone", /^(your |mobile |cell |contact |primary |daytime )?(phone|telephone|mobile)( number)?$/],
+  ["city", /^(current )?(city|location|city, state)$|^where are you (based|located)$/],
+  ["linkedin", /^(your )?linkedin( profile)?( url| link)?$/],
+  ["github", /^(your )?github( profile)?( url| link)?$/],
+  ["website", /^(your )?(personal )?(website|portfolio|personal site|personal page)( url| link)?$/],
   ["needs_sponsorship", /sponsor/],
   ["work_authorisation", /authori[sz]ed to work|legally (authori[sz]ed|eligible)|right to work|eligible to work|work authori[sz]ation/],
-  ["years_experience", /years of (professional |relevant |total )?experience|how many years/],
-  ["salary_expectation", /salary|compensation|pay expectation/],
-  ["notice_period", /notice period|available to start|start date|when can you start/],
+  ["years_experience", /^(how many )?years of (professional |relevant |total |work )?experience( do you have)?$/],
+  ["salary_expectation", /^(expected|desired|target) (annual |base )?(salary|compensation|pay)$|^salary expectations?$/],
+  ["notice_period", /^notice period$|^(earliest )?(start date|available to start)$|^when can you start$/],
 ];
+
+/** Phrases that, anywhere on an application page, mean the page asks for something forbidden (used on the page's visible text, so it leaves out words that a company name or a job description uses: "bank", "pin", "tin"). */
+const FORBIDDEN_STRICT = /social security|\bssn\b|national insurance number|passport number|date of birth|\bdob\b|birth ?date|account number|routing number|\biban\b|credit card|card number|mother'?s maiden|driver'?s? licen[cs]e number/;
+export const forbiddenIn = (text: string): boolean => FORBIDDEN_STRICT.test(normalizeLabel(text));
+const ATTEST_TEXT = /\bi certify\b|\bi attest\b|\bi declare\b|under penalty of perjury/;
+export const attestationIn = (text: string): boolean => ATTEST_TEXT.test(normalizeLabel(text));
 
 /** What a field's label asks for. The order matters: a forbidden ask is judged before anything that could be filled. */
 export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } = {}): Question {
@@ -96,6 +104,8 @@ export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } 
   if (FORBIDDEN.test(l)) return { kind: "forbidden", reason: "asks for an identity number, a birth date, a bank detail or a password, which a real employer does not need before an offer (a likely scam)" };
   if (DEMOGRAPHIC.test(l)) return { kind: "demographic" };
   if (ATTESTATION.test(l) && (opts.checkbox || /^(i |by )/.test(l))) return { kind: "attestation" };
+  // one question that asks two ("Authorized to work without sponsorship") has no single fact to answer it
+  if (/sponsor/.test(l) && /authori[sz]ed|eligible|right to work/.test(l)) return { kind: "unknown" };
   for (const [key, re] of RULES) if (re.test(l)) return { kind: "fact", key };
   if (ATTESTATION.test(l)) return { kind: "attestation" };
   if (FREETEXT.test(l)) return { kind: "freetext" };
@@ -123,6 +133,8 @@ export function planField(field: FieldInfo, facts: Facts): FieldPlan {
     case "freetext": return field.required ? { action: "park", why: `${shown} needs a written answer and no template is saved for it` } : { action: "skip" };
     case "unknown": return field.required ? { action: "park", why: `${shown} is required and no fact answers it` } : { action: "skip" };
     case "fact": {
+      // a label as long as the longest the page listing shows may have been cut: what follows could change the question
+      if (field.label.length >= 190) return field.required ? { action: "park", why: `${shown} is too long to judge safely` } : { action: "skip" };
       const fact = facts.facts[q.key];
       if (!fact) return field.required ? { action: "park", why: `${shown} is required and your facts have no "${q.key}"` } : { action: "skip" };
       if (fact.class === "post-offer-only" || fact.class === "never-autofill") return { action: "park", why: `${shown} asks for a ${fact.class} fact, which is never filled`, scam: true };

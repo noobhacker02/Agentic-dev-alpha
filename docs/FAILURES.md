@@ -103,6 +103,10 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T24. A mutant survived because a second code path produced the same answer in every case the tests used (the ledger's lookup by the site's id was covered by its lookup by company and title).** Count 1 (IMP-032). Fix: a case where only the first path can answer (the same id, an edited title). Rule: when a mutant survives, ask which other path covered it, then write the case that only the mutated path can answer.
 
+**T25. A slice shipped with the full suite green, and a reviewer found 18 holes in it in 14 minutes: every test had been written by the code's own author, so they covered the cases the author imagined.** Count 1 (IMP-033: 5 high). Rule: an adversary round is part of the slice, not a later stage; it runs before the slice is called done, and its findings become a section of the same tests.
+
+**S16. Flags read from the whole of a line that includes the page's own words (`disabled`, `required` found inside an `id`).** Count 1 (A75). Rule: a parser of mixed trusted and untrusted text reads token by token and skips every quoted value whole; test it with the flag word inside each untrusted field.
+
 ## 2. Platform differences (macOS, Windows, root vs normal user)
 
 **P1. macOS CI: a forbidden directory that does not exist yet and sits under a symlink (`/var`) kept its unresolved prefix, so "the profile would contain this directory" was missed (`test:profile`, e9da57a).** Count 1.
@@ -255,7 +259,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 24, Platform 10, Security 15, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 80 entries** (T1 to T24, P1 to P10, S1 to S15, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 25, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 82 entries** (T1 to T25, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

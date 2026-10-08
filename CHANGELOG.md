@@ -5,6 +5,9 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+- **Round 4 on the job slice: the apply engine fails closed** (adversary round 4, A62 to A79, 5 high; `docs/IMPROVEMENTS.md` IMP-033). A received application was closed as failed and retried, a banner or an error page counted as a confirmation, a late checkbox and select, a flag word inside an `id`, a forbidden ask past 80 characters or in parentheses, the user's e-mail in "Reference email", the wrong button, two processes writing two rows for one posting, non-Latin postings merged, a form in a foreign frame filled. All closed with tests that fail on the previous source; `--verify` never closes a row any more (`--forget` does, by the user's word); a challenge pauses the site for every later process (`--resume-site`).
+
 ### Added
 - **The job agent's first slice: `agent-loop apply`** (`docs/IMPROVEMENTS.md` IMP-032). Applies to one job from your `facts.json`, once: facts have disclosure classes, a ledger keeps an application from going out twice (and blocks a retry of an unconfirmed one until it is verified on the site), caps are counted from the ledger, a challenge or a rate limit pauses the site, and anything it cannot answer (a demographic question, a legal attestation, a written answer, an ask for an identity number or a birth date) parks with nothing sent. Tested against a local fake job board only (`test:facts`, `test:ledger`, `test:job-apply`, `test:apply-cli`); never against a real site.
 

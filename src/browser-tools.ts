@@ -923,7 +923,7 @@ function describeElementInPage(el: any): ElementDescription {
 function formatRefLine(ref: string, d: ElementDescription, frame?: string): string {
   // Role goes in bare, so it's cut to identifier characters; everything else is JSON-quoted, so page
   // text can't close a quote and forge a second "[s1e2] button ..." entry on the same line.
-  const parts = [`[${ref}]`, String(d.role).replace(/[^\w-]/g, "").slice(0, 30) || "generic", JSON.stringify(cleanText(d.name, 80))];
+  const parts = [`[${ref}]`, String(d.role).replace(/[^\w-]/g, "").slice(0, 30) || "generic", JSON.stringify(cleanText(d.name, 200))];
   if (d.id) parts.push(`id=${JSON.stringify(cleanText(d.id, 60))}`);
   if (d.value !== null) parts.push(`value=${JSON.stringify(cleanText(d.value, 80))}`);
   if (d.checked !== null) parts.push(d.checked ? "checked" : "unchecked");

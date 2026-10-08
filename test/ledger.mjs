@@ -142,6 +142,98 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   console.log("[ok] a clock set back, in the same process or across a restart, does not open a second batch");
 }
 
+// 6. A ledger written before the page was remembered still opens, and keeps its rows
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = join(dir, "old.db");
+  const old = new DatabaseSync(path);
+  old.exec(`CREATE TABLE applications (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, site TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL, form_hash TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '');`);
+  old.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at) VALUES ('linkedin:5','linkedin','Old Co','Dev','intended','h',?)").run(T0);
+  old.close();
+  now = T0;
+  const l = new Ledger(path, clock);
+  assert.deepStrictEqual(l.unaccounted().map((r) => [r.key, r.url]), [["linkedin:5", ""]]);
+  const next = l.intend(job("6", { company: "New Co" }), "h", "https://example.test/jobs/6");
+  assert.ok(next.ok);
+  assert.strictEqual(l.all().at(-1).url, "https://example.test/jobs/6");
+  l.close();
+  console.log("[ok] a ledger written before the posting's page was remembered opens with its rows and takes new ones with a page");
+}
+
+// 7. Adversary round 4 (A69 to A73)
+{
+  // A70: postings in any script are told apart, C++ is not C#, and nothing-left text never makes two postings one
+  now = T0;
+  const l = fresh(clock, { ...DEFAULT_CAPS, minGapMs: 0 });
+  assert.ok(l.intend({ site: "wuzzuf", company: "日本株式会社", title: "開発者" }, "h").ok);
+  assert.ok(l.mayStart({ site: "wuzzuf", company: "中国公司", title: "工程师" }).ok, "two postings in Chinese and Japanese were one posting");
+  assert.ok(!l.mayStart({ site: "wuzzuf", company: "日本株式会社", title: "開発者" }).ok, "the same Japanese posting was new");
+  assert.ok(l.intend({ site: "x", company: "Acme", title: "C++ Developer" }, "h").ok);
+  assert.ok(l.mayStart({ site: "x", company: "Acme", title: "C# Developer" }).ok, "C# was taken for C++");
+  assert.ok(l.intend({ site: "x", company: "!!!", title: "???" }, "h").ok);
+  assert.ok(l.mayStart({ site: "x", company: "...", title: "---" }).ok, "two titles made only of punctuation were one");
+  // A71: the platform and the job id are compared without case or edge spaces
+  assert.ok(l.intend({ site: "LinkedIn", jobId: " 555 ", company: "A", title: "B" }, "h").ok);
+  assert.ok(!l.mayStart({ site: "linkedin", jobId: "555", company: "Other", title: "Other" }).ok, "a posting under another spelling of the platform was new");
+  assert.ok(!l.mayStart({ site: " LINKEDIN", jobId: "555\t", company: "Z", title: "Y" }).ok);
+  l.close();
+
+  // A69: four real processes on one ledger file, the same postings: exactly one live row each, and nobody fails with "database is locked"
+  const path = join(dir, "race.db");
+  new Ledger(path, clock).close();
+  const script = `import { Ledger } from ${JSON.stringify(new URL("../dist/ledger.js", import.meta.url).href)};
+    const l = new Ledger(${JSON.stringify(path)}, Date.now, { perDay: 1e6, perHour: 1e6, perSiteDay: 1e6, minGapMs: 0 });
+    let won = 0, err = 0;
+    for (let i = 0; i < 150; i++) { try { if (l.intend({ site: "s", jobId: String(i), company: "C" + i, title: "T" + i }, "h").ok) won++; } catch (e) { err++; } }
+    console.log(JSON.stringify({ won, err })); l.close();`;
+  const { spawn } = await import("node:child_process");
+  const outs = await Promise.all([0, 1, 2, 3].map(() => new Promise((res) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", "--input-type=module", "-e", script]); let o = "", e = ""; p.stdout.on("data", (d) => (o += d)); p.stderr.on("data", (d) => (e += d)); p.on("close", () => res({ o, e })); })));
+  let won = 0;
+  for (const { o, e } of outs) { const r = JSON.parse(o || "{}"); assert.ok(r.won !== undefined, `a process failed: ${e}`); assert.strictEqual(r.err, 0, "a process met an error under contention"); won += r.won; }
+  const check = new Ledger(path, clock);
+  const live = check.all().filter((r) => r.state === "intended");
+  assert.strictEqual(new Set(live.map((r) => r.key)).size, live.length, "two live rows for one posting");
+  assert.strictEqual(live.length, 150, `150 postings, ${live.length} rows`);
+  assert.strictEqual(won, 150, `the four processes won ${won} times in all, not 150`);
+  check.close();
+
+  // A73: one forward jump of the clock does not freeze the ledger, in the process that saw it or in one that opens the file afterwards
+  for (const reopen of [false, true]) {
+    const caps = { perDay: 2, perHour: 2, perSiteDay: 2, minGapMs: 0 };
+    now = T0;
+    let j = fresh(clock, caps);
+    const file = join(dir, `l${n}.db`);
+    now = T0 + 400 * DAY; // the clock leaps ahead for a moment
+    j.confirm(j.intend({ site: "s", company: "J1", title: "T" }, "h").seq);
+    j.confirm(j.intend({ site: "s", company: "J2", title: "T" }, "h").seq);
+    assert.ok(!j.mayStart({ site: "s", company: "J3", title: "T" }).ok);
+    now = T0 + 2 * DAY; // and comes back, a day and more after the real time of the first
+    if (reopen) { j.close(); j = new Ledger(file, clock, caps); }
+    const back = j.mayStart({ site: "s", company: "J3", title: "T" });
+    assert.ok(!back.ok && back.waitMs <= 2 * DAY, `the wait after a clock jump is ${back.waitMs} (${reopen ? "another process" : "same process"})`);
+    now = T0 + 4.5 * DAY;
+    assert.ok(j.mayStart({ site: "s", company: "J3", title: "T" }).ok, `the ledger stayed frozen after a forward jump (${reopen ? "another process" : "same process"})`);
+    j.close();
+  }
+
+  // a cap of 0 is never, with no time to wait; the pause of a site is remembered
+  now = T0;
+  const z = fresh(clock, { perDay: 0, perHour: 5, perSiteDay: 5, minGapMs: 0 });
+  const never = z.mayStart(job("1"));
+  assert.ok(!never.ok && /cap of 0/.test(never.why) && never.waitMs === undefined, JSON.stringify(never));
+  assert.strictEqual(z.paused("LinkedIn"), undefined);
+  z.pause("LinkedIn", "a challenge page");
+  assert.match(z.paused("linkedin ").why, /challenge/);
+  assert.ok(z.unpause("linkedin"));
+  assert.strictEqual(z.paused("linkedin"), undefined);
+  z.close();
+  if (process.platform !== "win32") {
+    const { statSync } = await import("node:fs");
+    assert.strictEqual(statSync(join(dir, `l${n}.db`)).mode & 0o077, 0, "the ledger is readable by others");
+  }
+  console.log("[ok] round 4: other scripts and C++ versus C# are told apart, the platform and id are compared plainly, four real processes cannot write two live rows for one posting, a forward clock jump does not freeze the ledger, a cap of 0 has no wait, a site pause is remembered, the file is private");
+}
+
 // 5. Keys
 {
   assert.strictEqual(jobKey({ site: "linkedin", jobId: "42", company: "A", title: "B" }), "linkedin:42");

@@ -3,11 +3,12 @@
 //   npm run build && npm run test:apply-cli
 import assert from "node:assert";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startBoard, RESUME_MARK } from "./fixtures/job-board.mjs";
+import { Ledger } from "../dist/ledger.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cli = join(root, "dist/cli.js");
@@ -29,6 +30,7 @@ const apply = (id, extra = [], chaos = "") => new Promise((resolve) => {
   const t = setTimeout(() => p.kill("SIGKILL"), 120000);
   p.on("close", (code) => { clearTimeout(t); resolve({ code, out, err }); });
 });
+const raw = (args, env = {}) => new Promise((resolve) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", ...args], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home, ...env } }); let out = "", err = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (err += d)); p.on("close", (code) => resolve({ code, out, err })); });
 const count = (id) => (board.applications[id] ?? []).length;
 
 // 1. The arguments
@@ -61,6 +63,7 @@ const count = (id) => (board.applications[id] ?? []).length;
   r = await apply("2", [], "challenge");
   assert.ok(r.code === 4 && /Site paused/.test(r.out), JSON.stringify(r));
   assert.strictEqual(count("2"), 0);
+  assert.strictEqual((await raw(["--resume-site", "board"])).code, 0); // the user has looked at the site
   r = await apply("3", [], "lost");
   assert.ok(r.code === 5 && /Sent, not confirmed: .*\(ledger #2\)/.test(r.out), JSON.stringify(r));
   assert.strictEqual(count("3"), 1);
@@ -72,6 +75,62 @@ const count = (id) => (board.applications[id] ?? []).length;
   assert.ok(r.code === 0 && /Applied: Globex/.test(r.out), JSON.stringify(r));
   assert.strictEqual(count("2"), 1);
   console.log("[ok] an identity-number ask exits 3 with 'Nothing was sent' and the scam note; a challenge exits 4; a lost answer exits 5 and a new process does not send it again; the clean form is applied");
+}
+
+// 3b. --verify: a new process looks at the site for every attempt that has no confirmation
+{
+  const run = (args) => new Promise((resolve) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", ...args], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home } }); let out = "", err = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (err += d)); p.on("close", (code) => resolve({ code, out, err })); });
+  // an attempt the process died in the middle of: the ledger holds it and the page it was for, the site never saw it
+  const l = new Ledger(join(home, "ledger.db"));
+  const rowsBefore = l.unaccounted().length;
+  assert.strictEqual(rowsBefore, 1, "control: only the lost attempt for the third posting is unaccounted for");
+  assert.ok(l.intend({ site: "board", jobId: "4", company: "Hooli", title: "Backend Engineer" }, "h", `${board.url}/jobs/4`).ok);
+  l.close();
+  const v = await run(["--verify", "--test"]);
+  assert.ok(v.code === 5 && /the site shows it was received \(now confirmed\)/.test(v.out) && /Hooli, Backend Engineer: cannot tell from the site; left unaccounted for.*agent-loop apply --forget \d+/.test(v.out), JSON.stringify(v));
+  assert.strictEqual(count("4"), 0, "verifying sent an application");
+  // the site showing 'Apply now' is no proof: the retry is still refused until the user closes the row
+  const blocked = await apply("4");
+  assert.ok(blocked.code === 0 && /no confirmation: verify it/.test(blocked.out) && count("4") === 0, JSON.stringify(blocked));
+  const seq = /--forget (\d+)/.exec(v.out)[1];
+  const bad = await run(["--forget", "9999"]);
+  assert.ok(bad.code === 1 && /no unaccounted attempt has the number 9999/.test(bad.err), JSON.stringify(bad));
+  const gone = await run(["--forget", seq]);
+  assert.ok(gone.code === 0 && /as not received. That posting can be applied to again/.test(gone.out), JSON.stringify(gone));
+  const none = await run(["--verify", "--test"]);
+  assert.ok(none.code === 0 && /Nothing to verify/.test(none.out), JSON.stringify(none));
+  const again = await apply("4");
+  assert.ok(again.code === 0 && /Applied: Hooli/.test(again.out) && count("4") === 1, JSON.stringify(again));
+  console.log("[ok] --verify looks at the site for every unconfirmed attempt: received -> confirmed, anything else -> left alone with the way to close it; --forget closes one by the user's word and only then can it be tried again; it sends nothing");
+}
+
+// 3c. Round 4 (A72, A74): a paused site stays paused across processes, the flag order does not matter, a cap of 0 has no time, the ledger is private, a home that cannot be made is a message
+{
+  const run = (args, env = {}) => new Promise((resolve) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", ...args], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home, ...env } }); let out = "", err = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (err += d)); p.on("close", (code) => resolve({ code, out, err })); });
+  // --test before the page: the page is still the page
+  const fresh = ["--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "98"];
+  const early = await run(["--test", `${board.url}/jobs/2/apply?chaos=challenge`, ...fresh]);
+  assert.ok(early.code === 4 && /Site paused/.test(early.out), JSON.stringify(early));
+  const before = board.requests.length;
+  const stays = await run([`${board.url}/jobs/2/apply`, "--test", ...fresh]);
+  assert.ok(stays.code === 4 && /--resume-site board/.test(stays.out), JSON.stringify(stays));
+  assert.strictEqual(board.requests.length, before, "a paused site was visited by a new process");
+  const lifted = await run(["--resume-site", "board"]);
+  assert.ok(lifted.code === 0 && /no longer paused/.test(lifted.out), JSON.stringify(lifted));
+  assert.ok(/was not paused/.test((await run(["--resume-site", "board"])).out));
+  // a cap of 0: the person is not told "Infinity"
+  put("caps.json", { minGapSeconds: 0, perDay: 0 });
+  const zero = await run(["--test", `${board.url}/jobs/2/apply`, "--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "99"]);
+  assert.ok(zero.code === 6 && /cap of 0/.test(zero.out) && !/Infinity|NaN/.test(zero.out), JSON.stringify(zero));
+  put("caps.json", { minGapSeconds: 0 });
+  // the ledger is the user's alone
+  if (process.platform !== "win32") assert.strictEqual(statSync(join(home, "ledger.db")).mode & 0o077, 0, "ledger.db is readable by others");
+  // a home that cannot be made is a message, not a stack trace
+  const blocker = join(mkdtempSync(join(tmpdir(), "apply-cli-block-")), "file");
+  writeFileSync(blocker, "x");
+  const nohome = await run(["--verify", "--test"], { AGENT_LOOP_HOME: join(blocker, "inside") });
+  assert.ok(nohome.code === 1 && /cannot be made/.test(nohome.err) && !/at .*\.js:\d+/.test(nohome.err), JSON.stringify(nohome));
+  console.log("[ok] round 4: a challenge pauses the site for every later process until --resume-site; --test may come before the page; a cap of 0 says so without a time; ledger.db is private; an impossible home is a message");
 }
 
 // 4. The user's files are read like the allowances file, and LIVE mode needs one
