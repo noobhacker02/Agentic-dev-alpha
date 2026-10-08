@@ -53,6 +53,12 @@
       "max": 11,
       "commit": "ecc83f2",
       "date": "2026-10-07"
+    },
+    "live-gate": {
+      "value": 0,
+      "max": 156,
+      "commit": "b695f8c",
+      "date": "2026-10-07"
     }
   }
 }

@@ -242,7 +242,7 @@ Everything runs on Linux, macOS and Windows with Node 22.5+. The results below a
 
 | System | What the CI runs | Latest result |
 |---|---|---|
-| **Linux** | All 78 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `4e5bccf` (76 suites; the two added since, `uploads` and `upload-form`, are not read yet) |
+| **Linux** | All 79 suites in `npm test` (`.github/workflows/test.yml`), the shell-driven pipeline edge cases, and the real-driver desktop tests under Xvfb | Green at `4e5bccf` (76 suites; the two added since, `uploads` and `upload-form`, are not read yet) |
 | **macOS** (`macos-latest`) | Each suite on its own (`scripts/run-suites.mjs`, `.github/workflows/cross-platform.yml`) | Green at `4e5bccf` (the job fails if any suite does; its log cannot be fetched from here, so the count is that commit's list of 76). Two suites added since; their CI is not read yet |
 | **Windows** (`windows-latest`) | The same | Green at `4e5bccf` (same). It was red at `e9da57a` (`test:login`: a Ctrl-C during the window's opening was lost; fixed) and at `a035a87` (`test:team-run-cli`, an absolute `--import` path, now scanned for by `test:windows-imports`; and `test:ui-plain`, cause not established, not seen again at `b695f8c`, `58aaba4`, `bbdb587` or `4e5bccf`) |
 
@@ -406,7 +406,7 @@ controls and limitations: [`docs/DESKTOP-AGENT.md`](docs/DESKTOP-AGENT.md).
 
 ```bash
 npm run build
-npm test                          # all 78 suites, none of which calls a model (what CI runs)
+npm test                          # all 79 suites, none of which calls a model (what CI runs)
 node scripts/run-suites.mjs       # each suite on its own, with a timeout, and a list of which passed (works on Windows and macOS)
 ```
 

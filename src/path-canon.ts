@@ -85,3 +85,33 @@ export function expandBraces(pattern: string, limit = 64): string[] {
   walk(pattern);
   return out;
 }
+
+/**
+ * Filenames/paths that name a credential store or secret regardless of which project they show up
+ * in. A stress test found `Read` auto-approved as a blanket "read-only tool" even when its target
+ * was `~/.claude/.credentials.json` or `~/.ssh/id_rsa` — being outside `--dir` now also catches
+ * those two specifically (`createPathScopeHook`), but a task whose own `--dir` happens to contain
+ * a `.env` or `.git-credentials` (an ordinary thing for a real project to have) would still sail
+ * through on tool-name auto-approval alone. This checks the path itself, so it holds either way —
+ * a `deny` from any hook wins regardless of what the approval hook auto-approves by tool name.
+ */
+export const SENSITIVE_PATH_RE = new RegExp(
+  String.raw`(^|[/\\])(` +
+    [
+      String.raw`\.ssh[/\\](id_rsa|id_ed25519|id_dsa|id_ecdsa)(\.pub)?`,
+      String.raw`\.aws[/\\]credentials`,
+      String.raw`\.netrc|\.git-credentials|\.npmrc|\.pypirc|\.pgpass|\.my\.cnf|\.boto|\.s3cfg`,
+      String.raw`\.claude[/\\]\.credentials\.json|credentials\.json`,
+      // .env and its variants (.env.local, .env.production); the files meant to be committed as templates are not secrets
+      String.raw`\.env(\.(?!(example|sample|template|dist|defaults?)$)[^/\\]+)?`,
+      String.raw`\.docker[/\\]config\.json|\.kube[/\\]config|\.gnupg([/\\].*)?`,
+      String.raw`id_(rsa|ed25519|dsa|ecdsa)|[^/\\]+\.(pem|key|p12|pfx)|secrets?\.(ya?ml|json|toml)`,
+      // agent-loop's own home (the login profile, the audit database, a roster): nothing an agent should read, and a roster an agent writes is the threat G10
+      String.raw`\.agent-loop([/\\].*)?`,
+      // .git holds the config and attributes that make an auto-approved `git status` or `git diff` run a program (core.fsmonitor, a diff driver), and remotes with tokens in them
+      String.raw`\.git([/\\].*)?`,
+    ].join("|") +
+    String.raw`)$`,
+  "i"
+);
+export const SENSITIVE_ABS_RE = /^\/etc\/(shadow|passwd|sudoers)$/i;

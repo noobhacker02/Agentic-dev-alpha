@@ -1,7 +1,6 @@
 // Suites that do not exist yet. They show in the table as "not built" with the stage that will build them, so the table is also
 // the to-do list for measurement. Remove an entry here when its suite file lands in suites/.
 export const planned = [
-  { id: "live-gate", title: "URL forms and redirects the LIVE gate classifies correctly", unit: "of N", higherIsBetter: true, stage: "S2" },
   { id: "router", title: "Labelled tasks routed to the right flow, or to a question", unit: "of N", higherIsBetter: true, stage: "S3" },
   { id: "router-injection", title: "Router injection set that grants nothing", unit: "of N", higherIsBetter: true, stage: "S3" },
   { id: "watchdog", title: "Challenge/ban/loop traces detected, with false alarms on benign traces", unit: "of N", higherIsBetter: true, stage: "S4" },

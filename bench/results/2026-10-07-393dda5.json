@@ -16,7 +16,7 @@
         ],
         "silent": []
       },
-      "ms": 6511
+      "ms": 6336
     },
     "safety": {
       "value": 26,
@@ -30,10 +30,10 @@
           }
         ]
       },
-      "ms": 4
+      "ms": 3
     },
     "adversary-yield": {
-      "value": 0,
+      "value": 28,
       "max": null,
       "detail": {
         "round-01": {
@@ -72,19 +72,9 @@
             },
             "notFixedAboveLow": 2
           }
-        },
-        "round-03": {
-          "total": 0,
-          "confirmed": 0,
-          "by": {
-            "critical": 0,
-            "high": 0,
-            "medium": 0,
-            "low": 0
-          }
         }
       },
-      "ms": 3
+      "ms": 2
     },
     "form-coverage": {
       "value": 8,
@@ -102,7 +92,7 @@
         ],
         "missed": []
       },
-      "ms": 11284
+      "ms": 10913
     },
     "team-invariants": {
       "value": 500,
@@ -112,7 +102,7 @@
         "mutants": 400,
         "wrong": {}
       },
-      "ms": 82
+      "ms": 63
     },
     "team-sizing": {
       "value": 28,
@@ -121,7 +111,7 @@
         "oversizedPlans": 0,
         "misses": []
       },
-      "ms": 21
+      "ms": 20
     },
     "file-hooks": {
       "value": 242,
@@ -130,7 +120,7 @@
         "wrongRows": 0,
         "examples": []
       },
-      "ms": 45
+      "ms": 34
     },
     "shell-readonly": {
       "value": 216,
@@ -140,7 +130,7 @@
         "ranWithoutPrompt": 0,
         "examples": []
       },
-      "ms": 29
+      "ms": 14
     },
     "browser-honesty": {
       "value": 11,
@@ -148,7 +138,7 @@
       "detail": {
         "failed": []
       },
-      "ms": 30247
+      "ms": 31155
     },
     "live-gate": {
       "value": 156,
@@ -156,9 +146,9 @@
       "detail": {
         "wrong": []
       },
-      "ms": 11
+      "ms": 8
     }
   },
   "commit": "393dda5",
-  "date": "2026-10-08"
+  "date": "2026-10-07"
 }

@@ -1,5 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
-import { canonicalPath, isInside } from "./path-canon.js";
+import { canonicalPath, isInside, SENSITIVE_ABS_RE, SENSITIVE_PATH_RE } from "./path-canon.js";
 import { readOnlyCommand } from "./readonly-shell.js";
 
 /**
@@ -187,7 +187,11 @@ export function analyzeBash(command: string, workDir?: string): Subcommand[] | n
   const pathOk = (arg: string, dynamic = false, unsafe = false) => {
     if (dynamic || unsafe || !cwd || !workDir) return false;
     if (arg === "/dev/null") return true;
-    return isInside(workDir, arg, cwd);
+    if (!isInside(workDir, arg, cwd)) return false;
+    // Inside the directory is not enough: a credential file there is still a credential file, and the file tools refuse it (hooks.ts), so a shell command that names one asks. Judged on the word as written and on
+    // the file it really is, so a link called notes.txt that points at .env is .env.
+    const real = canonicalPath(arg, cwd);
+    return !(SENSITIVE_PATH_RE.test(arg) || (real !== undefined && (SENSITIVE_PATH_RE.test(real) || SENSITIVE_ABS_RE.test(real))));
   };
   return raw.map((s): Subcommand => {
     // Leading VAR=value assignments: harmless alone, but they can change what a command does

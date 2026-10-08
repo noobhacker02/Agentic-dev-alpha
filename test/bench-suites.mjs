@@ -9,6 +9,7 @@ import { generate, scoreWith } from "../bench/suites/team-invariants.mjs";
 import { scoreSizing, TASKS as SIZING_TASKS } from "../bench/suites/team-sizing.mjs";
 import { AUTO as SHELL_AUTO, ASK as SHELL_ASK, scoreShell } from "../bench/suites/shell-readonly.mjs";
 import { scoreHooks, setupHooks, SAFETY_DENY, SAFETY_ALLOW } from "../bench/suites/file-hooks.mjs";
+import { scoreWith as scoreGate, rows as gateRows } from "../bench/suites/live-gate.mjs";
 import { JUDGES as HONESTY, CHECKS as HONESTY_CHECKS, SECRET as HONESTY_SECRET, MARKER as HONESTY_MARKER } from "../bench/suites/browser-honesty.mjs";
 import { validatePlan } from "../dist/team/plan.js";
 import { BUILTIN_ROSTER } from "../dist/team/roster.js";
@@ -232,4 +233,30 @@ console.log(`[ok] bench scorers: ${ids.length} checks miss on silence and hit on
     assert.ok((src.match(/import\(process\.env\.HONESTY_ROOT_URL \+ "dist\//g) ?? []).length === 5 && /pathToFileURL\(root\)\.href \+ "\/"/.test(src), "the children no longer import by file URL");
   }
   console.log(`[ok] bench scorers (browser-honesty): ${HONESTY_CHECKS.length} judges accept their real report and reject silence, the page's own words, a half answer and a process that did not come back; lenient and words-only judges are caught`);
+
+// live-gate: a gate that allows everything, one that refuses everything, one that only reads the start of a name and one that only reads the end each score low; the real build scores full marks
+{
+  const rowsAll = gateRows();
+  const yes = rowsAll.filter((r) => r[2]).length, no = rowsAll.length - yes;
+  assert.ok(yes >= 40 && no >= 70, `the rows are lopsided: ${yes} allowed, ${no} refused`);
+  const kinds = new Set(rowsAll.map((r) => r[0]));
+  assert.deepStrictEqual([...kinds].sort(), ["landing", "open", "public", "request", "site", "socket"]);
+  for (const k of kinds) assert.ok(rowsAll.some((r) => r[0] === k && r[2]) && rowsAll.some((r) => r[0] === k && !r[2]), `${k} has rows for one side only`);
+  const stand = (answer) => ({ open: () => answer, request: () => answer, socket: () => answer, landing: () => answer, isPublic: () => answer, site: () => answer });
+  const allowAll = scoreGate(stand(true)), refuseAll = scoreGate(stand(false));
+  assert.strictEqual(allowAll.value, yes, "allow-everything should score exactly the allowed rows");
+  assert.strictEqual(refuseAll.value, no, "refuse-everything should score exactly the refused rows");
+  assert.ok(allowAll.value / allowAll.max < 0.45 && refuseAll.value / refuseAll.max < 0.7, `an extreme gate scores too well: ${allowAll.value}, ${refuseAll.value} of ${allowAll.max}`);
+  // a gate that judges a name by its start, or by its end, or by "contains the listed name", is caught by the look-alike rows
+  const startsWith = { ...stand(false), open: (u) => /^https?:\/\/([a-z0-9.-]*\.)?(linkedin\.com|boards\.greenhouse\.io|example\.org)/i.test(u), landing: (u) => /^(about:|chrome-error:|data:|$)|^https:\/\/www\.linkedin\.com/.test(u) };
+  const contains = { ...stand(false), open: (u) => /linkedin\.com|greenhouse\.io|example\.org/.test(u) };
+  for (const [name, impl] of [["starts with", startsWith], ["contains", contains]]) {
+    const r = scoreGate(impl);
+    assert.ok(r.wrong.some((w) => /linkedin\.com\.evil\.com|evil\.com\/linkedin|linkedin\.com@evil/.test(w)), `a gate that ${name} a listed name was not caught by the look-alike rows`);
+  }
+  // an implementation that throws is wrong on that row, never right
+  const thrower = { ...stand(true), open: () => { throw new Error("x"); } };
+  assert.ok(scoreGate(thrower).wrong.some((w) => w.includes("threw")), "a throwing gate was not counted wrong");
+  console.log(`[ok] bench scorers (live-gate): ${rowsAll.length} rows (${yes} allowed, ${no} refused, six kinds, both sides each); allow-everything scores ${allowAll.value}, refuse-everything ${refuseAll.value}, look-alike gates are caught, a throw is wrong`);
+}
 }
