@@ -4,7 +4,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAllowances } from "./allowances.js";
+import { loadAllowances, platformOf } from "./allowances.js";
 import { BrowserSessionManager, browserToolHandlers } from "./browser-tools.js";
 import { liveBrowserPolicy, testPolicy } from "./browser-policy.js";
 import { EventBus } from "./bus.js";
@@ -30,7 +30,8 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
   const verify = flag("verify");
   const forget = str("forget"), resumeSite = str("resume-site");
   const applyUrl = positional[0];
-  const site = str("site"), company = str("company"), title = str("title");
+  let site = str("site");
+  const company = str("company"), title = str("title");
   const maintenance = verify || forget !== undefined || resumeSite !== undefined;
   if (!maintenance && (!applyUrl || !site || !company || !title)) return fail('agent-loop apply needs the application page and what it is for: agent-loop apply <application page> --site <platform> --company "<company>" --title "<job title>" [--job-id <id>] [--job-url <posting page>] [--resume <name>] [--test]   (or: agent-loop apply --verify | --forget <ledger number> | --resume-site <platform>)');
   const home = agentLoopHome();
@@ -43,9 +44,12 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
   if (forget !== undefined) {
     const n = Number(forget);
     const row = Number.isInteger(n) && n > 0 ? ledger.forgettable().find((r) => r.seq === n) : undefined;
-    if (row) ledger.fail(row.seq, "closed by the user: not received");
+    // an attempt only seconds old may still be in flight in another process: closing it would let a second application go out (round 6, A107)
+    const recent = row && args["even-if-recent"] !== true && Date.now() - row.at < 120_000;
+    const closed = row && !recent ? ledger.fail(row.seq, "closed by the user: not received") : false;
     ledger.close();
-    return row ? { out: `Closed ledger #${row.seq} (${clean(row.company, 60)}, ${clean(row.title, 80)}) as not received. That posting can be applied to again.\n`, err: "", code: 0 } : fail(`no attempt that can be closed has the number ${clean(forget, 20)}; agent-loop apply --verify lists them`);
+    if (recent) return fail(`ledger #${row!.seq} is only ${Math.round((Date.now() - row!.at) / 1000)} seconds old and may still be in flight in another run; wait, or add --even-if-recent if you are sure it is not`);
+    return closed && row ? { out: `Closed ledger #${row.seq} (${clean(row.company, 60)}, ${clean(row.title, 80)}) as not received. That posting can be applied to again.\n`, err: "", code: 0 } : fail(`no attempt that can be closed has the number ${clean(forget, 20)}; agent-loop apply --verify lists them`);
   }
   if (resumeSite !== undefined) {
     const was = ledger.unpause(resumeSite);
@@ -63,6 +67,12 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
     if (!allow.ok) return fail(allow.errors.join("\n"));
     if (allow.source === "none") return fail(`there is no allowances file yet (${clean(allow.path)}); without it LIVE mode opens nothing. Use --test against a local board, or create the file (see agent-loop login).`);
     policy = liveBrowserPolicy(allow.value, {});
+    // the platform is the page's, not the label the user typed: the same address under another label would be a fresh quota and a fresh pause (round 6, A106)
+    let derived: string | undefined;
+    try { derived = platformOf(allow.value, new URL(applyUrl!).hostname); } catch { /* not an address */ }
+    if (!derived) return fail(`${clean(applyUrl ?? "", 120)} is not on your allowances list, so nothing is opened`);
+    if (site && site.trim().toLowerCase() !== derived.toLowerCase()) return fail(`that address belongs to the platform "${clean(derived, 40)}" in your allowances file, not "${clean(site, 40)}"`);
+    site = derived;
   }
   /** A browser session for one platform (its own agent-only profile in LIVE mode), the tools it offers, and the way to close it. */
   const open = (forSite: string) => {

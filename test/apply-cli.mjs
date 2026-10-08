@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startBoard, RESUME_MARK } from "./fixtures/job-board.mjs";
-import { Ledger } from "../dist/ledger.js";
+import { Ledger, DEFAULT_CAPS } from "../dist/ledger.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cli = join(root, "dist/cli.js");
@@ -81,7 +81,7 @@ const count = (id) => (board.applications[id] ?? []).length;
 {
   const run = (args) => new Promise((resolve) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", ...args], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home } }); let out = "", err = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (err += d)); p.on("close", (code) => resolve({ code, out, err })); });
   // an attempt the process died in the middle of: the ledger holds it and the page it was for, the site never saw it
-  const l = new Ledger(join(home, "ledger.db"));
+  const l = new Ledger(join(home, "ledger.db"), Date.now, { ...DEFAULT_CAPS, minGapMs: 0 });
   const rowsBefore = l.unaccounted().length;
   assert.strictEqual(rowsBefore, 1, "control: only the lost attempt for the third posting is unaccounted for");
   assert.ok(l.intend({ site: "board", jobId: "4", company: "Hooli", title: "Backend Engineer" }, "h", `${board.url}/jobs/4`).ok);
@@ -94,8 +94,10 @@ const count = (id) => (board.applications[id] ?? []).length;
   assert.ok(blocked.code === 0 && /no confirmation: verify it/.test(blocked.out) && count("4") === 0, JSON.stringify(blocked));
   const seq = /--forget (\d+)/.exec(v.out)[1];
   const bad = await run(["--forget", "9999"]);
-  assert.ok(bad.code === 1 && /no unaccounted attempt has the number 9999/.test(bad.err), JSON.stringify(bad));
-  const gone = await run(["--forget", seq]);
+  assert.ok(bad.code === 1 && /no attempt that can be closed has the number 9999/.test(bad.err), JSON.stringify(bad));
+  const tooSoon = await run(["--forget", seq]);
+  assert.ok(tooSoon.code === 1 && /only \d+ seconds old and may still be in flight/.test(tooSoon.err), JSON.stringify(tooSoon));
+  const gone = await run(["--forget", seq, "--even-if-recent"]);
   assert.ok(gone.code === 0 && /as not received. That posting can be applied to again/.test(gone.out), JSON.stringify(gone));
   const none = await run(["--verify", "--test"]);
   assert.ok(none.code === 0 && /Nothing to verify/.test(none.out), JSON.stringify(none));
@@ -109,10 +111,10 @@ const count = (id) => (board.applications[id] ?? []).length;
   const run = (args, env = {}) => new Promise((resolve) => { const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", ...args], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home, ...env } }); let out = "", err = ""; p.stdout.on("data", (d) => (out += d)); p.stderr.on("data", (d) => (err += d)); p.on("close", (code) => resolve({ code, out, err })); });
   // --test before the page: the page is still the page
   const fresh = ["--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "98"];
-  const early = await run(["--test", `${board.url}/jobs/2/apply?chaos=challenge`, ...fresh]);
+  const early = await run(["--test", `${board.url}/jobs/7/apply?chaos=challenge`, ...fresh]);
   assert.ok(early.code === 4 && /Site paused/.test(early.out), JSON.stringify(early));
   const before = board.requests.length;
-  const stays = await run([`${board.url}/jobs/2/apply`, "--test", ...fresh]);
+  const stays = await run([`${board.url}/jobs/7/apply`, "--test", ...fresh]);
   assert.ok(stays.code === 4 && /--resume-site board/.test(stays.out), JSON.stringify(stays));
   assert.strictEqual(board.requests.length, before, "a paused site was visited by a new process");
   const lifted = await run(["--resume-site", "board"]);
@@ -120,7 +122,7 @@ const count = (id) => (board.applications[id] ?? []).length;
   assert.ok(/was not paused/.test((await run(["--resume-site", "board"])).out));
   // a cap of 0: the person is not told "Infinity"
   put("caps.json", { minGapSeconds: 0, perDay: 0 });
-  const zero = await run(["--test", `${board.url}/jobs/2/apply`, "--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "99"]);
+  const zero = await run(["--test", `${board.url}/jobs/7/apply`, "--site", "board", "--company", "Zed", "--title", "Janitor", "--job-id", "99"]);
   assert.ok(zero.code === 6 && /cap of 0/.test(zero.out) && !/Infinity|NaN/.test(zero.out), JSON.stringify(zero));
   put("caps.json", { minGapSeconds: 0 });
   // the ledger is the user's alone
@@ -131,6 +133,29 @@ const count = (id) => (board.applications[id] ?? []).length;
   const nohome = await run(["--verify", "--test"], { AGENT_LOOP_HOME: join(blocker, "inside") });
   assert.ok(nohome.code === 1 && /cannot be made/.test(nohome.err) && !/at .*\.js:\d+/.test(nohome.err), JSON.stringify(nohome));
   console.log("[ok] round 4: a challenge pauses the site for every later process until --resume-site; --test may come before the page; a cap of 0 says so without a time; ledger.db is private; an impossible home is a message");
+}
+
+// 3d. Round 6 (A105): four runs started at once on one ledger with an hourly cap of 2 send two applications, not four
+{
+  const home2 = mkdtempSync(join(tmpdir(), "apply-cli-home2-"));
+  chmodSync(home2, 0o700);
+  const put2 = (name, obj) => writeFileSync(join(home2, name), JSON.stringify(obj), { mode: 0o600 });
+  put2("uploads.json", { files: { resume: resumePath } });
+  put2("facts.json", { facts: { full_name: "Ada Lovelace", email: "ada@example.com", work_authorisation: "Yes", needs_sponsorship: "No", years_experience: "7" } });
+  put2("caps.json", { perHour: 2, minGapSeconds: 0 });
+  const board2 = await startBoard();
+  const one = (id) => new Promise((resolve) => {
+    const j = board2.jobs.find((x) => x.id === id);
+    const p = spawn(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "apply", `${board2.url}/jobs/${id}/apply`, "--test", "--site", "board", "--company", j.company, "--title", j.title, "--job-id", id], { cwd: root, env: { ...process.env, AGENT_LOOP_HOME: home2 } });
+    let out = ""; p.stdout.on("data", (d) => (out += d)); p.on("close", (code) => resolve({ code, out }));
+  });
+  const results = await Promise.all(["1", "2", "3", "4"].map(one));
+  const accepted = ["1", "2", "3", "4"].filter((id) => (board2.applications[id] ?? []).length > 0).length;
+  assert.ok(accepted <= 2, `four parallel runs with an hourly cap of 2 sent ${accepted}: ${JSON.stringify(results.map((r) => r.code))}`);
+  assert.ok(accepted >= 1, `control: nothing was sent: ${JSON.stringify(results)}`);
+  assert.ok(results.some((r) => r.code === 6 || /cap/.test(r.out)), `nobody was told about the cap: ${JSON.stringify(results)}`);
+  await board2.close();
+  console.log("[ok] four runs started at once on one ledger with an hourly cap of 2: the board accepted at most 2, the others were told the cap is reached");
 }
 
 // 4. The user's files are read like the allowances file, and LIVE mode needs one

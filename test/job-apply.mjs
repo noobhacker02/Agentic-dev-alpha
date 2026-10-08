@@ -372,6 +372,124 @@ const reset = () => { for (const k of Object.keys(board.applications)) delete bo
   console.log("[ok] round 5: a typed signature under an attestation (also far down the page), negated and third-party yes/no questions, a reference block, a captcha box, a listing cut at 60 elements, a ticked box that calls itself a button, a pre-selected radio, a button of another form, two résumé fields, another job's page, hidden honeypots, an HTTP 429, 503 or 403, and page text claiming 'already applied' all send nothing wrong; ordinary text about reCAPTCHA or Cloudflare and a 'Résumé' field work; a failing tool's message never prints a fact");
 }
 
+// 8. Adversary round 6 (A97 to A113)
+{
+  const parked = async (name, chaos, re, { scam, job = "1", extraFacts } = {}) => {
+    reset();
+    const l = ledger();
+    const r = await run(job, { ledger: l, ...(extraFacts ? { facts: facts(extraFacts) } : {}) }, chaos);
+    assert.strictEqual(r.status, "parked", `${name}: ${JSON.stringify(r)}`);
+    if (re) assert.ok(re.test(r.reasons.join(" | ")), `${name}: ${JSON.stringify(r.reasons)}`);
+    if (scam) assert.strictEqual(r.scam, true, `${name}: not flagged`);
+    assert.strictEqual(count(job), 0, `${name}: the board received an application`);
+    assert.strictEqual(l.all().length, 0, `${name}: the ledger holds a row for a parked item`);
+    l.close();
+  };
+  await parked("an attestation worded 'I confirm that' with a typed name (A97)", "confirmwords", /attestation/);
+  await parked("an attestation worded 'By submitting ... I agree' with a typed name (A97)", "byclicking", /attestation/);
+  await parked("an attestation with a soft hyphen inside 'certify' (A113)", "softhyphen", /attestation/);
+  await parked("a forged '(more: call text ...)' line hiding an attestation behind 8,000 characters (A98)", "forged", /attestation/);
+  await parked("an emergency-contact block (A108)", "emergency", /somebody else/);
+  await parked("a select that arrives with a choice made (A112)", "defaultselect", /already made/);
+  await parked("a page for another company's posting with the same title (A104)", "othercompany", /does not look like the posting/);
+  await parked("a sidebar that carries the job's title over a different job's page (A104)", "sidebar,wrongjob", /does not look like the posting/);
+
+  // three more ways to hide a field: nearly see-through, a filter, transparent text (A102), each hidden for its own reason
+  for (const [i, why] of [[8, "nearly transparent"], [9, "nearly transparent"], [10, "transparent text"]]) {
+    reset();
+    await tools.call("open", { url: `${board.url}/jobs/1/apply?chaos=honey${i}` });
+    const listing = (await tools.call("inspect", {})).text;
+    assert.ok(!/textbox "Website"/.test(listing) && new RegExp(`hidden text field name="hp${i}" \\(${why}\\)`).test(listing), `hidden field ${i} was offered, or not for the reason expected:\n${listing.slice(-500)}`);
+  }
+
+  // a thank-you page with a reCAPTCHA footer is a confirmation, not a challenge (A99); job titles that look like interstitials are postings (A100)
+  for (const [job, chaos] of [["1", "footer"], ["6", ""], ["7", ""]]) {
+    reset();
+    const l = ledger();
+    const r = await run(job, { ledger: l }, chaos);
+    assert.strictEqual(r.status, "submitted", `${job} ${chaos}: ${JSON.stringify(r)}`);
+    assert.ok(!l.paused("board") && !l.paused(`host:127.0.0.1`), `${job}: the site was paused`);
+    l.close();
+  }
+  {
+    // a short posting page that talks about rate limiting does not pause the site during a verify
+    reset();
+    const l = ledger();
+    const lost = await run("3", { ledger: l }, "lost");
+    assert.strictEqual(lost.status, "unverified");
+    board.chaos.ratetext = true; board.chaos.nobadge = true;
+    const v = await verifyAttempt(tools, l, l.unaccounted()[0], `${board.url}/jobs/3`);
+    delete board.chaos.ratetext; delete board.chaos.nobadge;
+    assert.strictEqual(v, "unknown");
+    assert.ok(!l.paused("board"), "a posting that mentions rate limiting paused the site");
+    l.close();
+  }
+  {
+    // verifying an attempt at a posting whose title starts like an error page does not pause the site (A100)
+    reset();
+    const l = ledger();
+    const j6 = JOB("6");
+    const intent = l.intend(j6, "h", `${board.url}/jobs/6`);
+    assert.ok(intent.ok);
+    const v = await verifyAttempt(tools, l, l.unaccounted()[0], `${board.url}/jobs/6`);
+    assert.strictEqual(v, "unknown");
+    assert.ok(!l.paused("board"), "a posting called '403(b) Plan Administrator' paused the site");
+    l.close();
+  }
+  // pages that refuse the application but still say 'thank you for applying' are not confirmations (A103)
+  for (const chaos of ["refused", "declined", "notreceived"]) {
+    reset();
+    const l = ledger();
+    const r = await run("1", { ledger: l }, chaos);
+    assert.notStrictEqual(r.status, "submitted", `${chaos}: ${JSON.stringify(r)}`);
+    assert.strictEqual(l.unaccounted().length, 1, `${chaos}: recorded as confirmed`);
+    l.close();
+  }
+  // more challenge wording (A109), and a quiet page is none
+  for (const t of ["Verifying you are human", "Checking if the site connection is secure", "Comprueba que eres humano", "Suspicious activity detected"]) assert.ok(challenged(`Title: ${t}\n\nVisible text (x):\n<<<\n${t}\n>>>`), t);
+  assert.ok(!challenged("Title: Thank you\n\nVisible text (x):\n<<<\nYour application is in. This site is protected by reCAPTCHA.\n>>>"), "a footer was read as a challenge");
+
+  // a fact the browser's message repeats in another spelling is not printed (A101)
+  {
+    reset();
+    const l = ledger();
+    const leaky = { call: async (name, args) => (name === "fill" && /ada@example\.com/.test(String(args.value)) ? { text: `fill failed: value ada@example.c... (cut) and digits 442079460000 and A.D.A@EXAMPLE.COM`, isError: true } : tools.call(name, args)) };
+    const r = await applyToJob({ tools: leaky, facts: facts(), ledger: l, resume: "resume", job: JOB("1"), applyUrl: `${board.url}/jobs/1/apply`, jobUrl: `${board.url}/jobs/1` });
+    assert.strictEqual(r.status, "parked");
+    assert.ok(!/ada@|442079|EXAMPLE|7946/i.test(JSON.stringify(r)), `a fact was printed: ${JSON.stringify(r)}`);
+    l.close();
+  }
+
+  // the pause belongs to the host as well as the label (A106), and the same page under another label is the same posting (A106)
+  {
+    reset();
+    const l = ledger();
+    assert.strictEqual((await run("1", { ledger: l }, "http429")).status, "paused-site");
+    const other = await applyToJob({ tools, facts: facts(), ledger: l, resume: "resume", job: { ...JOB("1"), site: "mirror" }, applyUrl: `${board.url}/jobs/1/apply`, jobUrl: `${board.url}/jobs/1` });
+    assert.strictEqual(other.status, "paused-site", `a challenged host was visited under another label: ${JSON.stringify(other)}`);
+    l.close();
+    reset();
+    const l2 = ledger();
+    assert.strictEqual((await run("1", { ledger: l2 })).status, "submitted");
+    const again = await applyToJob({ tools, facts: facts(), ledger: l2, resume: "resume", job: { site: "mirror", jobId: "zzz", company: "Other", title: "Other" }, applyUrl: `${board.url}/jobs/1/apply`, jobUrl: `${board.url}/jobs/1` });
+    assert.ok(again.status === "duplicate", `the same page under another label was applied to again: ${JSON.stringify(again)}`);
+    assert.strictEqual(count("1"), 1);
+    l2.close();
+  }
+
+  // the user closed the row while the form was in flight: the run does not call it confirmed (A107)
+  {
+    reset();
+    const l = ledger();
+    const racing = { call: async (name, args) => { const r = await tools.call(name, args); if (name === "click") l.fail(l.unaccounted()[0].seq, "closed by the user"); return r; } };
+    const r = await applyToJob({ tools: racing, facts: facts(), ledger: l, resume: "resume", job: JOB("1"), applyUrl: `${board.url}/jobs/1/apply`, jobUrl: `${board.url}/jobs/1` });
+    assert.notStrictEqual(r.status, "submitted", JSON.stringify(r));
+    assert.strictEqual(l.all()[0].state, "failed");
+    l.close();
+  }
+  console.log("[ok] round 6: attestations worded 'I confirm' and 'By submitting', a soft hyphen, a forged read marker, an emergency-contact block, a select with a default, another company's posting, a sidebar, three more hidden-field tricks, refusal pages that say thank you, a challenge page in more words, a fact in another spelling, a host paused under another label and the same page under another label, and a row closed in flight all send nothing wrong; a reCAPTCHA footer and job titles like '403(b) Plan Administrator' are not challenges");
+}
+
 await sessions.close("ja", bus, "completed").catch(() => {});
 await board.close();
 console.log("\nALL JOB APPLY TESTS PASSED");

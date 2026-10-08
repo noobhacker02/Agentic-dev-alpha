@@ -111,6 +111,10 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 **T28. The fix for one finding was too narrow (A68's decoy fix compared button names; A94 got past it with a differently named real button).** Count 1. Rule: a fix is tested against the family of the attack (the same goal by another route), not only the instance reported.
 
+**T29. The suites leave gigabytes of temporary directories behind (`team-pipeline-*` 2 GB each, `agent-loop-desktop-*`, `al-scale-*`), the disk filled during a review round, and unrelated suites then failed in one second each while the review stopped.** Count 1 (round 6, `2f4b705`). Fix this time: the leftovers were deleted by hand. Open: the suites that make them should remove them (a `finally` that removes the directory), and `run-suites` should check free space first and say "the disk is full" instead of letting nine suites fail for it. Rule: a run of the whole suite reports free disk space before and after.
+
+**T30. A check written as `endsWith(",0)")` to find a transparent colour matched `rgb(0, 0, 0)`: every black text field was called hidden and the happy path stopped sending.** Count 1 (IMP-035; found by the first run of the test). Rule: a test of "the clean page is still submitted" runs in the same file as every new hiding check, and runs first.
+
 **S16. Flags read from the whole of a line that includes the page's own words (`disabled`, `required` found inside an `id`).** Count 1 (A75). Rule: a parser of mixed trusted and untrusted text reads token by token and skips every quoted value whole; test it with the flag word inside each untrusted field.
 
 ## 2. Platform differences (macOS, Windows, root vs normal user)
@@ -265,7 +269,7 @@ Counts say how often the same cause bit; "1" means once so far. Commit hashes ar
 
 ## Index of counts
 
-Sections: Testing/CI 28, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 85 entries** (T1 to T28, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, T27, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
+Sections: Testing/CI 30, Platform 10, Security 16, Tooling/process 16, Docs/claims 7, Agents/usage 8. **Total 87 entries** (T1 to T30, P1 to P10, S1 to S16, O1 to O16, D1 to D7, A1 to A8). Entries with count 2 or more: T2, T4, T8, T11, T17, T21, T27, P6, P8, P10, S1, S14, O3, O5, O8, O9, O14, D1, D3, D5, D6, A1, A4, A5.
 
 ## Not established or unverified (do not turn these into claims)
 

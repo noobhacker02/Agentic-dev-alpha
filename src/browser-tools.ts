@@ -963,6 +963,10 @@ function humanProblem(el) {
   for (let a = el; a && a.nodeType === 1; a = a.parentElement) {
     if (a.getAttribute && a.getAttribute("aria-hidden") === "true") return "aria-hidden";
     const cs = win.getComputedStyle(a);
+    // nearly see-through: an opacity of .01, a filter that drops it, text drawn in a colour with no alpha (round 6, A102)
+    if (parseFloat(cs.opacity) < 0.1) return "nearly transparent";
+    if (cs.filter && cs.filter !== "none" && cs.filter.includes("opacity(") && parseFloat(cs.filter.split("opacity(")[1]) < 0.1) return "nearly transparent";
+    if (a === el && String(cs.color).startsWith("rgba(") && String(cs.color).split(" ").join("").endsWith(",0)")) return "transparent text";
     if (cs.clipPath && cs.clipPath !== "none") return "clipped";
     if (cs.clip && cs.clip !== "auto" && cs.position === "absolute" && cs.clip.split(" ").join("").includes("(0px,0px,0px,0px)")) return "clipped";
     if (a !== el && a !== doc.body && a !== doc.documentElement && cs.overflow !== "visible") {

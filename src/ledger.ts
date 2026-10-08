@@ -19,12 +19,14 @@ export type Verdict = { ok: true } | { ok: false; why: string; waitMs?: number; 
 const norm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, " ").trim();
 /** `norm`, or the text as it is when nothing but punctuation was in it (so "???" and "..." stay two different titles). */
 const canon = (s: string): string => norm(s) || s.normalize("NFKC").trim().toLowerCase();
+/** A page's address without its query, fragment, trailing slash or a final "/apply": the same posting under another spelling of the address is the same posting (A106). */
+export const canonUrl = (u: string): string => { try { const x = new URL(u); return `${x.host.toLowerCase()}${x.pathname.replace(/\/apply\/?$/i, "").replace(/\/+$/, "")}`; } catch { return ""; } };
 const siteOf = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
 /** The identity of a posting: the site's job id when it has one, else the company and title. The platform and the id are compared without case or edge spaces (A71). */
 export const jobKey = (j: Job): string => (j.jobId?.trim() ? `${siteOf(j.site)}:${j.jobId.trim()}` : `${siteOf(j.site)}:${canon(j.company)}|${canon(j.title)}`);
 const DAY = 24 * 3600_000, HOUR = 3600_000, THIRTY_DAYS = 30 * DAY;
 /** How far ahead of the real clock the remembered time may be: a clock stepped back is not trusted, but one forward jump must not freeze the ledger for ever (A73). */
-const MAX_LEAD_MS = DAY;
+const MAX_LEAD_MS = 10 * 60_000; // a clock correction, not a day: a row stamped further ahead than this is pulled back (round 6, A111)
 
 const withWait = (ms: number | undefined): { waitMs?: number } => (ms !== undefined && Number.isFinite(ms) ? { waitMs: ms } : {});
 
@@ -44,6 +46,7 @@ export class Ledger {
     const cols = this.db.prepare("PRAGMA table_info(applications)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "url")) this.db.exec("ALTER TABLE applications ADD COLUMN url TEXT NOT NULL DEFAULT ''");
     this.db.exec("CREATE TABLE IF NOT EXISTS site_pauses (site TEXT PRIMARY KEY, at INTEGER NOT NULL, why TEXT NOT NULL)");
+    if (!(this.db.prepare("PRAGMA table_info(site_pauses)").all() as Array<{ name: string }>).some((c) => c.name === "label")) this.db.exec("ALTER TABLE site_pauses ADD COLUMN label TEXT NOT NULL DEFAULT ''");
     // (a unique index on the live key would refuse a re-application after the 30 days the duplicate check allows it: the write transaction in `intend` is what keeps two rows apart, A92)
     this.db.exec("DROP INDEX IF EXISTS applications_live_key"); // devskill:allow (removes this program's own stale index from its own ledger; no data is dropped)
     const last = this.db.prepare("SELECT MAX(at) AS m FROM applications").get() as { m: number | null };
@@ -72,11 +75,14 @@ export class Ledger {
   }
 
   /** Has this posting been applied to, or is an application to it unaccounted for? An `intended` row blocks a new attempt until it is verified. */
-  duplicate(job: Job): Row | undefined {
+  duplicate(job: Job, url = ""): Row | undefined {
     const since = this.now() - THIRTY_DAYS;
     const key = jobKey(job);
     const byKey = this.rows("SELECT * FROM applications WHERE key = ? AND state IN ('intended','confirmed') AND at >= ? ORDER BY seq DESC LIMIT 1", key, since)[0];
     if (byKey) return byKey;
+    // the same page under another platform label (the label is typed by the user, the page is not)
+    const cu = canonUrl(url);
+    if (cu) { const byUrl = this.rows("SELECT * FROM applications WHERE state IN ('intended','confirmed') AND at >= ? AND url != ''", since).find((r) => canonUrl(r.url) === cu); if (byUrl) return byUrl; }
     // the same company and title on the same platform under another id (a repost) within 30 days
     const c = canon(job.company), t = canon(job.title);
     if (!c || !t) return undefined; // nothing left to compare: two unlike postings must not be one
@@ -84,8 +90,8 @@ export class Ledger {
   }
 
   /** May one more application start now? Counted from the ledger: confirmed and intended rows both count (an intended one may have gone through). */
-  mayStart(job: Job): Verdict {
-    const dup = this.duplicate(job);
+  mayStart(job: Job, url = ""): Verdict {
+    const dup = this.duplicate(job, url);
     if (dup) return { ok: false, why: dup.state === "intended" ? `an earlier attempt at this posting (#${dup.seq}) has no confirmation: verify it before trying again` : `already applied to this posting (#${dup.seq})`, duplicateOf: dup };
     const now = this.now();
     const live = (since: number): Row[] => this.rows("SELECT * FROM applications WHERE state IN ('intended','confirmed') AND at >= ?", since);
@@ -102,12 +108,13 @@ export class Ledger {
   }
 
   /** Written before the submit click. Returns the row number, or refuses if the posting is already accounted for (a second intent for the same posting is the double-apply this table exists to stop). */
-  intend(job: Job, formHash: string, url = ""): { ok: true; seq: number } | { ok: false; why: string } {
+  intend(job: Job, formHash: string, url = ""): { ok: true; seq: number } | { ok: false; why: string; waitMs?: number } {
     // the check and the insert are one write transaction: another process cannot slip an `intended` row in between (A69)
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const dup = this.duplicate(job);
-      if (dup) { this.db.exec("ROLLBACK"); return { ok: false, why: `posting already has row #${dup.seq} (${dup.state})` }; }
+      // the whole decision is made again here, inside the write lock: the caps and the duplicate check done at the start of a run may be out of date by the time the form is filled, with other runs going at once (A105)
+      const again = this.mayStart(job, url);
+      if (!again.ok) { this.db.exec("ROLLBACK"); return { ok: false, why: again.why, ...(again.waitMs ? { waitMs: again.waitMs } : {}) }; }
       const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 500));
       this.db.exec("COMMIT");
       return { ok: true, seq: Number(r.lastInsertRowid) };
@@ -117,18 +124,25 @@ export class Ledger {
       throw err;
     }
   }
-  confirm(seq: number, note = ""): void { this.db.prepare("UPDATE applications SET state = 'confirmed', note = ? WHERE seq = ? AND state = 'intended'").run(note.slice(0, 200), seq); }
+  /** True if this call is the one that confirmed the row; false if it was no longer `intended` (the user closed it meanwhile, A107). */
+  confirm(seq: number, note = ""): boolean { return Number(this.db.prepare("UPDATE applications SET state = 'confirmed', note = ? WHERE seq = ? AND state = 'intended'").run(note.slice(0, 200), seq).changes) > 0; }
   /** The attempt provably did not go through (the site says it was not received): the row stops counting and the posting can be tried again. */
-  fail(seq: number, note = ""): void { this.db.prepare("UPDATE applications SET state = 'failed', note = ? WHERE seq = ? AND (state = 'intended' OR (state = 'confirmed' AND note LIKE 'verified on the site%'))").run(note.slice(0, 200), seq); }
-  /** What the user may close as not received: attempts with no confirmation, and rows the program confirmed only because a page said so (page text can be wrong, A80). */
-  forgettable(): Row[] { return this.rows("SELECT * FROM applications WHERE state = 'intended' OR (state = 'confirmed' AND note LIKE 'verified on the site%') ORDER BY seq"); }
+  fail(seq: number, note = "", opts: { minAgeMs?: number } = {}): boolean {
+    const row = this.forgettable().find((r) => r.seq === seq);
+    if (!row) return false;
+    if (opts.minAgeMs !== undefined && this.now() - row.at < opts.minAgeMs) return false; // it may still be in flight
+    return Number(this.db.prepare("UPDATE applications SET state = 'failed', note = ? WHERE seq = ? AND state IN ('intended','confirmed')").run(note.slice(0, 200), seq).changes) > 0;
+  }
+  /** What the user may close as not received: attempts with no confirmation, and rows the program confirmed because a page said so (page text can be wrong, A80, A103). */
+  forgettable(): Row[] { return this.rows("SELECT * FROM applications WHERE state IN ('intended','confirmed') ORDER BY seq"); }
   /** A site that showed a challenge or a rate limit is paused until the user says otherwise; the pause survives the process (A72). */
-  pause(site: string, why: string): void { this.db.prepare("INSERT OR REPLACE INTO site_pauses (site, at, why) VALUES (?, ?, ?)").run(siteOf(site), this.now(), why.slice(0, 200)); }
+  pause(site: string, why: string, label = ""): void { this.db.prepare("INSERT OR REPLACE INTO site_pauses (site, at, why, label) VALUES (?, ?, ?, ?)").run(siteOf(site), this.now(), why.slice(0, 200), siteOf(label)); }
   paused(site: string): { at: number; why: string } | undefined {
     const r = this.db.prepare("SELECT at, why FROM site_pauses WHERE site = ?").get(siteOf(site)) as { at: number; why: string } | undefined;
     return r ? { at: Number(r.at), why: String(r.why) } : undefined;
   }
-  unpause(site: string): boolean { return Number(this.db.prepare("DELETE FROM site_pauses WHERE site = ?").run(siteOf(site)).changes) > 0; }
+  /** Lifts the pause on a platform label and on the hosts that were paused under it. */
+  unpause(site: string): boolean { return Number(this.db.prepare("DELETE FROM site_pauses WHERE site = ? OR label = ?").run(siteOf(site), siteOf(site)).changes) > 0; }
   /** Rows written before a crash and never closed: each must be verified against the site before anything is retried. */
   unaccounted(): Row[] { return this.rows("SELECT * FROM applications WHERE state = 'intended' ORDER BY seq"); }
   all(): Row[] { return this.rows("SELECT * FROM applications ORDER BY seq"); }

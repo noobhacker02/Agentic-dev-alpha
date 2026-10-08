@@ -3,7 +3,7 @@
 // confirmation after, a stop at once on a challenge page or a rate limit (the site is paused, never retried), and a verify-before-retry for an attempt that has no confirmation. A model can be put in front of this
 // (to read an unfamiliar form); it cannot change what the engine refuses.
 import { createHash } from "node:crypto";
-import { attestationIn, forbiddenIn, labelHash, normalizeLabel, planField, type Facts, type FieldInfo } from "./facts.js";
+import { attestationIn, forbiddenIn, labelHash, normalizeLabel, otherPersonIn, planField, type Facts, type FieldInfo } from "./facts.js";
 import { jobKey, type Job, type Ledger, type Row } from "./ledger.js";
 
 export interface Tools { call(name: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> }
@@ -77,15 +77,16 @@ export function parseElements(inspectText: string): PageElement[] {
  * page happens to print that number is not a rate limit).
  */
 export const CHALLENGE = new RegExp([
-  "verify (that )?you(?:'|\u2019)?re (a )?human", "verify you are (a )?human", "are you (a )?(human|robot)", "captcha", "unusual (activity|traffic)", "automated (queries|requests|access)", "too many requests", "rate limit",
-  "access (to this page )?(has been )?denied", "temporarily blocked", "checking your browser", "press (&|and) hold",
-  "bestätigen sie, dass sie (ein )?mensch", "sind sie ein roboter", "v[ée]rifi(ez|er) que vous [êe]tes (un )?humain", "[êe]tes-vous un robot", "verifica que eres humano", "demasiadas solicitudes", "zu viele anfragen", "trop de requ[êe]tes",
+  "verify (that )?you(?:'|\u2019)?re (a )?human", "verify you are (a )?human", "verifying you are (a )?human", "are you (a )?(human|robot)", "unusual (activity|traffic)", "suspicious (activity|behaviou?r|traffic)", "automated (queries|requests|access)",
+  "too many requests", "access (to this page )?(has been )?denied", "temporarily blocked", "checking your browser", "checking if the site connection is secure", "press (&|and) hold",
+  "(complete|solve|pass|prove|take) (the |a )?(captcha|security check|human verification)", "captcha (challenge|to continue)", "please verify", "confirm you are (a )?human",
+  "bestätigen sie, dass sie (ein )?mensch", "sind sie ein roboter", "v[ée]rifi(ez|er) que vous [êe]tes (un )?humain", "[êe]tes-vous un robot", "verifica que eres humano", "comprueba que eres humano", "demuestra que eres humano", "demasiadas solicitudes", "zu viele anfragen", "trop de requ[êe]tes",
 ].join("|"), "i");
 const CHALLENGE_TITLE = /^\s*(error[: ]*)?(429|403)\b|^\s*(access denied|forbidden)\b/i;
 export const CONFIRMED = /application (was )?(received|submitted|sent)|thank you for applying|successfully (applied|submitted)/i;
 export const ALREADY_APPLIED = /\byou(?:'|\u2019)?(?:ve| have) already applied\b|\bapplication submitted on\b/i;
 /** Words of a page that failed: such a page is never a confirmation, whatever else it says (A63). */
-const ERRORISH = /something went wrong|\berror\b|\bfailed\b|try again|unable to|could not|not (been )?(submitted|received|sent)|invalid|\b50\d\b|\b40\d\b/i;
+const ERRORISH = /something went wrong|\berror\b|\bfail(ed|ure)?\b|try again|unable to|could ?n(?:o|')?t|can(?:no|')?t|\bwasn(?:'|\u2019)?t\b|\bwere ?n(?:'|\u2019)?t\b|\bdidn(?:'|\u2019)?t\b|\bnot (been )?(submitted|received|sent|accepted|processed|completed)|\b(declined|rejected|refused|denied|unsuccessful|incomplete|problem|invalid|missing|required)\b/i;
 
 export interface ApplyDeps {
   tools: Tools;
@@ -116,16 +117,19 @@ const plain = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/
  * The page on which a challenge, a rate limit or a refusal shows. The title decides on its own; the body decides only on a page that is short and has no form to fill, which is what an interstitial is: a posting
  * or an application form that merely mentions "reCAPTCHA", "rate limiting" or "Cloudflare" in its text is not one (adversary round 5, A83).
  */
-export const challenged = (inspect: string): boolean => {
+export const challenged = (inspect: string, jobTitle?: string): boolean => {
   const title = titleOf(inspect);
-  if (CHALLENGE_TITLE.test(title) || CHALLENGE_STRONG.test(title)) return true;
   const body = visible(inspect);
   const fields = parseElements(inspect).filter((e) => e.role !== "button" && e.role !== "link").length;
-  return CHALLENGE.test(body) && fields < 3 && body.length < 400;
+  // an interstitial is a short page with nothing to fill; a posting or a form is not one, and a page titled with the job's own name is the posting (A100: "403(b) Plan Administrator", "Security Check Analyst")
+  if (fields >= 3) return false;
+  if (jobTitle && plain(title).includes(plain(jobTitle))) return false;
+  if (CHALLENGE_TITLE.test(title) || CHALLENGE_STRONG.test(title)) return true;
+  return body.length < 400 && CHALLENGE.test(body);
 };
 /** A captcha on a form that has fields: not a site to pause, a step only a person can take. */
 const CAPTCHA_ON_FORM = /captcha|i(?:'|\u2019)?m not a robot|are you (a )?(human|robot)/i;
-const CHALLENGE_STRONG = /^\s*(just a moment|attention required|security check|verify you are human|access denied|checking your browser)/i;
+const CHALLENGE_STRONG = /^\s*(just a moment|attention required|security check|verify you are human|verifying you are human|access denied|checking your browser|checking if the site connection)/i;
 /** The status line of an `open` answer ("HTTP 429."): a site that says 429, 403 or 503 is asked to rest, not asked again. */
 const httpStatus = (openText: string): number | undefined => { const m = /\bHTTP (\d{3})\b/.exec(openText); return m ? Number(m[1]) : undefined; };
 
@@ -136,9 +140,12 @@ async function readAll(tools: Tools): Promise<{ text: string; complete: boolean 
   for (let i = 0; i < 6; i++) {
     const r = await tools.call("text", offset ? { offset, length: 8000 } : { length: 8000 });
     out += `\n${r.text}`;
-    const more = /\(more: call text with offset=(\d+)\)/.exec(r.text);
-    if (!more) return { text: out, complete: true };
-    offset = Number(more[1]);
+    // how far the reader got is in the tool's own first line ("characters 0-8,000 of 12,345"), which the page cannot write; a "(more: ...)" line in the page's text is not trusted (A98)
+    const m = /^Text of [^\n]*?, characters ([\d,]+)-([\d,]+) of ([\d,]+)/.exec(r.text);
+    if (!m) return { text: out, complete: /No more text/.test(r.text) };
+    const end = Number(m[2]!.replace(/,/g, "")), total = Number(m[3]!.replace(/,/g, ""));
+    if (end >= total) return { text: out, complete: true };
+    offset = end;
   }
   return { text: out, complete: false };
 }
@@ -149,8 +156,10 @@ const bare = (s: string): string => s.normalize("NFD").replace(/[\u0300-\u036f]/
 function namesJob(title: string, text: string, job: Job): boolean {
   const want = plain(job.title);
   const wrapper = (c: string): string => plain(c).replace(/^(apply( to| for)?|job application( for)?|application( for)?)\s+/, "").replace(/\s+(at|@)\s+.*$/, "").replace(/\s+(careers?|jobs?)$/, "").trim();
-  const candidates = [title, ...title.split(/\s[-|\u2013\u2014:\u00b7]\s/), ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 4)];
-  return candidates.some((c) => wrapper(c) === want || wrapper(c.replace(/\s[-|\u2013\u2014]\s.*$/, "")) === want);
+  const candidates = [title, ...title.split(/\s[-|\u2013\u2014:\u00b7]\s/), ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 2)];
+  const titled = candidates.some((c) => wrapper(c) === want || wrapper(c.replace(/\s[-|\u2013\u2014]\s.*$/, "")) === want);
+  // and the company is named somewhere on the page: a sidebar line or a different company's posting that carries the same words is not this job (A104)
+  return titled && plain(`${title}\n${text}`).includes(plain(job.company));
 }
 /** What a failing tool says, with the user's own words taken out of it: a park reason is printed. */
 const redact = (text: string, secrets: string[]): string => secrets.filter((v) => v.length >= 3).reduce((t, v) => t.split(v).join("[your fact]"), text);
@@ -160,11 +169,13 @@ const SUBMIT_NAME = /^(submit( application)?|apply|send application|submit my ap
 const pageFields = (els: PageElement[]): PageElement[] => els.filter((e) => e.role !== "button" && e.role !== "link");
 
 export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
-  const paused = d.ledger.paused(d.job.site);
+  // a pause belongs to the platform label and to the host the page is on: the label is typed by the user, the host is not (round 6, A106)
+  const host = (() => { try { return `host:${new URL(d.applyUrl).hostname.toLowerCase()}`; } catch { return ""; } })();
+  const paused = d.ledger.paused(d.job.site) ?? (host ? d.ledger.paused(host) : undefined);
   if (paused) return { status: "paused-site", why: `${d.job.site} is paused (${paused.why}); run agent-loop apply --resume-site ${d.job.site} when you have looked at it yourself` };
-  const start = d.ledger.mayStart(d.job);
+  const start = d.ledger.mayStart(d.job, d.jobUrl ?? d.applyUrl);
   if (!start.ok) return { status: start.duplicateOf ? "duplicate" : "capped", why: start.why, ...(start.waitMs ? { waitMs: start.waitMs } : {}) };
-  const pauseSite = (why: string): void => d.ledger.pause(d.job.site, why);
+  const pauseSite = (why: string): void => { d.ledger.pause(d.job.site, why); if (host) d.ledger.pause(host, why, d.job.site); };
   // the user's own words, to take out of anything that is printed
   const secrets = Object.values(d.facts.facts).map((f) => f!.value);
 
@@ -175,7 +186,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   if (code === 429 || code === 403 || code === 503 || code === 401) { pauseSite(`HTTP ${code}`); return { status: "paused-site", why: `the site answered HTTP ${code}; the site is paused and is not retried by the agent` }; }
   if (code !== undefined && code >= 400) return { status: "error", why: `the application page answered HTTP ${code}` };
   let page = textOf(await d.tools.call("inspect", {}));
-  if (challenged(page)) { pauseSite("a challenge or a rate limit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit; the site is paused and is not retried by the agent" }; }
+  if (challenged(page, d.job.title)) { pauseSite("a challenge or a rate limit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit; the site is paused and is not retried by the agent" }; }
   // the whole readable text of the page, not the first 3000 characters the listing shows (A81)
   const { text: full, complete } = await readAll(d.tools);
   const reasons: string[] = [];
@@ -197,6 +208,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   if (fields.some((e) => e.frame !== undefined)) reasons.push("part of the form is inside a frame (a page of another origin may be behind it); the flow does not fill frames");
   if ((forbiddenIn(visible(page)) || forbiddenIn(full)) && fields.some((e) => e.role === "textbox")) { reasons.push("the page asks for an identity number, a birth date or a bank detail somewhere on it, which a real employer does not need before an offer (a likely scam)"); scam = true; }
   if (attestationIn(visible(page)) || attestationIn(full)) reasons.push("the page carries a legal attestation (\"I certify ...\"); a box, a typed name or a click can be the signature, and only you can make it");
+  if (otherPersonIn(full)) reasons.push("the form has a block about somebody else (a referee, an emergency contact, whoever referred you); its Name, Email and Phone are not yours, and the flow cannot tell the blocks apart");
   if (everything.some((e) => CAPTCHA_ON_FORM.test(e.name))) reasons.push("the form carries a captcha; only a person can pass one");
   const plan = new Map<string, { value: string; ref: string; role: string; label: string; form?: number; key: string }>();
   const factUses = new Map<string, number>();
@@ -209,6 +221,8 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
       continue;
     }
     if (f.checked === true) continue; // reported above
+    // a select that arrives with a choice made is an answer the page gave (A112)
+    if (f.role === "combobox" && (f.value ?? "").trim() && !/^(select|--|choose|please|pick|none|\s*$)/i.test(f.value ?? "") && planField({ label: f.name, required: false, role: f.role, ...(f.options ? { options: f.options } : {}) }, d.facts).action !== "fill") { reasons.push(`"${f.name.slice(0, 60)}" came with a choice already made ("${(f.value ?? "").slice(0, 30)}"); the flow does not send an answer it did not choose`); continue; }
     const info: FieldInfo = { label: f.name, required: f.required || /\*\s*$/.test(f.name), role: f.role, ...(f.options ? { options: f.options.filter((o) => o && !/^(select|--|choose)/i.test(o)) } : {}) };
     const p = planField(info, d.facts);
     if (p.action === "park") { reasons.push(p.why); if (p.scam) scam = true; }
@@ -232,7 +246,8 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   // 2. Fill
   for (const [, p] of plan) {
     const r = p.role === "combobox" ? await d.tools.call("select_option", { ref: p.ref, values: [p.value] }) : await d.tools.call("fill", { ref: p.ref, value: p.value });
-    if (r.isError) return { status: "parked", reasons: [`"${p.label.slice(0, 60)}" could not be filled: ${redact(textOf(r), secrets).slice(0, 120)}`], scam: false };
+    // what the browser said may hold the value that was typed (in any spelling), so it is not shown (A101)
+    if (r.isError) return { status: "parked", reasons: [`"${p.label.slice(0, 60)}" could not be filled (the browser refused it; its message is not shown because it can repeat your own words)`], scam: false };
   }
   const up = await d.tools.call("upload", { ref: resumeRef, file: d.resume });
   if (up.isError) return { status: "parked", reasons: [`the résumé was not attached: ${redact(textOf(up), secrets).slice(0, 160)}`], scam: false };
@@ -275,9 +290,14 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   // 5. What came back. A confirmation is words that were NOT on the page before the click, on a page that is not an error and no longer offers the submit button (A63)
   const answer = textOf(await d.tools.call("inspect", {}));
   const seen = `${titleOf(answer)}\n${visible(answer)}`;
-  if (challenged(answer)) { pauseSite("a challenge or a rate limit after a submit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit after the submit; the attempt has no confirmation and is verified before any retry", seq: intent.seq }; }
   const stillAsks = parseElements(answer).some((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
-  if (!clicked.isError && CONFIRMED.test(seen) && !CONFIRMED.test(preText) && !ERRORISH.test(seen) && !stillAsks) { d.ledger.confirm(intent.seq, "confirmation page"); return { status: "submitted", seq: intent.seq }; }
+  // new confirming words on a page with no error wording come first: a thank-you page with a "protected by reCAPTCHA" footer is not a challenge (A99)
+  if (!clicked.isError && CONFIRMED.test(seen) && !CONFIRMED.test(preText) && !ERRORISH.test(seen) && !stillAsks) {
+    // the row may have been closed by the user while the form was in flight; then it is not ours to call confirmed (A107)
+    if (d.ledger.confirm(intent.seq, "confirmation page")) return { status: "submitted", seq: intent.seq };
+    return { status: "unverified", seq: intent.seq, why: "the page confirms, but the ledger row was closed in the meantime; check the site" };
+  }
+  if (challenged(answer, d.job.title)) { pauseSite("a challenge or a rate limit after a submit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit after the submit; the attempt has no confirmation and is verified before any retry", seq: intent.seq }; }
   return { status: "unverified", seq: intent.seq, why: "the page after the submit shows no confirmation that was not already there; the attempt stays unaccounted for until it is verified on the site" };
 }
 
@@ -289,7 +309,7 @@ export async function verifyAttempt(tools: Tools, ledger: Ledger, row: Row, jobU
   const opened = await tools.call("open", { url: jobUrl });
   if (opened.isError) return "unknown";
   const page = textOf(await tools.call("inspect", {}));
-  if (challenged(page)) { ledger.pause(row.site, "a challenge or a rate limit while verifying"); return "unknown"; }
+  if (challenged(page, row.title)) { ledger.pause(row.site, "a challenge or a rate limit while verifying"); return "unknown"; }
   if (ALREADY_APPLIED.test(visible(page))) { ledger.confirm(row.seq, "verified on the site (the page said so; page text can be wrong)"); return "confirmed"; }
   return "unknown";
 }

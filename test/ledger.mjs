@@ -68,9 +68,12 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   c.confirm(r2.seq);
   assert.ok(!c.mayStart(job("10", { title: "Other" })).ok);
   assert.strictEqual(c.unaccounted().length, 0);
-  // confirm and fail only act on an intended row
-  c.fail(r2.seq);
-  assert.strictEqual(c.all()[0].state, "confirmed", "a confirmed row was failed");
+  // the user can close a confirmed row too (a page's word is not proof, A103); a row younger than the guard may still be in flight and is not closed (A107)
+  assert.strictEqual(c.fail(r2.seq, "too soon", { minAgeMs: 120_000 }), false, "a row younger than the guard was closed");
+  assert.strictEqual(c.all()[0].state, "confirmed");
+  assert.strictEqual(c.fail(r2.seq, "closed by the user"), true);
+  assert.strictEqual(c.all()[0].state, "failed");
+  assert.strictEqual(c.confirm(r2.seq), false, "a closed row was confirmed afterwards");
   console.log("[ok] a row left intended by a crash is found after reopening, blocks a retry until it is verified, and is closed as failed or confirmed; a confirmed row cannot be failed");
 }
 
@@ -151,7 +154,7 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   old.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at) VALUES ('linkedin:5','linkedin','Old Co','Dev','intended','h',?)").run(T0);
   old.close();
   now = T0;
-  const l = new Ledger(path, clock);
+  const l = new Ledger(path, clock, { ...DEFAULT_CAPS, minGapMs: 0 });
   assert.deepStrictEqual(l.unaccounted().map((r) => [r.key, r.url]), [["linkedin:5", ""]]);
   const next = l.intend(job("6", { company: "New Co" }), "h", "https://example.test/jobs/6");
   assert.ok(next.ok);
@@ -243,6 +246,43 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
     const again = k.intend(job("77"), "h");
     assert.ok(again.ok, `intend refused a posting that mayStart allowed: ${JSON.stringify(again)}`);
     k.close();
+  }
+  // A105: the caps are decided again inside the write that records the intent, so runs that started together cannot all pass
+  {
+    now = T0;
+    const k = fresh(clock, { perDay: 50, perHour: 2, perSiteDay: 50, minGapMs: 0 });
+    const started = [1, 2, 3, 4].map((i) => ({ site: "s", company: `P${i}`, title: "T", jobId: String(i) })).filter((j) => k.mayStart(j).ok); // all four look fine at the start
+    assert.strictEqual(started.length, 4);
+    const results = started.map((j) => k.intend(j, "h"));
+    assert.strictEqual(results.filter((r) => r.ok).length, 2, `the hourly cap of 2 let ${results.filter((r) => r.ok).length} through`);
+    assert.ok(results.some((r) => !r.ok && /hourly cap/.test(r.why)));
+    k.close();
+  }
+  // A106: the same page under another platform label is the same posting
+  {
+    now = T0;
+    const k = fresh(clock, { ...DEFAULT_CAPS, minGapMs: 0 });
+    assert.ok(k.intend({ site: "linkedin", jobId: "77", company: "A", title: "B" }, "h", "https://jobs.example.com/careers/77/apply?utm=x").ok);
+    const again = k.mayStart({ site: "careers", jobId: "other", company: "Other", title: "Other" }, "https://Jobs.Example.com/careers/77#top");
+    assert.ok(!again.ok, "the same address under another label was a new posting");
+    assert.ok(k.mayStart({ site: "careers", jobId: "other", company: "Other", title: "Other" }, "https://jobs.example.com/careers/78").ok, "control: another address was refused");
+    k.close();
+  }
+  // A111: one row stamped 23 hours ahead does not move the ledger's clock
+  {
+    now = T0;
+    const caps5 = { perDay: 5, perHour: 5, perSiteDay: 5, minGapMs: 0 };
+    const k = fresh(clock, caps5);
+    for (let i = 0; i < 5; i++) k.confirm(k.intend({ site: "s", company: `M${i}`, title: "T" }, "h").seq);
+    now = T0 + HOUR;
+    k.close();
+    const { DatabaseSync } = await import("node:sqlite");
+    const raw = new DatabaseSync(join(dir, `l${n}.db`));
+    raw.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, note, url) VALUES ('s:ahead','s','Ahead','T','confirmed','h',?, '', '')").run(T0 + HOUR + 23.5 * HOUR);
+    raw.close();
+    const k2 = new Ledger(join(dir, `l${n}.db`), clock, caps5);
+    assert.ok(!k2.mayStart({ site: "s", company: "New", title: "T" }).ok, "a row 23 and a half hours ahead moved the clock and reopened the caps");
+    k2.close();
   }
   // a cap of 0 is never, with no time to wait; the pause of a site is remembered
   now = T0;

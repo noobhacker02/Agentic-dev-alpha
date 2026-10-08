@@ -54,10 +54,13 @@ export function parseFacts(raw: unknown): ParsedFacts {
   return errors.length ? { ok: false, errors } : { ok: true, value: { facts: out } };
 }
 
+/** Text in the one form the phrase lists compare: compatibility-normalised (full-width letters become plain ones), lower case, and without the characters that are invisible or reorder text (a soft hyphen or a zero-width space inside "certify" must not hide it, adversary round 6, A113). */
+export const canonText = (raw: string): string => stripTerminalControlBytes(raw).normalize("NFKC").replace(/[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]/g, "").toLowerCase();
+
 /** A label as it is compared: lower case, plain ASCII, no required-marker, one space between words. */
 export function normalizeLabel(raw: string): string {
   // Parenthesised text is part of the question ("Phone (also enter your date of birth)", adversary round 4 A78), so only the brackets go.
-  return clean(raw, 300).toLowerCase().replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return canonText(raw).slice(0, 400).replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ").trim();
 }
 /** A short stable key for a question (a saved answer is keyed by this, never by the raw text). */
 export const labelHash = (raw: string): string => createHash("sha256").update(normalizeLabel(raw)).digest("hex").slice(0, 12);
@@ -70,10 +73,12 @@ export type Question =
   | { kind: "freetext" }
   | { kind: "unknown" };
 
-const FORBIDDEN = /social security|\bssn\b|national (id|insurance)|\bnin\b|passport|date of birth|\bdob\b|birth ?date|\bbank\b|account number|routing number|\biban\b|\bswift\b|credit card|card number|driver'?s? licen[cs]e|mother'?s maiden|\bpassword\b|\bpin\b|tax id|\btin\b/;
+const FORBIDDEN = /social security|social insurance|\bssn\b|national (id|insurance)|\bni number\b|\bnin\b|passport|date of birth|\bdob\b|birth ?date|\bbank\b|account number|routing number|sort code|\biban\b|\bswift\b|credit card|card number|driver'?s? licen[cs]e|mother'?s maiden|\bpassword\b|\bpin\b|tax (file |id )|\btin\b|aadhaar|\bcurp\b|identity (card|number)|\bbsn\b|\bpesel\b|\bnric\b/;
 const DEMOGRAPHIC = /\bgender\b|\brace\b|ethnic|veteran|disabilit|sexual orientation|pronoun|hispanic|latino|religio|marital|transgender/;
 const ATTESTATION = /certify|attest|declare|i agree|i accept|terms|privacy|consent|acknowledge|under penalty|true and (correct|complete)/;
 const FREETEXT = /why (do you|are you|us|this)|cover letter|tell us|describe|explain|additional information|anything else|motivation/;
+/** "in the United States", "to work in Canada": the fact says nothing about which country, so a question that names one has no fact (A110); "in this country" and "here" are fine. */
+const NAMES_A_PLACE = /\b(in|within|to work in|for|into)\s+(?!this\b|the (country|location|role|position|job|company|team|future|near future|long term)\b|here\b|our\b|any\b|a\b|an\b|that\b|which\b)[a-z]/;
 const NEGATION = /\b(without|not|no longer|unable|cannot|can't|isn't|aren't|never|except)\b|n't\b/;
 const THIRD_PARTY = /spouse|partner|husband|wife|family|parent|child|dependant|dependent|employee|referr|colleague|manager|reference|referee|sponsor name|name of/;
 const RULES: Array<[FactKey, RegExp]> = [
@@ -95,11 +100,17 @@ const RULES: Array<[FactKey, RegExp]> = [
 ];
 
 /** Phrases that, anywhere on an application page, mean the page asks for something forbidden (used on the page's visible text, so it leaves out words that a company name or a job description uses: "bank", "pin", "tin"). */
-const FORBIDDEN_STRICT = /social security|\bssn\b|national insurance number|passport number|date of birth|\bdob\b|birth ?date|account number|routing number|\biban\b|credit card|card number|mother'?s maiden|driver'?s? licen[cs]e number/;
+const FORBIDDEN_STRICT = /social security|social insurance|\bssn\b|national insurance|\bni number\b|national id|identity (card|number)|id (card )?number|passport (number|no)|date of birth|\bdob\b|birth ?date|born on|account number|routing number|sort code|\biban\b|\bswift\b|credit card|card number|mother'?s maiden|driver'?s? licen[cs]e (number|no)|aadhaar|\bcurp\b|tax file number|tax id|\bbsn\b|\bpesel\b|\bnric\b/;
 /** A whole page's text in the form the phrase lists compare: not cut to a label's length (round 5, A81: the first version looked at the first 300 characters of a page). */
-const flat = (t: string): string => stripTerminalControlBytes(t).replace(/[^\x20-\x7e\u00a0-\uffff]/g, " ").toLowerCase().replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ");
+const flat = (t: string): string => canonText(t).replace(/[*:?()\[\]]/g, " ").replace(/\s+/g, " ");
 export const forbiddenIn = (text: string): boolean => FORBIDDEN_STRICT.test(flat(text));
-const ATTEST_TEXT = /\bi certify\b|\bi attest\b|\bi declare\b|under penalty of perjury/;
+const ATTEST_TEXT = new RegExp([
+  "\\bi,? (hereby )?(certify|attest|declare|confirm|agree|accept|acknowledge|understand|consent|authori[sz]e|warrant|swear|affirm|represent)\\b",
+  "\\bby (submitting|clicking|applying|continuing|signing|checking|ticking|pressing)\\b[^.]{0,160}\\b(agree|confirm|certify|accept|declare|acknowledge|consent|true|accurate)\\b",
+  "under penalty of perjury", "\\b(electronic |e-?|digital )?signature\\b", "\\bsign (here|below)\\b", "\\bthe undersigned\\b", "true and (correct|complete|accurate)",
+].join("|"));
+/** A block of the form that asks about somebody else (a referee, an emergency contact, whoever referred the applicant): its "Name", "Email" and "Phone" are not the applicant's (adversary round 6, A108). */
+export const otherPersonIn = (text: string): boolean => /emergency contact|\breferees?\b|\breferences?\b(?!\s*(number|no\b|id\b|code|#|\d))|who referred you|referred by|\bnext of kin\b|\bguarantor\b|\bsupervisor'?s? (name|email|phone)/.test(flat(text));
 export const attestationIn = (text: string): boolean => ATTEST_TEXT.test(flat(text));
 
 /** What a field's label asks for. The order matters: a forbidden ask is judged before anything that could be filled. */
@@ -113,7 +124,7 @@ export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } 
   for (const [key, re] of RULES) if (re.test(l)) {
     // a yes/no fact is only the answer to a plain question about the applicant: not one that is negated ("able to work without visa sponsorship", "not authorized") and not one about somebody else
     // ("your spouse", "sponsor name (employee who referred you)") (adversary round 5, A87, A95)
-    if ((key === "needs_sponsorship" || key === "work_authorisation") && (!/\byou\b|\byour\b/.test(l) || NEGATION.test(l) || THIRD_PARTY.test(l))) return { kind: "unknown" };
+    if ((key === "needs_sponsorship" || key === "work_authorisation") && (!/\byou\b|\byour\b/.test(l) || NEGATION.test(l) || THIRD_PARTY.test(l) || NAMES_A_PLACE.test(l))) return { kind: "unknown" };
     return { kind: "fact", key };
   }
   if (ATTESTATION.test(l)) return { kind: "attestation" };
