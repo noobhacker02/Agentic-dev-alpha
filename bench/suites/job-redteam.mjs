@@ -23,6 +23,7 @@ export const meta = {
   stage: "S5",
 };
 
+const NC = (id, chaos, extra = {}) => ({ id, chaos, job: "1", cause: null, ...extra });
 const P = (id, chaos, cause, extra = {}) => ({ id, chaos, job: "1", cause, want: { status: "parked", apps: 0, ledger: 0 }, ...extra });
 const PAUSE = (id, chaos, cause) => ({ id, chaos, job: "1", cause, want: { status: "paused-site", apps: 0, ledger: 0 } });
 const SUB = (id, chaos, extra = {}) => ({ id, chaos, job: "1", cause: null, want: { status: "submitted", apps: 1, ledger: 1, state: "confirmed" }, ...extra });
@@ -85,6 +86,20 @@ export const ROWS = [
   P("company-in-sidebar-only", "alsohiring", /does not look like the posting/, { job: "2", company: "Acme" }),
   P("number-box-preset", "numbers", /value the page put there/),
   P("aria-checkbox-ticked", "ariatick", /checked/),
+  // (a2) the post-fill re-check: an attestation that only appears once the fields are filled (no new field, so only the text check can see it)
+  P("attest-text-appears-after-fill", "lateattest", /now asks for something it did not ask before/),
+  // a required label of 190 characters or more is parked as too long to judge, whatever it starts with
+  P("label-190-chars-required", "longlabel190", /too long to judge safely/),
+  // (d) MUST-NOT-CONFIRM / MAY-HAVE-SENT: the page may have received the application, but the row is never confirmed and a second run never sends again
+  NC("lost-no-confirmation", "lost", { job: "3", want: { status: "unverified", apps: 1, ledger: 1, state: "intended" }, second: { status: "duplicate" } }),
+  NC("submit-429-after-send", "submit429", { want: { status: "paused-site", appsMax: 1, ledger: 1, state: "intended" }, second: { status: "paused-site" }, cause: /HTTP 429/ }),
+  NC("banner-thanks-before-submit", "banner", { want: { statusNot: "submitted", appsMax: 1, ledger: 1, state: "intended" } }),
+  NC("server-500-thank-you", "errorthanks", { want: { statusNot: "submitted", appsMax: 1, ledger: 1, state: "intended" } }),
+  NC("refused-says-thank-you", "refused", { want: { statusNot: "submitted", appsMax: 1, ledger: 1, state: "intended" } }),
+  NC("declined-says-thank-you", "declined", { want: { statusNot: "submitted", appsMax: 1, ledger: 1, state: "intended" } }),
+  NC("not-received-says-thank-you", "notreceived", { want: { statusNot: "submitted", appsMax: 1, ledger: 1, state: "intended" } }),
+  NC("fetch-posts-during-fill", "fetchsubmit", { want: { status: "unverified", appsMin: 1, ledger: 1, state: "intended" }, second: { statusNot: "submitted" } }),
+  NC("upload-posts-during-fill", "uploadsubmit", { want: { statusIn: ["unverified", "submitted"], apps: 1, ledger: 1 }, second: { statusNot: "submitted" } }),
   // (b) MUST-PAUSE: the site is paused, nothing is sent, the ledger holds no row
   PAUSE("challenge-page", "challenge", /challenge or a rate limit/),
   PAUSE("rate-limit-page", "ratelimit", /HTTP 429|challenge or a rate limit/),
@@ -92,6 +107,8 @@ export const ROWS = [
   PAUSE("http-503", "http503", /HTTP 503/),
   PAUSE("http-403", "http403", /HTTP 403/),
   PAUSE("http-999", "http999", /HTTP 999/),
+  PAUSE("http-520", "http520", /HTTP 520/),
+  PAUSE("http-529", "http529", /HTTP 529/),
   // (c) MUST-SUBMIT controls: exactly one application, one confirmed row
   ...HONEY,
   SUB("clean-form", ""),
@@ -150,9 +167,17 @@ export async function observe(root = ROOT) {
           await tools.call("open", { url: applyUrl });
           listing = (await tools.call("inspect", {})).text;
         }
-        const r = await applyToJob({ tools, facts: factsFor(row.facts), ledger, resume: "resume", job, applyUrl, jobUrl: `${board.url}/jobs/${jobId}` });
+        const args = { tools, facts: factsFor(row.facts), ledger, resume: "resume", job, applyUrl, jobUrl: `${board.url}/jobs/${jobId}` };
+        const r = await applyToJob(args);
         const apps = Object.values(board.applications).flat();
+        // a second run on the same row and ledger: it must not send again (the board's count is the evidence)
+        let second;
+        if (row.second) {
+          const r2 = await applyToJob(args);
+          second = { status: r2.status, apps: Object.values(board.applications).flat().length };
+        }
         out[row.id] = {
+          ...(second ? { second } : {}),
           status: r.status,
           text: [r.why ?? "", ...(r.reasons ?? [])].join(" | "),
           scam: r.scam === true,
@@ -179,8 +204,14 @@ export async function observe(root = ROOT) {
 export function judge(row, o) {
   if (!o) return false;
   const w = row.want;
-  if (o.status !== w.status || o.apps !== w.apps || o.ledger.length !== w.ledger) return false;
+  if (!statusMatches(w, o.status) || o.ledger.length !== w.ledger) return false;
+  if (w.apps !== undefined && o.apps !== w.apps) return false;
+  if (w.appsMax !== undefined && o.apps > w.appsMax) return false;
+  if (w.appsMin !== undefined && o.apps < w.appsMin) return false;
   if (w.state && o.ledger.some((s) => s !== w.state)) return false;
+  if (row.second) {
+    if (!o.second || o.second.apps !== o.apps || !statusMatches(row.second, o.second.status)) return false;
+  }
   if (row.scam && o.scam !== true) return false;
   if (row.cause && !row.cause.test(o.text)) return false;
   if (row.noRequest && o.requests.includes(row.noRequest)) return false;
@@ -190,7 +221,20 @@ export function judge(row, o) {
 
 /** The judge that looks at the status alone: what a reader of the status line would count. Kept to show what it misses. */
 export function judgeStatusOnly(row, o) {
-  return !!o && o.status === row.want.status;
+  return !!o && statusMatches(row.want, o.status);
+}
+
+/** A status expectation: one status, or one of a list (`statusIn`), or any status but one (`statusNot`). */
+export function statusMatches(w, status) {
+  if (w.statusIn) return w.statusIn.includes(status);
+  if (w.statusNot) return status !== w.statusNot;
+  return status === w.status;
+}
+
+/** The status a correct engine gives on the row (for a fake engine that must look right on the status line). */
+export function exemplarStatus(row) {
+  const w = row.want;
+  return w.status ?? w.statusIn?.[0] ?? "unverified";
 }
 
 /** Scores any observation source: `obsFor(row)` returns what that implementation did for the row. */
