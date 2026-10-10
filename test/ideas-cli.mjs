@@ -5,6 +5,7 @@ import assert from "node:assert";
 import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Ideas } from "../dist/reel/ideas.js";
 import { ideasCommand } from "../dist/reel/ideas-command.js";
 
@@ -81,6 +82,7 @@ for (const [bad, cause] of [
   [["decide", "-1", "yes"], /whole number/],
   [["decide", "1.5", "yes"], /whole number/],
   [["decide", `${cId}e0`, "yes"], /whole number/],
+  [["decide", "9007199254740993", "yes"], /whole number/],
   [["decide", String(cId), "maybe"], /say yes or no/],
   [["decide", String(cId)], /say yes or no/],
   [["decide", String(cId), "YES"], /say yes or no/],
@@ -97,7 +99,7 @@ assert.match(ONE_LINE(run(["list"]).out)[2], new RegExp(`^#${cId} \\[pending\\] 
 {
   const r = run(["decide", "999", "yes"]);
   assert.equal(r.code, 1);
-  assert.match(r.err, /999/);
+  assert.equal(r.err, "Error: there is no idea #999.\n", "the exact unknown-id message, not 'already decided'");
   assert.equal(r.out, "");
 }
 
@@ -138,6 +140,27 @@ for (const bad of ["abc", "0", "-5", "1.5", "1e3", ""]) {
   assert.equal(ONE_LINE(run(["list"]).out).length, 4, "nothing was deleted by the bad purges (ids 1, 2, 3, 6 remain)");
 }
 
+// 9b. extra words and flags are refused, never guessed at (`ideas purge 7` must not purge 30 days)
+{
+  const before = ONE_LINE(run(["list"]).out);
+  const cases = [
+    [["list", "x"], {}, /list takes no words/],
+    [["list"], { days: "abc" }, /list takes no flags/],
+    [["purge", "7"], {}, /not a bare number/],
+    [["purge"], { dir: "x" }, /purge takes only --days/],
+    [["decide", String(cId), "yes", "extra"], {}, /exactly an id and yes or no/],
+    [["decide", String(cId), "yes"], { days: "3" }, /decide takes no flags/],
+  ];
+  for (const [pos, opts, cause] of cases) {
+    const r = run(pos, opts);
+    assert.equal(r.code, 1, `exit 1 for ${JSON.stringify(pos)} ${JSON.stringify(opts)}`);
+    assert.equal(r.out, "");
+    assert.match(r.err, cause);
+    assert.equal(ONE_LINE(r.err).length, 1);
+  }
+  assert.deepEqual(ONE_LINE(run(["list"]).out), before, "nothing was deleted or decided by the refused commands");
+}
+
 // 10. control bytes and newlines in stored text never make a second line, nor a control byte, on stdout
 add("link:evil", "first\nsecond\r\x1b]0;owned\x07\tthird   café  end\u0085‮", "ask\nFAKE LINE");
 add("link:nl", "trailing\n", "pass");
@@ -166,6 +189,41 @@ add("link:nl", "trailing\n", "pass");
   assert.equal(r.code, 1);
   assert.match(r.err, /Usage: agent-loop ideas/);
   assert.equal(r.out, "");
+}
+
+// 12. a foreign or damaged ideas.db (a table with another schema) is one printed line and exit 1, never a stack trace
+{
+  const home3 = mkdtempSync(join(tmpdir(), "ideas-foreign-"));
+  const db = new DatabaseSync(join(home3, "ideas.db"));
+  db.exec("CREATE TABLE ideas (id INTEGER PRIMARY KEY, foo TEXT)");
+  db.exec("INSERT INTO ideas (foo) VALUES ('x')");
+  db.close();
+  for (const [pos, opts] of [[[], {}], [["list"], {}], [["decide", "1", "yes"], {}], [["purge"], {}]]) {
+    const r = ideasCommand({ _: pos, ...opts }, { home: home3, clock });
+    assert.equal(r.code, 1, `exit 1 for ${JSON.stringify(pos)}`);
+    assert.equal(r.out, "", `no stdout for ${JSON.stringify(pos)}`);
+    assert.equal(ONE_LINE(r.err).length, 1, `one line for ${JSON.stringify(pos)}`);
+    assert.match(r.err, /^Error: the ideas file cannot be used: /);
+    assert.doesNotMatch(r.err, /\n\s+at /);
+  }
+}
+
+// 13. default purge is exactly 30 days: a row at 30 days 12 hours goes, a row at exactly 30 days stays
+{
+  const home4 = mkdtempSync(join(tmpdir(), "ideas-default-"));
+  let t = T0 - (30 * DAY + 12 * 3_600_000);
+  const c4 = () => t;
+  const s4 = new Ideas(join(home4, "ideas.db"), c4);
+  s4.add({ source: "link:older", about: "Thirty days and twelve hours old.", idea: "i", scores: "{}", verdict: "pass", reason: "r" });
+  t = T0 - 30 * DAY;
+  s4.add({ source: "link:exact", about: "Exactly thirty days old.", idea: "i", scores: "{}", verdict: "pass", reason: "r" });
+  s4.close();
+  const r = ideasCommand({ _: ["purge"] }, { home: home4, clock: () => T0 });
+  assert.equal(r.out, "Purged 1 idea.\n", "the default window is 30 days");
+  assert.equal(r.code, 0);
+  const left = ideasCommand({ _: ["list"] }, { home: home4, clock: () => T0 }).out;
+  assert.match(left, /Exactly thirty days old\./);
+  assert.doesNotMatch(left, /Thirty days and twelve hours/);
 }
 
 console.log("ideas-cli: all checks passed");

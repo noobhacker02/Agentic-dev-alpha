@@ -13,9 +13,26 @@ const USAGE = "Usage: agent-loop ideas [list] | agent-loop ideas decide <id> yes
 const SUBCOMMANDS = new Set(["list", "decide", "purge"]);
 
 export function ideasCommand(args: ParsedArgs, deps: { home?: string; clock?: () => number }): CommandResult {
+  // any exception (a foreign or damaged ideas.db, a disk error) becomes one printable line and exit 1, never a stack trace
+  try { return runIdeas(args, deps); } catch (e) {
+    return { out: "", err: `Error: ${clean(`the ideas file cannot be used: ${String((e as Error)?.message ?? e)}`)}\n`, code: 1 };
+  }
+}
+
+function runIdeas(args: ParsedArgs, deps: { home?: string; clock?: () => number }): CommandResult {
   const fail = (message: string): CommandResult => ({ out: "", err: `Error: ${clean(message)}\n`, code: 1 });
   const sub = args._[0] ?? "list";
   if (!SUBCOMMANDS.has(sub)) return { out: "", err: USAGE, code: 1 };
+  const flags = Object.keys(args).filter((k) => k !== "_");
+  if (sub === "list") {
+    if (args._.length > 1) return fail(`list takes no words after it (got ${shown(args._[1])}).`);
+    if (flags.length) return fail(`list takes no flags (got --${clean(flags[0], 20)}).`);
+  }
+  if (sub === "purge") {
+    if (args._.length > 1) return fail(`purge takes --days <n>, not a bare number (got ${shown(args._[1])}).`);
+    const other = flags.find((k) => k !== "days");
+    if (other !== undefined) return fail(`purge takes only --days (got --${clean(other, 20)}).`);
+  }
 
   let days = 30;
   if (sub === "purge" && args.days !== undefined) {
@@ -29,12 +46,13 @@ export function ideasCommand(args: ParsedArgs, deps: { home?: string; clock?: ()
     const n = typeof idArg === "string" && /^\d+$/.test(idArg) ? Number(idArg) : NaN;
     if (!Number.isSafeInteger(n) || n < 1) return fail(`an idea is a whole number from the list, such as 3 (got ${shown(idArg)}).`);
     if (word !== "yes" && word !== "no") return fail(`say yes or no (got ${shown(word)}).`);
+    if (args._.length !== 3) return fail("decide takes exactly an id and yes or no.");
+    if (flags.length) return fail(`decide takes no flags (got --${clean(flags[0], 20)}).`);
   }
 
   const home = deps.home ?? agentLoopHome();
   try { mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) { return fail(`the agent-loop directory cannot be made: ${String((e as NodeJS.ErrnoException).code ?? e)}`); }
-  let ideas: Ideas;
-  try { ideas = new Ideas(join(home, "ideas.db"), deps.clock); } catch (e) { return fail(`the ideas file cannot be opened: ${String((e as Error).message)}`); }
+  const ideas = new Ideas(join(home, "ideas.db"), deps.clock);
   try {
     if (sub === "list") {
       const rows = ideas.list();
