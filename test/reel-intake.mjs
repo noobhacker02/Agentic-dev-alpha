@@ -47,7 +47,7 @@ const short = mk("short.mp4", ["-f", "lavfi", "-i", "testsrc=duration=4:size=320
   const f = await extractFrames(short, out, p.probe);
   assert.ok(f.ok && f.frames.length >= 1 && f.frames.length <= LIMITS.maxFrames, JSON.stringify(f));
   for (const x of f.frames) assert.ok(statSync(x).size > 0 && x.startsWith(out));
-  assert.equal(statSync(out).mode & 0o077, 0, "frames directory is private");
+  if (process.platform !== "win32") assert.equal(statSync(out).mode & 0o077, 0, "frames directory is private");
   console.log("  probe + frames ok:", f.frames.length, "frames");
 }
 {

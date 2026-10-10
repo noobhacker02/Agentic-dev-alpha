@@ -28,7 +28,7 @@ const DECIDED_YES = "Recorded. Nothing has been built; the dev-flow hand-off is 
   const nested = join(home, "fresh", "nested");
   const r = ideasCommand({ _: [] }, { home: nested, clock });
   assert.deepEqual([r.out, r.err, r.code], ["No ideas yet.\n", "", 0]);
-  assert.equal(statSync(nested).mode & 0o777, 0o700, "the agent-loop directory is 0700");
+  if (process.platform !== "win32") assert.equal(statSync(nested).mode & 0o777, 0o700, "the agent-loop directory is 0700"); // Windows has no POSIX modes
   assert.equal(run(["list"]).out, "No ideas yet.\n");
 }
 

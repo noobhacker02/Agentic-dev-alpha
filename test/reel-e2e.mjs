@@ -37,7 +37,7 @@ const good = async (kind, system, prompt, images) => {
   assert.match(r.out, /Verdict: implement/); assert.match(r.out, /Nothing has been built/);
   assert.ok(calls[0].images >= 1 && calls[1].images === 0, "frames go to the reader only, never to the scorer");
   assert.match(calls[0].prompt, /UNTRUSTED CAPTION/); assert.match(calls[1].prompt, /UNTRUSTED PROJECT/);
-  assert.equal(statSync(join(home, "ideas.db")).mode & 0o077, 0, "ideas.db is private");
+  if (process.platform !== "win32") assert.equal(statSync(join(home, "ideas.db")).mode & 0o077, 0, "ideas.db is private");
   // the same reel again: remembered, the model is not called a second time
   const before = calls.length;
   const again = await reelCommand(args([video], { text: cap, project: proj }), { reader: good, home });
@@ -100,7 +100,7 @@ const good = async (kind, system, prompt, images) => {
   assert.doesNotMatch(r.out, /^Verdict: implement \(forged\)/m); assert.equal((r.out.match(/^Verdict:/gm) ?? []).length, 1, r.out);
   const { readdirSync, existsSync } = await import("node:fs");
   assert.ok(!existsSync(join(home, "evidence")) || readdirSync(join(home, "evidence")).length === 0, "frames stayed behind");
-  assert.equal(statSync(home).mode & 0o077, 0, "the agent-loop directory is private");
+  if (process.platform !== "win32") assert.equal(statSync(home).mode & 0o077, 0, "the agent-loop directory is private");
   // two different files with the same size and the same start are two reels
   const a = join(dir, "a.bin"), b = join(dir, "b.bin");
   const big = Buffer.alloc(2 << 20, 7); writeFileSync(a, big); const big2 = Buffer.from(big); big2[big2.length - 5] = 9; writeFileSync(b, big2);

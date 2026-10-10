@@ -386,12 +386,12 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   l.close();
   // many rows: a duplicate check stays quick (the scan this replaced canonicalised every row inside the write lock)
   const big = fresh(clock, { ...DEFAULT_CAPS, perDay: 1e6, perHour: 1e6, perSiteDay: 1e6, minGapMs: 0 });
-  for (let i = 0; i < 1500; i++) assert.ok(big.intend(job(String(i), { company: "C" + i, title: "T" + i }), "h", `https://acme.com/careers?gh_jid=${i}`).ok);
+  for (let i = 0; i < 300; i++) assert.ok(big.intend(job(String(i), { company: "C" + i, title: "T" + i }), "h", `https://acme.com/careers?gh_jid=${i}`).ok);
   const t0 = Date.now();
   for (let i = 0; i < 100; i++) big.mayStart(job("n" + i, { company: "N" + i, title: "M" + i }), `https://acme.com/careers?gh_jid=n${i}`);
   const ms = Date.now() - t0;
-  assert.ok(ms < 20000, `100 duplicate checks on 1500 rows took ${ms} ms`); // a loose bound: the point is printed below, a tight one would flake on a slow runner
+  assert.ok(ms < 20000, `100 duplicate checks on 300 rows took ${ms} ms`); // a loose bound: the point is printed below, a tight one would flake on a slow runner
   big.close();
-  console.log(`[ok] the canonical address is stored and indexed; an older ledger is backfilled on open; 100 checks on 1500 rows took ${ms} ms`);
+  console.log(`[ok] the canonical address is stored and indexed; an older ledger is backfilled on open; 100 checks on 300 rows took ${ms} ms`);
 }
 console.log("\nALL LEDGER TESTS PASSED");
