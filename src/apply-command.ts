@@ -4,7 +4,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAllowances, platformOf } from "./allowances.js";
+import { loadAllowances, platformOf, type Allowances } from "./allowances.js";
 import { BrowserSessionManager, browserToolHandlers } from "./browser-tools.js";
 import { liveBrowserPolicy, testPolicy } from "./browser-policy.js";
 import { EventBus } from "./bus.js";
@@ -19,6 +19,19 @@ import type { CommandResult, ParsedArgs } from "./team/cli-commands.js";
 const clean = (s: string, n = 200): string => stripTerminalControlBytes(s).replace(/[^\x20-\x7e]/g, "?").slice(0, n);
 
 type Handler = { handler(a: unknown, e: unknown): Promise<{ content: Array<{ text?: string }>; isError?: boolean }> };
+
+/**
+ * LIVE mode: the platform an application page belongs to, from the user's allowances file (never from the label the user typed). `site` is what the user typed with --site, if anything.
+ * Omitted (or empty) `site` takes the derived platform; a `site` that differs from it, ignoring case and surrounding spaces, is refused. An address the allowances file does not allow (or that is not an address at all) is refused.
+ */
+export function resolvePlatform(allow: Allowances, applyUrl: string | undefined, site: string | undefined): { ok: true; site: string } | { ok: false; reason: string } {
+  // the platform is the page's, not the label the user typed: the same address under another label would be a fresh quota and a fresh pause (round 6, A106)
+  let derived: string | undefined;
+  try { derived = platformOf(allow, new URL(applyUrl ?? "").hostname); } catch { /* not an address */ }
+  if (!derived) return { ok: false, reason: `${clean(applyUrl ?? "", 120)} is not on your allowances list, so nothing is opened` };
+  if (site && site.trim().toLowerCase() !== derived.toLowerCase()) return { ok: false, reason: `that address belongs to the platform "${clean(derived, 40)}" in your allowances file, not "${clean(site, 40)}"` };
+  return { ok: true, site: derived };
+}
 
 export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
   const fail = (message: string): CommandResult => ({ out: "", err: `Error: ${message}\n`, code: 1 });
@@ -68,12 +81,9 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
     if (!allow.ok) return fail(allow.errors.join("\n"));
     if (allow.source === "none") return fail(`there is no allowances file yet (${clean(allow.path)}); without it LIVE mode opens nothing. Use --test against a local board, or create the file (see agent-loop login).`);
     policy = liveBrowserPolicy(allow.value, {});
-    // the platform is the page's, not the label the user typed: the same address under another label would be a fresh quota and a fresh pause (round 6, A106)
-    let derived: string | undefined;
-    try { derived = platformOf(allow.value, new URL(applyUrl!).hostname); } catch { /* not an address */ }
-    if (!derived) return fail(`${clean(applyUrl ?? "", 120)} is not on your allowances list, so nothing is opened`);
-    if (site && site.trim().toLowerCase() !== derived.toLowerCase()) return fail(`that address belongs to the platform "${clean(derived, 40)}" in your allowances file, not "${clean(site, 40)}"`);
-    site = derived;
+    const platform = resolvePlatform(allow.value, applyUrl, site);
+    if (!platform.ok) return fail(platform.reason);
+    site = platform.site;
   }
   /** A browser session for one platform (its own agent-only profile in LIVE mode), the tools it offers, and the way to close it. */
   const open = (forSite: string) => {
