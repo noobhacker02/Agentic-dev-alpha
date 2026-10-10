@@ -36,6 +36,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `browser-honesty` | Browser tools: a repeated failure, a query, a scrolling form, a huge page, forged text, a typed secret, a hung page, a popup storm and a bad status line all handled | 0/11 @ ecc83f2 | 11/11 | +11 (better) | IMP-017, IMP-018, IMP-019 |
 | `file-hooks` | File-tool and safety hooks: paths and commands that must be denied, beside the ordinary ones that must not | 65/242 @ f10a830 | 242/242 | +177 (better) | IMP-016, IMP-031 |
 | `form-coverage` | Form fields the agent is shown across iframes, shadow roots and hidden traps | 1/8 @ 646cdcb | 8/8 | +7 (better) | IMP-014, IMP-018 |
+| `job-redteam` | Job-application red team: pages that must park or pause are never sent, the clean forms are sent once (the status, the server's count and the ledger all checked) | 88/88 @ 6112e19 | 88/88 | no change | IMP-039 |
 | `live-gate` | LIVE gate: address and URL forms, requests, sockets, redirect landings, public addresses and file destinations classified right (allowed ones allowed, the rest refused) | 0/156 @ b695f8c | 156/156 | +156 (better) | IMP-030, IMP-031 |
 | `observability` | Page problems the agent is told about | 0/8 @ 7138e1b | 8/8 | +8 (better) | IMP-006, IMP-008, IMP-011, IMP-017, IMP-018 |
 | `safety` | Dangerous commands the safety net denies | 26/26 @ 7138e1b | 26/26 | no change | IMP-001, IMP-006 |
@@ -55,7 +56,7 @@ Deterministic suites need no model and no network. Suites that use a real model 
 | `learner` | Learner precision and recall on a seeded history | not built | not built | planned in S6b | - |
 | `team-vs-fixed` | Plain session vs fixed five vs dynamic team: score, cost, time (real model) | not built | not built | planned in S7 (real model, gated) | - |
 | `pipeline-vs-plain` | Five-phase pipeline vs one plain session on the same tasks (real model) | not built | not built | planned in S7 (real model, gated) | - |
-Latest run: commit `c55c81c`, 2026-10-10. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
+Latest run: commit `6112e19`, 2026-10-10. Baselines are the first value ever recorded for a suite and are never overwritten without an entry in IMPROVEMENTS.md.
 <!-- bench:table:end -->
 
 ## Definition changes

@@ -59,6 +59,12 @@
       "max": 156,
       "commit": "b695f8c",
       "date": "2026-10-07"
+    },
+    "job-redteam": {
+      "value": 88,
+      "max": 88,
+      "commit": "6112e19",
+      "date": "2026-10-10"
     }
   }
 }

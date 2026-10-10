@@ -81,6 +81,7 @@ console.log("[ok] baselines: unchanged passes; lowered without a logged reason, 
 {
   const copy = mkdtempSync(join(tmpdir(), "bench-run-"));
   cpSync(join(here, "bench"), join(copy, "bench"), { recursive: true });
+  cpSync(join(here, "test/fixtures"), join(copy, "test/fixtures"), { recursive: true }); // suites that drive the fake board import its fixture when the runner loads them (job-redteam)
   mkdirSync(join(copy, "dist")); writeFileSync(join(copy, "dist/browser-tools.js"), "export {};");
   const corrupt = '{ "suites": { "safety": ';
   writeFileSync(join(copy, "bench/baseline.json"), corrupt);
