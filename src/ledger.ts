@@ -48,7 +48,7 @@ export class Ledger {
   constructor(path: string, private clock: () => number = Date.now, private caps: LedgerCaps = DEFAULT_CAPS) {
     this.db = new DatabaseSync(path);
     // two processes on one ledger wait for each other's write instead of failing with "database is locked" (A69)
-    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec("PRAGMA busy_timeout = 30000");
     try { chmodSync(path, 0o600); } catch { /* not a file system with modes */ }
     this.db.exec(`CREATE TABLE IF NOT EXISTS applications (
       seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, site TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL,
@@ -57,6 +57,11 @@ export class Ledger {
     // a ledger written before the page was remembered
     const cols = this.db.prepare("PRAGMA table_info(applications)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "url")) this.db.exec("ALTER TABLE applications ADD COLUMN url TEXT NOT NULL DEFAULT ''");
+    // the canonical address is stored with the row and indexed: the duplicate check inside the write lock is then one lookup, not a scan that canonicalises every row (a scan made four processes on a slow disk exceed the busy timeout, Windows CI on c55c81c)
+    if (!(this.db.prepare("PRAGMA table_info(applications)").all() as Array<{ name: string }>).some((c) => c.name === "curl")) this.db.exec("ALTER TABLE applications ADD COLUMN curl TEXT NOT NULL DEFAULT ''");
+    this.db.exec("CREATE INDEX IF NOT EXISTS applications_curl ON applications(curl)");
+    const stale = this.db.prepare("SELECT seq, url FROM applications WHERE curl = '' AND url != ''").all() as Array<{ seq: number; url: string }>;
+    if (stale.length) { this.db.exec("BEGIN IMMEDIATE"); try { for (const r of stale) this.db.prepare("UPDATE applications SET curl = ? WHERE seq = ?").run(canonUrl(String(r.url)), r.seq); this.db.exec("COMMIT"); } catch (e) { try { this.db.exec("ROLLBACK"); } catch { /* none open */ } throw e; } }
     this.db.exec("CREATE TABLE IF NOT EXISTS site_pauses (site TEXT PRIMARY KEY, at INTEGER NOT NULL, why TEXT NOT NULL)");
     if (!(this.db.prepare("PRAGMA table_info(site_pauses)").all() as Array<{ name: string }>).some((c) => c.name === "label")) this.db.exec("ALTER TABLE site_pauses ADD COLUMN label TEXT NOT NULL DEFAULT ''");
     // (a unique index on the live key would refuse a re-application after the 30 days the duplicate check allows it: the write transaction in `intend` is what keeps two rows apart, A92)
@@ -94,7 +99,7 @@ export class Ledger {
     if (byKey) return byKey;
     // the same page under another platform label (the label is typed by the user, the page is not)
     const cu = canonUrl(url);
-    if (cu) { const byUrl = this.rows("SELECT * FROM applications WHERE state IN ('intended','confirmed') AND at >= ? AND url != ''", since).find((r) => canonUrl(r.url) === cu); if (byUrl) return byUrl; }
+    if (cu) { const byUrl = this.rows("SELECT * FROM applications WHERE curl = ? AND state IN ('intended','confirmed') AND at >= ? ORDER BY seq DESC LIMIT 1", cu, since)[0]; if (byUrl) return byUrl; }
     // the same company and title on the same platform under another id (a repost) within 30 days
     const c = canon(job.company), t = canon(job.title);
     if (!c || !t) return undefined; // nothing left to compare: two unlike postings must not be one
@@ -127,7 +132,7 @@ export class Ledger {
       // the whole decision is made again here, inside the write lock: the caps and the duplicate check done at the start of a run may be out of date by the time the form is filled, with other runs going at once (A105)
       const again = this.mayStart(job, url);
       if (!again.ok) { this.db.exec("ROLLBACK"); return { ok: false, why: again.why, ...(again.waitMs ? { waitMs: again.waitMs } : {}), ...(again.duplicateOf ? { duplicateOf: again.duplicateOf } : {}) }; }
-      const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 2000));
+      const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url, curl) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 2000), canonUrl(url.slice(0, 2000)));
       this.db.exec("COMMIT");
       return { ok: true, seq: Number(r.lastInsertRowid) };
     } catch (err) {

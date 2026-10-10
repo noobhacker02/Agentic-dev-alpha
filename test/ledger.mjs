@@ -369,4 +369,29 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   l.close();
   console.log("[ok] the address test: nine spellings of one posting are one, four postings that differ in an id are different, a long address is kept whole");
 }
+
+// 11. The canonical address is stored and indexed (the duplicate check inside the write lock is a lookup, not a scan); an older ledger is backfilled on open
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const path = join(dir, "legacy-curl.db");
+  const db = new DatabaseSync(path);
+  db.exec("CREATE TABLE applications (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, site TEXT NOT NULL, company TEXT NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL, form_hash TEXT NOT NULL, at INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '')");
+  db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES ('k','board','Acme','Engineer','confirmed','h',?,?)").run(T0, "https://www.acme.com/Jobs/9?refId=zzz&gh_jid=9");
+  db.close();
+  now = T0 + HOUR;
+  const l = new Ledger(path, clock, { ...DEFAULT_CAPS, minGapMs: 0 });
+  const r = l.mayStart(job("x1", { company: "Other", title: "Other", site: "careers" }), "https://acme.com/jobs/9?gh_jid=9&utm_source=a");
+  assert.ok(!r.ok && /Acme \/ Engineer/.test(r.why), `an older row was not found by its address: ${JSON.stringify(r)}`);
+  assert.ok(l.mayStart(job("x2", { company: "Other", title: "Other", site: "careers" }), "https://acme.com/jobs/9?gh_jid=10").ok, "control: another posting");
+  l.close();
+  // many rows: a duplicate check stays quick (the scan this replaced canonicalised every row inside the write lock)
+  const big = fresh(clock, { ...DEFAULT_CAPS, perDay: 1e6, perHour: 1e6, perSiteDay: 1e6, minGapMs: 0 });
+  for (let i = 0; i < 1500; i++) assert.ok(big.intend(job(String(i), { company: "C" + i, title: "T" + i }), "h", `https://acme.com/careers?gh_jid=${i}`).ok);
+  const t0 = Date.now();
+  for (let i = 0; i < 100; i++) big.mayStart(job("n" + i, { company: "N" + i, title: "M" + i }), `https://acme.com/careers?gh_jid=n${i}`);
+  const ms = Date.now() - t0;
+  assert.ok(ms < 20000, `100 duplicate checks on 1500 rows took ${ms} ms`); // a loose bound: the point is printed below, a tight one would flake on a slow runner
+  big.close();
+  console.log(`[ok] the canonical address is stored and indexed; an older ledger is backfilled on open; 100 checks on 1500 rows took ${ms} ms`);
+}
 console.log("\nALL LEDGER TESTS PASSED");
