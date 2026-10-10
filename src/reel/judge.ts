@@ -15,14 +15,24 @@ const LOOKALIKE: Record<string, string> = {
   "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0445": "x", "\u0443": "y", "\u0456": "i", "\u0455": "s", "\u0458": "j", "\u0501": "d", "\u051b": "q",
   "\u051d": "w", "\u04bb": "h", "\u0475": "v", "\u0461": "w", "\u03bd": "v", "\u03bf": "o", "\u03b1": "a", "\u03c1": "p", "\u03b9": "i", "\u03ba": "k", "\u03c5": "u", "\u03b5": "e",
 };
+
+// small capitals, Latin-extended and IPA letters, more Cyrillic and Armenian look-alikes (round-9 verifier: A149)
+Object.assign(LOOKALIKE, {
+  "\u1d00": "a", "\u0299": "b", "\u1d04": "c", "\u1d05": "d", "\u1d07": "e", "\ua730": "f", "\u0262": "g", "\u029c": "h", "\u026a": "i", "\u1d0a": "j", "\u1d0b": "k", "\u029f": "l", "\u1d0d": "m", "\u0274": "n", "\u1d0f": "o", "\u1d18": "p", "\u0280": "r", "\ua731": "s", "\u1d1b": "t", "\u1d1c": "u", "\u1d20": "v", "\u1d21": "w", "\u028f": "y", "\u1d22": "z",
+  "\u0251": "a", "\u0261": "g", "\u0131": "i", "\u00f8": "o", "\u0153": "o", "\u00e6": "a", "\u043a": "k", "\u043c": "m", "\u043d": "h", "\u0442": "t", "\u0432": "b", "\u0562": "b", "\u0566": "q", "\u0578": "n", "\u057d": "u", "\u0585": "o", "\u0581": "g", "\u0561": "a", "\u0570": "h",
+});
+
 const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).join("")}]`, "g");
 const fold = (s: string): string => s.toLowerCase().replace(LOOKALIKE_RE, (c) => LOOKALIKE[c] ?? c);
 
 /** The forms the refusal list is matched against (A149). `plain`: compatibility-normalised and folded, the inserted noise kept. `clean`: also with the noise removed (NFKD first, so a combining mark is a character of its own, then NFKC). `squashed`: `clean` with spaces, hyphens, underscores and dots taken out, for the stems only. */
-const forms = (t: string): { plain: string; clean: string; squashed: string } => {
+const LEET: Record<string, string> = { "4": "a", "@": "a", "3": "e", "1": "i", "!": "i", "0": "o", "$": "s", "5": "s", "7": "t", "|": "l" };
+const forms = (t: string): { plain: string; clean: string; leet: string } => {
   const plain = fold(t.normalize("NFKC")).replace(/\s+/g, " ").trim();
   const clean = fold(t.normalize("NFKD").replace(NOISE, "").normalize("NFKC")).replace(/\s+/g, " ").trim();
-  return { plain, clean, squashed: clean.replace(/[\s\-_.]+/g, "") };
+  // leet: digits and symbols that stand for letters, spaces kept, so the ordinary rules run on it; skeleton: letters only (no spaces, digits, punctuation), so a separator of any kind is gone
+  const leet = clean.replace(/[4@31!0$57|]/g, (c) => LEET[c] ?? c);
+  return { plain, clean, leet };
 };
 
 // Hard refusals: whatever the scores. A list, so a floor, not a classifier: it does not cover a phrase it was not written for, and the model's own risk label of 5 refuses too.
@@ -30,7 +40,9 @@ const GAP = "[\\s\\S]{0,120}";
 const CAPTCHA = "(?:h|re)?captchas?";
 const GATE = `${CAPTCHA}|paywalls?|log-?ins?|login walls?|2fa`;
 const REFUSE: Array<[RegExp, string]> = [
-  [new RegExp(`\\b(bypass\\w*|evad\\w*|circumvent\\w*|defeat\\w*|sidestep\\w*|side-step\\w*|work(?:s|ing)? around|get(?:s|ting)? (?:a)?round|beat\\w*|unlock\\w*|rotat\\w*|avoid\\w*|trick\\w*|disabl\\w*|umgeh\\w*)\\b${GAP}\\b(${CAPTCHA}|anti[- ]?bot|bot[- ]detection|rate[- ]?limit\\w*|paywalls?|paywalled|cloudflare|login walls?|2fa|two[- ]factor|detection|bans?|geo[- ]?blocks?|ip[- ]?(?:bans?|blocks?)|proxies|proxy|fingerprint\\w*)`), "circumvents an access control or anti-bot measure"],
+  [new RegExp(`\\b(bypass\\w*|evad\\w*|circumvent\\w*|defeat\\w*|sidestep\\w*|side-step\\w*|work(?:s|ing)? around|get(?:s|ting)? (?:a)?round|unlock\\w*|rotat\\w*|avoid\\w*|trick\\w*|disabl\\w*|umgeh\\w*)\\b${GAP}\\b(${CAPTCHA}|anti[- ]?bot|bot[- ]detection|rate[- ]?limit\\w*|paywalls?|paywalled|cloudflare|login walls?|2fa|two[- ]factor|detection|bans?|geo[- ]?blocks?|ip[- ]?(?:bans?|blocks?)|proxies|proxy|fingerprint\\w*)`), "circumvents an access control or anti-bot measure"],
+  // "beat" only with a direct object that is a control ("beat detection in music" is not one)
+  [new RegExp(`\\bbeat(?:s|ing)?\\s+(?:the\\s+|a\\s+)?(?:${CAPTCHA}|paywalls?|anti[- ]?bot|rate[- ]?limits?|bot[- ]detection|2fa|login walls?)`), "beats an access control"],
   // A150: "get past", "slip past", "skip" with a captcha, a paywall or a login
   [new RegExp(`\\b(?:get|gets|getting|got|slip|slips|slipping|slipped|sneak|sneaks|sneaking)\\s+(?:past|over|through)\\b${GAP}\\b(?:${GATE})`), "gets past an access control"],
   [new RegExp(`\\bskip(?:s|ped|ping)?\\b${GAP}\\b(?:${GATE})`), "skips an access control"],
@@ -47,14 +59,38 @@ const REFUSE: Array<[RegExp, string]> = [
   [new RegExp(`\\bimpersonat\\w*\\b${GAP}\\b(ceo|cfo|cto|executives?|employees?|staff|bank|family|parents?|officials?|police|brand|company|colleagues?|managers?|celebrit\\w*|politicians?)\\b`), "impersonates a real person or organisation"],
   [/\bdox(?:x+|xing|xed|es|ed)?\b/, "doxxes a person"],
 ];
-// the stems that are refused when spacing, punctuation or look-alike letters hide them (A149); matched on the squashed form only
-const STEMS = /bypass|evad|circumvent|sidestep|keylogg|ransomware|malware|phishing|spyware|ddos/;
+// stems matched on token-joined candidates (see hiddenStem): each letter may repeat, a "|" (a token boundary) may sit between any two letters, the stem must start at a token start and end at a token end, with an ordinary suffix allowed ("bypassing", "evaded", "keylogger"). So "b y p a s s", "bbypass", "byp4ss" and "key logger" match, "stand by passenger" and "add ostrich" do not (A149)
+const word = (w: string): string => [...w].map((c) => `${c}+\\|?`).join("");
+const SUFFIX = `(?:${["e", "es", "ed", "ing", "s", "er", "ers", "ger", "gers", "ging"].map(word).join("|")})?`;
+const SKELETON = new RegExp(`(?<![a-z])(?:${["bypass", "circumvent", "sidestep", "keylog", "ransomware", "malware", "phishing", "spyware", "stalkerware", "infostealer", "rootkit", "evad"].map(word).join("|")}|d+\\|?d+\\|?o+\\|?s+)${SUFFIX}(?:\\||$)`);
+const STEMS = /\b(?:ddos|bypass|circumvent|sidestep|keylogg|ransomware|malware|phishing|spyware|stalkerware|infostealer|rootkit|evade|evading)/;
+// words that make a malware or attack-tool name a defensive idea ("detects phishing emails", "malware-free", "ddos-resilient"): such a text is a question for the user (ask), never an implement and never a final refusal
+const DEFENSIVE = /\b(detect\w*|protect\w*|defen[cs]\w*|prevent\w*|block\w*|scan\w*|awareness|training|filter\w*|resilien\w*|monitor\w*|remov\w*|recogni[sz]\w*|mitigat\w*|anti)\b|-free\b|\bfree (?:of|from)\b/;
 
-/** The reason a text is refused, or undefined. The rules run over the plain and the clean forms. A stem counts only when squashing made it: "bypass the cache" is not refused, "by pass the cache" is. */
-function refusal(text: string): string | undefined {
+
+/** Candidate strings in which a refused stem could be hidden: every single token, and every run (up to 14 tokens) in which all but the last are four letters or fewer ("b y p a s s", "by pass", "key logger"), written with "|" at the token boundaries. A long word is never the first of a run, so "standby passenger" is not "bypass". Digits are tried as letters (k3ylogger) and as inserted noise (b4ypass). */
+function hiddenStem(f: { clean: string; leet: string }): boolean {
+  const forms = [f.leet, f.clean, f.clean.replace(/[0-9]+/g, "")];
+  for (const form of forms) {
+    const tokens = form.split(/[^a-z]+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i++) {
+      let run = "";
+      for (let j = i; j < tokens.length && j < i + 14; j++) {
+        run += `${tokens[j]}|`;
+        if (SKELETON.test(run)) return true;
+        if (tokens[j]!.length > 4) break;
+      }
+    }
+  }
+  return false;
+}
+
+/** The reason a text is refused (and whether it names an attack tool, which a defensive wording can soften to a question), or undefined. The rules run over the plain, the clean and the leet forms. */
+function refusal(text: string): { why: string; tool: boolean; defensive: boolean } | undefined {
   const f = forms(text);
-  for (const [re, why] of REFUSE) if (re.test(f.plain) || re.test(f.clean)) return why;
-  if (STEMS.test(f.squashed) && !STEMS.test(f.clean)) return "is written to hide a refused word with spaces, punctuation or look-alike letters";
+  const defensive = DEFENSIVE.test(f.clean) || DEFENSIVE.test(f.leet);
+  for (const [re, why] of REFUSE) if (re.test(f.plain) || re.test(f.clean) || re.test(f.leet)) return { why, tool: why === "is malware or an attack tool", defensive };
+  if (hiddenStem(f) && !STEMS.test(f.clean) && !STEMS.test(f.leet)) return { why: "is written to hide a refused word with spaces, punctuation, repeated letters or look-alike characters", tool: true, defensive };
   return undefined;
 }
 
@@ -66,7 +102,11 @@ export function judge(input: { scores: Scores; idea: string; claims?: string[]; 
   const scores = { relevance: sc("relevance"), value: sc("value"), feasibility: sc("feasibility"), novelty: sc("novelty"), risk: clamp(s.risk, 5) };
   // every text the reader produced (A150): the idea, the claims, the summary and what was shown
   const why = refusal([input.idea, ...(input.claims ?? []), input.about ?? "", ...(input.shown ?? [])].join("\n"));
-  if (why) return { verdict: "refuse", reason: `refused: the text ${why}`, scores };
+  if (why) {
+    // an attack tool named in a defensive sentence is a question for the user, not a final refusal and not an implement
+    if (why.tool && why.defensive) return { verdict: "ask", reason: `the text names an attack tool in a defensive sense (${why.why}); the user decides`, scores };
+    return { verdict: "refuse", reason: `refused: the text ${why.why}`, scores };
+  }
   if (scores.risk >= 5) return { verdict: "refuse", reason: "refused: the reader rated the risk 5 of 5", scores };
   if ((input.instructionsToAnAI ?? []).length) return { verdict: scores.value >= th.value ? "ask" : "skip", reason: "the reel contains text addressed to an AI system; it is never built without the user's say-so", scores };
   const checks: Array<[string, boolean]> = [["value", scores.value >= th.value], ["relevance", scores.relevance >= th.relevance], ["feasibility", scores.feasibility >= th.feasibility], ["risk", scores.risk <= th.risk]];

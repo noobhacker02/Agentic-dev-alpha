@@ -4,7 +4,7 @@
 import assert from "node:assert";
 import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Ideas } from "../dist/reel/ideas.js";
 import { ideasCommand } from "../dist/reel/ideas-command.js";
@@ -302,6 +302,27 @@ add("link:nl", "trailing\n", "pass");
   assert.match(noTty(["decide", "x", "yes"]).err, /whole number/);
   assert.match(ideasCommand({ _: ["list"] }, { home: h6, clock }).out, /#2 \[pending\]/, "idea 2 is still pending");
   console.log("  terminal check ok");
+}
+
+
+// 15. The real binary (conductor, round-9 verifier: the terminal check was never wired in src/cli.ts): without a terminal `decide` refuses; --yes-i-am-here is a flag, not a word that eats the id; under a real pty the terminal check passes
+{
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "cli.js");
+  const h = mkdtempSync(join(tmpdir(), "ideas-cli-bin-"));
+  const st = new Ideas(join(h, "ideas.db"), clock); st.add({ source: "bin1", about: "about", idea: "an idea", scores: "{}", verdict: "ask", reason: "r" }); const id = st.list()[0].id; st.close();
+  const run = (args, input) => spawnSync(process.execPath, ["--experimental-sqlite", "--no-warnings", cli, "ideas", ...args], { env: { ...process.env, AGENT_LOOP_HOME: h }, encoding: "utf8", input: input ?? "", timeout: 30000 });
+  const noTty = run(["decide", String(id), "yes"]);
+  assert.ok(noTty.status === 1 && /terminal/.test(noTty.stderr), `no terminal: ${JSON.stringify(noTty)}`);
+  assert.equal(new Ideas(join(h, "ideas.db")).get("bin1").decision, "pending", "decided without a person");
+  const flag = run(["decide", "--yes-i-am-here", "999", "yes"]);
+  assert.ok(flag.status === 1 && /no idea #999/.test(flag.stderr), `the flag ate the id: ${JSON.stringify(flag)}`);
+  if (spawnSync("script", ["--version"]).status === 0 && process.platform === "linux") {
+    const pty = spawnSync("script", ["-qec", `${process.execPath} --experimental-sqlite --no-warnings ${cli} ideas decide ${id} yes`, "/dev/null"], { env: { ...process.env, AGENT_LOOP_HOME: h }, encoding: "utf8", timeout: 30000 });
+    assert.match(pty.stdout + pty.stderr, /Recorded/, `under a pty: ${JSON.stringify(pty)}`);
+    assert.equal(new Ideas(join(h, "ideas.db")).get("bin1").decision, "yes");
+  } else console.log("  (no `script` here: the pty case is skipped)");
 }
 
 console.log("ideas-cli: all checks passed");

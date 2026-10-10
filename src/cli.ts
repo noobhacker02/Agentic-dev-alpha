@@ -29,7 +29,7 @@ import { installFatalHandlers } from "./fatal.js";
 // Flags that never take a value. Without this, `--no-approval "<task>"` swallows the task string
 // as --no-approval's value (found by test/stress/pipeline_logic.sh case F) — a bare boolean flag
 // must never consume the next token just because that token doesn't start with "--".
-const BOOLEAN_FLAGS = new Set(["no-approval", "browser", "strict-approval", "plain", "desktop", "dry-run", "json", "trust-project"]);
+const BOOLEAN_FLAGS = new Set(["yes-i-am-here", "no-approval", "browser", "strict-approval", "plain", "desktop", "dry-run", "json", "trust-project"]);
 
 function parseArgs(argv: string[]) {
   const args = { _: [] as string[] } as Record<string, string | boolean> & { _: string[] };
@@ -267,7 +267,7 @@ async function main() {
   }
 
   if (cmd === "ideas") {
-    const r: CommandResult = ideasCommand(parseArgs(argv.slice(1)), {});
+    const r: CommandResult = ideasCommand(parseArgs(argv.slice(1)), { isTTY: process.stdin.isTTY === true });
     if (r.out) process.stdout.write(r.out);
     if (r.err) process.stderr.write(r.err);
     process.exitCode = r.code;
