@@ -20,6 +20,10 @@ export class Ideas {
   add(r: Omit<IdeaRow, "id" | "decision" | "createdAt">): boolean {
     return Number(this.db.prepare("INSERT OR IGNORE INTO ideas (source, about, idea, scores, verdict, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(r.source, r.about, r.idea, r.scores, r.verdict, r.reason, this.clock()).changes) === 1;
   }
+  getById(id: number): IdeaRow | undefined {
+    const r = this.db.prepare("SELECT id, source, about, idea, scores, verdict, reason, decision, created_at AS createdAt FROM ideas WHERE id = ?").get(id) as IdeaRow | undefined;
+    return r ? { ...r } : undefined;
+  }
   decide(id: number, decision: "yes" | "no"): boolean {
     return Number(this.db.prepare("UPDATE ideas SET decision = ? WHERE id = ? AND decision = 'pending'").run(decision, id).changes) === 1;
   }
