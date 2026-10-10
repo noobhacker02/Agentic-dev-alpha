@@ -9,7 +9,14 @@ export interface Summary {
 }
 export type ReadResult = { ok: true; summary: Summary } | { ok: false; reason: string };
 
-const cap = (s: unknown, n: number): string => (typeof s === "string" ? s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f​-‏‪-‮⁦-⁩]/g, "").trim().slice(0, n) : "");
+// every field the reader fills is one line: a line break would let a reel write lines of its own into the report (A141), and invisible characters are dropped (A137)
+const cap = (s: unknown, n: number): string => (typeof s === "string" ? s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f­​-‏‪-‮⁠-⁯﻿]/g, "").replace(/\s+/g, " ").trim().slice(0, n) : "");
+/** Anything but an empty list means the reader found text addressed to an AI: a string, an object, `true`, a list of objects (A138). Fails closed. */
+const foundInstructions = (v: unknown): string[] => {
+  if (v === undefined || v === null || v === false || v === "" || (Array.isArray(v) && v.length === 0)) return [];
+  const items = Array.isArray(v) ? v : [v];
+  return items.slice(0, 10).map((x) => cap(typeof x === "string" ? x : JSON.stringify(x) ?? String(x), 300) || "(unreadable)");
+};
 const norm = (s: string): string => s.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 
 export function parseReaderOutput(raw: string, ev: Evidence): ReadResult {
@@ -29,13 +36,17 @@ export function parseReaderOutput(raw: string, ev: Evidence): ReadResult {
     const frame = Number.isInteger(c?.cite?.frame) ? c.cite.frame : undefined;
     const quote = cap(c?.cite?.quote, 300);
     const frameOk = frame === undefined || (frame >= 0 && frame < ev.frames);
-    const quoteOk = !quote || (norm(quote).length >= 4 && hay.some((h) => h.includes(norm(quote))));
+    // a quote is real if it is in the caption or the text, is long enough to mean something (12 characters), and shares a content word with the claim it is meant to support (A142)
+    const words = (t: string) => new Set(norm(t).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4));
+    const shares = [...words(text)].some((w) => words(quote).has(w));
+    const quoteOk = !quote || (norm(quote).length >= 12 && shares && hay.some((h) => h.includes(norm(quote))));
     const cited = frame !== undefined || !!quote;
     if (!text || !cited || !frameOk || !quoteOk) { dropped++; continue; }
     claims.push({ text, kind, cite: { ...(frame !== undefined ? { frame } : {}), ...(quote ? { quote } : {}) } });
   }
-  // "demonstrated" needs a frame: words alone can only assert
-  for (const c of claims) if (c.kind === "demonstrated" && c.cite.frame === undefined) c.kind = "asserted";
+  // "demonstrated" needs a frame, and until frame text is read (no OCR yet) a frame cannot be checked: every claim is only asserted when there is no frame text to check it against (A142)
+  const framesChecked = ev.frameText.some((t) => t.trim());
+  for (const c of claims) if (c.kind === "demonstrated" && (c.cite.frame === undefined || !framesChecked)) c.kind = "asserted";
   const strs = (a: unknown, n: number, m: number) => (Array.isArray(a) ? a.slice(0, n).map((x) => cap(x, m)).filter(Boolean) : []);
   return {
     ok: true,
@@ -43,7 +54,7 @@ export function parseReaderOutput(raw: string, ev: Evidence): ReadResult {
       about, shown: strs(j.shown, 10, 300), claims, idea: cap(j.idea, 600),
       // what was perceived comes from the evidence we gave, never from what the model says it saw
       perception: { caption: ev.caption.length > 0, frames: ev.frames, transcript: ev.transcript.length > 0 },
-      instructionsToAnAI: strs(j.instructions_to_an_ai_found, 10, 300), droppedClaims: dropped,
+      instructionsToAnAI: foundInstructions(j.instructions_to_an_ai_found), droppedClaims: dropped,
     },
   };
 }

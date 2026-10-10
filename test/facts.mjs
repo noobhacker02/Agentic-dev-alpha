@@ -51,6 +51,9 @@ const bad = (raw, re) => { const r = parseFacts(raw); assert.ok(!r.ok && re.test
   // A122: a yes/no question that goes on to ask something else is not the stored fact
   for (const l of ["Are you authorized to work in this country and willing to undergo a background check?", "Are you legally authorized to work in this country and are you over 18?", "Are you authorized to work in this country, and willing to relocate?", "Will you require visa sponsorship? Are you willing to travel?", "Are you eligible to work and do you consent to a drug screening?"])
     assert.notStrictEqual(q(l).kind, "fact", `${l} -> ${JSON.stringify(q(l))}`);
+  // A129: a second clause of any kind, whatever its words
+  for (const l of ["Are you authorized to work here & willing to relocate?", "Are you authorized to work here + willing to relocate?", "Are you authorized to work here / willing to relocate?", "Are you authorized to work here, subject to a background check?", "Are you authorized to work here, contingent on a drug test?", "Are you authorized to work here, including on weekends?", "Are you authorized to work here or do you hold a visa?", "Are you authorized to work here and able to start on Monday?"])
+    assert.notStrictEqual(q(l).kind, "fact", `${l} -> ${JSON.stringify(q(l))}`);
   for (const l of ["Are you legally authorized to work in this country?", "Will you now or in the future require visa sponsorship?", "Do you have the right to work in this country?"])
     assert.strictEqual(q(l).kind, "fact", `control ${l} -> ${JSON.stringify(q(l))}`);
   // invisible and full-width characters do not hide a phrase (A113); other wording of an attestation and other kinds of identity numbers (A97)

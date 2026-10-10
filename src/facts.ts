@@ -113,6 +113,8 @@ const ATTEST_TEXT = new RegExp([
 export const otherPersonIn = (text: string): boolean => /emergency contact|\breferees?\b|\breferences?\b(?!\s*(number|no\b|id\b|code|#|\d))|who referred you|referred by|\bnext of kin\b|\bguarantor\b|\bsupervisor'?s? (name|email|phone)/.test(flat(text));
 export const attestationIn = (text: string): boolean => ATTEST_TEXT.test(flat(text));
 
+/** A second clause of any kind in the label: punctuation that joins or conditions ("," ";" "&" "+" "/") or a word that does ("and", "or", "subject to", "including", "if"). The word list of what it may go on to ask is a floor; a label with any clause marker has no single fact (A129). */
+const CLAUSE = /[,;&+\/]|\b(and|or|but|subject to|contingent|including|includes|if|provided|while|plus|also|with)\b/;
 /** A yes/no question that goes on to ask something else ("authorized to work ... and willing to undergo a background check", "... and are you over 18"): "Yes" to the whole is not the stored fact (adversary round 7, A122). */
 const ALSO_ASKS = /\b(and|also|plus|as well as|while|provided)\b.*\b(willing|are you|do you|will you|would you|can you|have you|background|relocat\w*|drug|over 18|18 years|commut\w*|travel|clearance|security check|screening|agree|consent|certify)\b/;
 /** What a field's label asks for. The order matters: a forbidden ask is judged before anything that could be filled. */
@@ -126,7 +128,7 @@ export function classifyQuestion(rawLabel: string, opts: { checkbox?: boolean } 
   for (const [key, re] of RULES) if (re.test(l)) {
     // a yes/no fact is only the answer to a plain question about the applicant: not one that is negated ("able to work without visa sponsorship", "not authorized") and not one about somebody else
     // ("your spouse", "sponsor name (employee who referred you)") (adversary round 5, A87, A95)
-    if ((key === "needs_sponsorship" || key === "work_authorisation") && (!/\byou\b|\byour\b/.test(l) || NEGATION.test(l) || THIRD_PARTY.test(l) || NAMES_A_PLACE.test(l) || ALSO_ASKS.test(l) || (rawLabel.match(/\?/g) ?? []).length > 1)) return { kind: "unknown" };
+    if ((key === "needs_sponsorship" || key === "work_authorisation") && (!/\byou\b|\byour\b/.test(l) || NEGATION.test(l) || THIRD_PARTY.test(l) || NAMES_A_PLACE.test(l) || ALSO_ASKS.test(l) || CLAUSE.test(rawLabel.toLowerCase().replace(/\bnow or in (the )?future\b/g, "")) || (rawLabel.match(/\?/g) ?? []).length > 1)) return { kind: "unknown" };
     return { kind: "fact", key };
   }
   if (ATTESTATION.test(l)) return { kind: "attestation" };

@@ -20,14 +20,17 @@ const norm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[
 /** `norm`, or the text as it is when nothing but punctuation was in it (so "???" and "..." stay two different titles). */
 const canon = (s: string): string => norm(s) || s.normalize("NFKC").trim().toLowerCase();
 /** A page's address without its query, fragment, trailing slash or a final "/apply": the same posting under another spelling of the address is the same posting (A106). */
-// tracking parameters never name a posting; every other query parameter may (`?gh_jid=222`), and so may a hash route (`#/jobs/42`) (A115)
-const TRACKING = /^(utm(_.*)?|gh_src|source|ref|ref_src|referrer|lever-source|lever-origin|fbclid|gclid|igsh|src|trk|trackingid|campaign)$/i;
+// the query parameters that name a posting (`?gh_jid=222`); every other parameter (a referrer, a campaign, a click id, a session) is dropped, because a deny-list of trackers is always one parameter short (A115, A133)
+const ID_PARAMS = new Set(["gh_jid", "jid", "jobid", "job_id", "job", "jobs", "id", "req", "reqid", "req_id", "requisition", "requisitionid", "posting", "postingid", "pid", "token", "jvi", "jk", "vjk", "currentjobid", "listing", "position", "positionid", "opening", "vacancy", "vacancyid", "adid", "ad", "lever-id", "oid", "gh_src_id"]);
 export const canonUrl = (u: string): string => {
   try {
     const x = new URL(u);
-    const q = [...x.searchParams.entries()].filter(([k]) => !TRACKING.test(k)).map(([k, v]) => `${k.toLowerCase()}=${v}`).sort().join("&");
+    const q = [...x.searchParams.entries()].filter(([k, v]) => ID_PARAMS.has(k.toLowerCase()) && v !== "").map(([k, v]) => `${k.toLowerCase()}=${v.toLowerCase()}`).filter((e, i, a) => a.indexOf(e) === i).sort().join("&");
     const route = /^#[/!]/.test(x.hash) ? x.hash.toLowerCase() : "";
-    return `${x.host.toLowerCase()}${x.pathname.replace(/\/apply\/?$/i, "").replace(/\/+$/, "")}${q ? `?${q}` : ""}${route}`;
+    let path = x.pathname;
+    try { path = decodeURIComponent(path); } catch { /* keep it as it is */ }
+    path = path.toLowerCase().replace(/\/{2,}/g, "/").replace(/\/(index|default)\.(html?|php|aspx?)$/i, "").replace(/\/apply\/?$/i, "").replace(/\/+$/, "");
+    return `${x.host.toLowerCase().replace(/^www\./, "")}${path}${q ? `?${q}` : ""}${route}`;
   } catch { return ""; }
 };
 const siteOf = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
@@ -124,7 +127,7 @@ export class Ledger {
       // the whole decision is made again here, inside the write lock: the caps and the duplicate check done at the start of a run may be out of date by the time the form is filled, with other runs going at once (A105)
       const again = this.mayStart(job, url);
       if (!again.ok) { this.db.exec("ROLLBACK"); return { ok: false, why: again.why, ...(again.waitMs ? { waitMs: again.waitMs } : {}), ...(again.duplicateOf ? { duplicateOf: again.duplicateOf } : {}) }; }
-      const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 500));
+      const r = this.db.prepare("INSERT INTO applications (key, site, company, title, state, form_hash, at, url) VALUES (?, ?, ?, ?, 'intended', ?, ?, ?)").run(jobKey(job), siteOf(job.site), job.company, job.title, formHash, this.now(), url.slice(0, 2000));
       this.db.exec("COMMIT");
       return { ok: true, seq: Number(r.lastInsertRowid) };
     } catch (err) {

@@ -538,6 +538,53 @@ const reset = () => { for (const k of Object.keys(board.applications)) delete bo
     assert.strictEqual(count("1"), 0); assert.strictEqual(l.all().length, 0);
     l.close();
   }
+  // A128: a script's fetch during the fill (no navigation, no new address) is a request that wrote: the run is "unverified" with the row kept, and the next run is refused
+  reset();
+  {
+    const l = ledger();
+    const r = await run("1", { ledger: l }, "fetchsubmit");
+    assert.ok(count("1") >= 1, "the fixture did not post during the fill");
+    assert.strictEqual(r.status, "unverified", `a page that posted by script during the fill was reported as ${JSON.stringify(r)}`);
+    assert.strictEqual(l.all().length, 1);
+    const n = count("1");
+    assert.notStrictEqual((await run("1", { ledger: l }, "fetchsubmit")).status, "submitted");
+    assert.strictEqual(count("1"), n, "a second run sent it again");
+    l.close();
+  }
+  // A130, A131: a multiple-select that arrives with a choice, and an input the page calls a link
+  for (const [chaos, re] of [["listboxpre", /already made/], ["roleinput", /value the page put there/]]) {
+    reset();
+    const l = ledger();
+    const r = await run("1", { ledger: l }, chaos);
+    assert.strictEqual(r.status, "parked", `${chaos}: ${JSON.stringify(r)}`);
+    assert.ok(re.test(r.reasons.join(" ")), `${chaos}: ${JSON.stringify(r.reasons)}`);
+    assert.strictEqual(count("1"), 0); assert.strictEqual(l.all().length, 0);
+    l.close();
+  }
+  // A132: "Meta" is not "Metabase"
+  reset();
+  {
+    const l = ledger();
+    const r = await run("8", { ledger: l, job: { ...JOB("8"), company: "Meta" } });
+    assert.strictEqual(r.status, "parked", JSON.stringify(r)); assert.ok(/does not look like the posting/.test(r.reasons.join(" ")), JSON.stringify(r.reasons));
+    assert.strictEqual(count("8"), 0);
+    assert.strictEqual((await run("8", { ledger: l })).status, "submitted", "control: the right company");
+    l.close();
+  }
+  // A135: HTTP 999 is the site speaking; A134: a challenge met while verifying pauses the host too
+  reset();
+  {
+    const l = ledger();
+    assert.strictEqual((await run("1", { ledger: l }, "http999")).status, "paused-site");
+    assert.ok(l.paused("board") && l.paused("host:127.0.0.1"));
+    l.close();
+    reset();
+    const l2 = ledger();
+    assert.strictEqual((await run("3", { ledger: l2 }, "lost")).status, "unverified");
+    assert.strictEqual(await verifyAttempt(tools, l2, l2.unaccounted()[0], `${board.url}/jobs/3?chaos=challenge`), "unknown");
+    assert.ok(l2.paused("board") && l2.paused("host:127.0.0.1"), "a challenge while verifying paused only the label");
+    l2.close();
+  }
   // A121 and A123: an ARIA checkbox that arrives ticked, and a value the page put in a number box
   for (const [chaos, re] of [["ariatick", /checked/], ["numbers", /value the page put there/]]) {
     reset();

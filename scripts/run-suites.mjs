@@ -8,7 +8,9 @@ import { join } from "node:path";
 
 const args = process.argv.slice(2);
 const ti = args.indexOf("--timeout-min");
-const timeoutMs = (ti >= 0 ? Number(args.splice(ti, 2)[1]) : 10) * 60_000;
+const minutes = ti >= 0 ? Number(args.splice(ti, 2)[1]) : 10;
+if (!(minutes > 0) || !Number.isFinite(minutes)) { console.error("[run-suites] --timeout-min needs a positive number of minutes"); process.exit(2); }
+const timeoutMs = minutes * 60_000;
 const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
 const suites = args.length ? args : [...new Set(scripts.test.match(/test:[a-z0-9-]+/g) ?? [])];
 
@@ -28,7 +30,7 @@ const killTree = (child) => {
 };
 // an interrupt ends the running suite's whole tree and removes the temporary directories instead of leaving gigabytes behind (A127)
 const bail = (sig) => () => { for (const c of live) killTree(c); try { rmSync(base, { recursive: true, force: true }); } catch { /* best effort */ } process.exit(sig === "SIGINT" ? 130 : 143); };
-process.on("SIGINT", bail("SIGINT")); process.on("SIGTERM", bail("SIGTERM"));
+process.on("SIGINT", bail("SIGINT")); process.on("SIGTERM", bail("SIGTERM")); process.on("SIGHUP", bail("SIGTERM"));
 
 const run = (suite) => new Promise((resolve) => {
   const mine = mkdtempSync(join(base, `${suite.replace(/[^a-z0-9-]/g, "")}-`));

@@ -5,7 +5,7 @@ import assert from "node:assert";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Ledger, jobKey, DEFAULT_CAPS } from "../dist/ledger.js";
+import { Ledger, jobKey, canonUrl, DEFAULT_CAPS } from "../dist/ledger.js";
 
 const dir = mkdtempSync(join(tmpdir(), "ledger-"));
 let n = 0;
@@ -350,5 +350,23 @@ const job = (id, extra = {}) => ({ site: "linkedin", company: "Acme", title: "En
   assert.ok(!c.retract(k.seq) && c.all().length === 1, "a confirmed row was retracted");
   l.close(); r.close(); c.close();
   console.log("[ok] intend says whether it refused a duplicate or a cap; a retracted intent frees the posting and the slot; a confirmed row cannot be retracted");
+}
+
+// 10. Adversary round 8 (A133): the address test keeps only the parameters that name a posting
+{
+  const same = [
+    ["https://acme.com/jobs/123?refId=aaa&lipi=1", "https://acme.com/jobs/123?refId=bbb&lipi=2"], ["https://acme.com/jobs/123?mc_cid=1", "https://acme.com/jobs/123"], ["https://www.acme.com/jobs/123", "https://acme.com/jobs/123"],
+    ["https://acme.com/Jobs/123", "https://acme.com/jobs/123"], ["https://acme.com//jobs//123", "https://acme.com/jobs/123"], ["https://acme.com/jobs/%31%32%33", "https://acme.com/jobs/123"],
+    ["https://acme.com/jobs?id=1&id=1", "https://acme.com/jobs?id=1"], ["https://acme.com/jobs/123/index.html", "https://acme.com/jobs/123"], ["https://acme.com/jobs?gh_jid=5&sessionid=zzz", "https://acme.com/jobs?gh_jid=5"],
+  ];
+  for (const [a, b] of same) assert.strictEqual(canonUrl(a), canonUrl(b), `${a} and ${b} are one posting`);
+  const diff = [["https://acme.com/jobs?gh_jid=5", "https://acme.com/jobs?gh_jid=6"], ["https://acme.com/jobs/123", "https://acme.com/jobs/124"], ["https://acme.com/jobs?id=1", "https://acme.com/jobs?id=2"], ["https://acme.com/#/job/1", "https://acme.com/#/job/2"]];
+  for (const [a, b] of diff) assert.notStrictEqual(canonUrl(a), canonUrl(b), `${a} and ${b} are two postings`);
+  const l = fresh(() => now, { ...DEFAULT_CAPS, minGapMs: 0 });
+  const long = "https://acme.com/jobs/9?" + "a=1&".repeat(300) + "gh_jid=77";
+  assert.ok(l.intend(job("u1"), "h", long).ok);
+  assert.ok(!l.mayStart(job("u2", { title: "Other", company: "Other" }), long).ok, "a long address was cut in the middle of the parameter that names the posting");
+  l.close();
+  console.log("[ok] the address test: nine spellings of one posting are one, four postings that differ in an id are different, a long address is kept whole");
 }
 console.log("\nALL LEDGER TESTS PASSED");

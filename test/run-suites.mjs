@@ -48,4 +48,20 @@ const start = (dir, tmp, extra = []) => {
   assert.ok(!readdirSync(tmp).some((n) => n.startsWith("suite-tmp-")), "an interrupt left suite-tmp-* behind");
   console.log("[ok] an interrupt ends the tree and leaves no suite-tmp-* directory");
 }
+// 3. a closed terminal (SIGHUP) ends the tree too; a timeout that is not a positive number is refused instead of failing every suite (A136)
+{
+  const { dir, tmp } = project(5000);
+  const run = start(dir, tmp);
+  await sleep(1500);
+  run.p.kill("SIGHUP");
+  await run.done;
+  await sleep(5500);
+  assert.ok(!existsSync(join(dir, "finished.txt")), "the suite survived a hang-up and finished");
+  assert.ok(!readdirSync(tmp).some((n) => n.startsWith("suite-tmp-")), "a hang-up left suite-tmp-* behind");
+  for (const bad of ["abc", "0", "-3"]) {
+    const p2 = project(100); const r = await start(p2.dir, p2.tmp, ["--timeout-min", bad]).done;
+    assert.ok(r.code === 2 && /needs a positive number/.test(r.out), `--timeout-min ${bad}: ${r.code} ${r.out}`);
+  }
+  console.log("[ok] a hang-up ends the tree and cleans up; a bad --timeout-min is refused with exit 2");
+}
 console.log("\nALL RUN-SUITES TESTS PASSED");

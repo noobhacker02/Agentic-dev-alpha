@@ -15,6 +15,7 @@ export async function startBoard(opts = {}) {
     { id: "5", title: "Senior Platform Engineer", company: "Acme" },
     { id: "6", title: "403(b) Plan Administrator", company: "Umbrella" },
     { id: "7", title: "Security Check Analyst", company: "Contoso" },
+    { id: "8", title: "Mobile Engineer", company: "Metabase" },
   ] };
   const html = (res, status, title, body) => { res.writeHead(status, { "content-type": "text/html; charset=utf-8" }); res.end(`<!doctype html><title>${title}</title>${body}`); };
   const chaosFor = (url) => ({ ...board.chaos, ...Object.fromEntries((url.searchParams.get("chaos") ?? "").split(",").filter(Boolean).map((k) => [k, true])) });
@@ -35,7 +36,7 @@ export async function startBoard(opts = {}) {
       <label for="spons">Will you now or in the future require visa sponsorship? *</label>
       <select id="spons" name="spons" required><option value="">Select</option><option>Yes</option><option>No</option></select>
       <label for="years">How many years of professional experience do you have? *</label><input id="years" name="years" required>
-      <label for="cv">${c.accentcv ? "Résumé" : "Resume"} *</label><input id="cv" name="cv" type="file" required${c.uploadsubmit ? ' onchange="this.form.submit()"' : ""}>
+      <label for="cv">${c.accentcv ? "Résumé" : "Resume"} *</label><input id="cv" name="cv" type="file" required${c.fetchsubmit ? ` onchange="fetch('/jobs/${job.id}/apply',{method:'POST',body:new FormData(this.form)});var d=document.createElement('div');d.innerHTML='<label for=ref2>Referral code</label><input id=ref2 name=ref2>';document.getElementById('f').insertBefore(d,document.getElementById('go'))"` : ""}${c.uploadsubmit ? ' onchange="this.form.submit()"' : ""}>
       ${c.twocv ? `<label for="cv2">Additional CV (optional)</label><input id="cv2" name="cv2" type="file">` : ""}
       <label for="cover">Cover letter</label><textarea id="cover" name="cover"></textarea>
       ${c.ssn ? `<label for="ssn">Social Security Number *</label><input id="ssn" name="ssn" required>` : ""}
@@ -61,6 +62,8 @@ export async function startBoard(opts = {}) {
       ${c.rolebtn ? `<input type="checkbox" checked role="button" aria-disabled="true" aria-label="Share my data with partners" name="share">` : ""}
       ${c.ariatick ? `<div role="checkbox" aria-checked="true" aria-label="Share my data with partners" tabindex="0"></div><input type="hidden" name="share2" value="yes">` : ""}
       ${c.numbers ? `<label for="nn">Referral count</label><input id="nn" name="nn" type="number" value="3">` : ""}
+      ${c.listboxpre ? `<label for="pp2">Share my profile with partners</label><select id="pp2" name="pp2" multiple><option selected>Yes, share</option><option>No</option></select>` : ""}
+      ${c.roleinput ? `<input name="partner" value="SHARE-WITH-ALL" role="link" aria-label="Partner sharing">` : ""}
       ${c.radiopre ? `<label><input type="radio" name="consent" checked> Share my details with partners</label>` : ""}
       ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (c["honey" + i] ? [
         `<input aria-label="Website" name="hp1" style="position:absolute;clip:rect(0,0,0,0)">`,
@@ -123,6 +126,7 @@ export async function startBoard(opts = {}) {
         return html(res, 200, "Application received", `<h1>Application received</h1><p>Thank you for applying to ${job.title}.</p>${c.footer ? `<p>This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply. We watch for unusual activity on our systems; report any to security.</p>` : ""}`);
       }
       if (m[2]) {
+        if (c.http999) return html(res, 999, "Denied", "<p>Request denied.</p>");
         if (c.http429) return html(res, 429, "Busy", "<p>Please come back later.</p>");
         if (c.http503) return html(res, 503, "Busy", "<p>Please come back later.</p>");
         if (c.http403) return html(res, 403, "Busy", "<p>Please come back later.</p>");

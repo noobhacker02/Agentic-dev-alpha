@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 
 const HOSTS = new Set(["instagram.com", "www.instagram.com", "m.instagram.com", "instagr.am", "www.instagr.am"]);
 const KINDS = new Set(["reel", "reels", "p", "tv"]);
+const RESERVED = new Set(["audio", "explore", "tags", "popular", "accounts", "stories", "direct", "reels", "reel", "p", "tv", "locations", "web"]);
 const SHORTCODE = /^[A-Za-z0-9_-]{5,24}$/;
 
 export type Intake = { ok: true; kind: "url"; key: string; canonical: string; shortcode: string } | { ok: false; reason: string };
@@ -16,10 +17,12 @@ export function canonicalReelUrl(raw: string): Intake {
   if (u.port && u.port !== "443" && u.port !== "80") return { ok: false, reason: "a link on another port is not an Instagram link" };
   if (!HOSTS.has(u.hostname.toLowerCase().replace(/\.$/, ""))) return { ok: false, reason: "this flow reads Instagram reel links; for another site, give it a file or the text" };
   const parts = u.pathname.split("/").filter(Boolean);
-  // /reel/<code>/, /reels/<code>/, /p/<code>/, /tv/<code>/, or /<account>/reel/<code>/
-  const at = parts.findIndex((p) => KINDS.has(p.toLowerCase()));
-  const code = at >= 0 ? parts[at + 1] : undefined;
-  if (!code || !SHORTCODE.test(code)) return { ok: false, reason: "no reel or post code in that link" };
+  // exactly /<reel|reels|p|tv>/<code>/ or /<account>/<reel|p|tv>/<code>/, anchored at the start (A147): /reels/audio/<n>/, /explore/tags/p/<x>/ and /stories/x/reel/<y> are not reels
+  const k = (i: number) => KINDS.has((parts[i] ?? "").toLowerCase());
+  let code: string | undefined;
+  if (parts.length === 2 && k(0)) code = parts[1];
+  else if (parts.length === 3 && k(1) && !RESERVED.has((parts[0] ?? "").toLowerCase())) code = parts[2];
+  if (!code || !SHORTCODE.test(code) || RESERVED.has(code.toLowerCase())) return { ok: false, reason: "no reel or post code in that link" };
   return { ok: true, kind: "url", key: `ig:${code}`, canonical: `https://www.instagram.com/reel/${code}/`, shortcode: code };
 }
 

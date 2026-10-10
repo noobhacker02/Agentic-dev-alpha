@@ -131,6 +131,8 @@ export const challenged = (inspect: string, jobTitle?: string): boolean => {
 const CAPTCHA_ON_FORM = /captcha|i(?:'|\u2019)?m not a robot|are you (a )?(human|robot)/i;
 const CHALLENGE_STRONG = /^\s*(just a moment|attention required|security check|verify you are human|verifying you are human|access denied|checking your browser|checking if the site connection)/i;
 /** The status line of an `open` answer ("HTTP 429."): a site that says 429, 403 or 503 is asked to rest, not asked again. */
+/** Statuses that are the site speaking ("slow down", "go away", "not for you"): the site is paused, not retried (A82, A135). */
+const slowDown = (c: number | undefined): boolean => c !== undefined && ([401, 403, 407, 420, 429, 451, 503, 509, 999].includes(c) || (c >= 520 && c <= 529));
 const inspectStatus = (inspect: string): number | undefined => { const m = /^HTTP: (\d{3})$/m.exec(inspect); return m ? Number(m[1]) : undefined; };
 const httpStatus = (openText: string): number | undefined => { const m = /\bHTTP (\d{3})\b/.exec(openText); return m ? Number(m[1]) : undefined; };
 
@@ -161,7 +163,8 @@ function namesJob(title: string, text: string, job: Job, needCompany = true): bo
   const titled = candidates.some((c) => wrapper(c) === want || wrapper(c.replace(/\s[-|\u2013\u2014]\s.*$/, "")) === want);
   // and the company is named where the posting is headed (the title or the first lines), not anywhere: a sidebar's "also hiring at Acme" under another company's posting does not make it Acme's (A104, A117)
   const head = [title, ...text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 6)].join("\n");
-  return titled && (!needCompany || plain(head).includes(plain(job.company)));
+  const co = plain(job.company);
+  return titled && (!needCompany || (co.length >= 2 && ` ${plain(head)} `.includes(` ${co} `)));
 }
 /** What a failing tool says, with the user's own words taken out of it: a park reason is printed. */
 const redact = (text: string, secrets: string[]): string => secrets.filter((v) => v.length >= 3).reduce((t, v) => t.split(v).join("[your fact]"), text);
@@ -188,7 +191,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   if (opened.isError) return { status: "error", why: `the application page could not be opened: ${redact(textOf(opened), secrets).slice(0, 200)}` };
   // a status that says "slow down" or "go away" is the site speaking, whatever the body says (A82)
   const code = httpStatus(textOf(opened));
-  if (code === 429 || code === 403 || code === 503 || code === 401) { pauseSite(`HTTP ${code}`); return { status: "paused-site", why: `the site answered HTTP ${code}; the site is paused and is not retried by the agent` }; }
+  if (slowDown(code)) { pauseSite(`HTTP ${code}`); return { status: "paused-site", why: `the site answered HTTP ${code}; the site is paused and is not retried by the agent` }; }
   if (code !== undefined && code >= 400) return { status: "error", why: `the application page answered HTTP ${code}` };
   let page = textOf(await d.tools.call("inspect", {}));
   if (challenged(page, d.job.title)) { pauseSite("a challenge or a rate limit"); return { status: "paused-site", why: "the site showed a challenge or a rate limit; the site is paused and is not retried by the agent" }; }
@@ -227,7 +230,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
     }
     if (f.checked === true) continue; // reported above
     // a select that arrives with a choice made is an answer the page gave (A112)
-    if (f.role === "combobox" && (f.value ?? "").trim() && !/^(select|--|choose|please|pick|none|\s*$)/i.test(f.value ?? "") && planField({ label: f.name, required: false, role: f.role, ...(f.options ? { options: f.options } : {}) }, d.facts).action !== "fill") { reasons.push(`"${f.name.slice(0, 60)}" came with a choice already made ("${(f.value ?? "").slice(0, 30)}"); the flow does not send an answer it did not choose`); continue; }
+    if ((f.role === "combobox" || f.role === "listbox") && (f.value ?? "").trim() && !/^(select|--|choose|please|pick|none|\s*$)/i.test(f.value ?? "") && planField({ label: f.name, required: false, role: f.role, ...(f.options ? { options: f.options } : {}) }, d.facts).action !== "fill") { reasons.push(`"${f.name.slice(0, 60)}" came with a choice already made ("${(f.value ?? "").slice(0, 30)}"); the flow does not send an answer it did not choose`); continue; }
     const info: FieldInfo = { label: f.name, required: f.required || /\*\s*$/.test(f.name), role: f.role, ...(f.options ? { options: f.options.filter((o) => o && !/^(select|--|choose)/i.test(o)) } : {}) };
     const p = planField(info, d.facts);
     if (p.action === "park") { reasons.push(p.why); if (p.scam) scam = true; }
@@ -255,7 +258,8 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   const hash = createHash("sha256").update(JSON.stringify([...plan.keys()].map((k) => labelHash(k)).sort())).digest("hex").slice(0, 16);
   const intent = d.ledger.intend(d.job, hash, d.jobUrl ?? d.applyUrl);
   if (!intent.ok) return refused(intent);
-  const signature = (inspect: string): string => `${/^URL: (.*)$/m.exec(inspect)?.[1] ?? ""}\n${titleOf(inspect)}`;
+  // what moved: the address, the title, and the number of requests the page made that can write (a script's `fetch` changes neither of the first two) (A128)
+  const signature = (inspect: string): string => `${/^URL: (.*)$/m.exec(inspect)?.[1] ?? ""}\n${titleOf(inspect)}\n${/^Writes: (\d+)$/m.exec(inspect)?.[1] ?? ""}`;
   const sig0 = signature(page);
   const NAV = /navigat|context was destroyed|target (page|closed)|detached|protocol error/i;
   const giveUp = async (why: string[], errorText = ""): Promise<ApplyResult> => {
@@ -312,7 +316,7 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
   const seen = `${titleOf(answer)}\n${visible(answer)}`;
   // the status of the answer to the submit speaks for the site, whatever the page says (A116)
   const postCode = inspectStatus(answer);
-  if (postCode === 429 || postCode === 403 || postCode === 503 || postCode === 401) { pauseSite(`HTTP ${postCode} after a submit`); return { status: "paused-site", why: `the site answered the submit with HTTP ${postCode}; the site is paused and the attempt is verified before any retry`, seq: intent.seq }; }
+  if (slowDown(postCode)) { pauseSite(`HTTP ${postCode} after a submit`); return { status: "paused-site", why: `the site answered the submit with HTTP ${postCode}; the site is paused and the attempt is verified before any retry`, seq: intent.seq }; }
   const stillAsks = parseElements(answer).some((e) => e.role === "button" && SUBMIT_NAME.test(normalizeLabel(e.name)));
   // new confirming words on a page with no error wording come first: a thank-you page with a "protected by reCAPTCHA" footer is not a challenge (A99)
   if (!clicked.isError && CONFIRMED.test(seen) && !CONFIRMED.test(preText) && !ERRORISH.test(seen) && !stillAsks) {
@@ -331,13 +335,14 @@ export async function applyToJob(d: ApplyDeps): Promise<ApplyResult> {
 export async function verifyAttempt(tools: Tools, ledger: Ledger, row: Row, jobUrl: string): Promise<"confirmed" | "unknown"> {
   // a site that is paused is not visited, and a status that says "slow down" pauses it here as it does in an application (A119)
   const host = (() => { try { return `host:${new URL(jobUrl).hostname.toLowerCase()}`; } catch { return ""; } })();
+  const stop = (why: string): void => { ledger.pause(row.site, why); if (host) ledger.pause(host, why, row.site); };
   if (ledger.paused(row.site) || (host && ledger.paused(host))) return "unknown";
   const opened = await tools.call("open", { url: jobUrl });
   if (opened.isError) return "unknown";
   const code = httpStatus(textOf(opened));
-  if (code === 429 || code === 403 || code === 503 || code === 401) { ledger.pause(row.site, `HTTP ${code} while verifying`); if (host) ledger.pause(host, `HTTP ${code} while verifying`, row.site); return "unknown"; }
+  if (slowDown(code)) { stop(`HTTP ${code} while verifying`); return "unknown"; }
   const page = textOf(await tools.call("inspect", {}));
-  if (challenged(page, row.title)) { ledger.pause(row.site, "a challenge or a rate limit while verifying"); return "unknown"; }
+  if (challenged(page, row.title)) { stop("a challenge or a rate limit while verifying"); return "unknown"; }
   // "Application submitted" on a page that is not the posting (a redirect to "My applications") proves nothing about this posting (A125)
   // (the title alone: the page an application leads to after it is sent often drops the company line)
   if (!namesJob(titleOf(page), visible(page), { title: row.title, company: row.company } as Job, false)) return "unknown";

@@ -6,6 +6,9 @@ import { join } from "node:path";
 
 export const LIMITS = { maxSeconds: 180, maxBytes: 200 * 1024 * 1024, maxSide: 4096, maxFrames: 12, timeoutMs: 60_000 } as const;
 
+/** Containers a phone or an app produces. Not hls, concat, sdp, image2 or any demuxer that names other files. */
+const CONTAINERS = new Set(["mov", "mp4", "m4a", "3gp", "3g2", "mj2", "matroska", "webm", "avi", "gif", "mpegts", "flv", "ogg"]);
+
 export interface Probe { seconds: number; width: number; height: number; bytes: number; hasAudio: boolean }
 export type ProbeResult = { ok: true; probe: Probe } | { ok: false; reason: string };
 
@@ -33,8 +36,14 @@ export async function probeVideo(file: string, limits = LIMITS): Promise<ProbeRe
   if (r.code !== 0) return { ok: false, reason: /protocol not on whitelist|not on whitelist/i.test(r.err) ? "the file refers to something outside itself (a playlist); only a plain video file is read" : "that does not look like a video file (or it is damaged)" };
   let j: any;
   try { j = JSON.parse(r.out); } catch { return { ok: false, reason: "that does not look like a video file" }; }
-  const v = (j.streams ?? []).find((s: any) => s.codec_type === "video");
+  // only a plain media container is read: a playlist (hls), a concat list, an sdp or an image sequence opens other files and takes its length from its own text (A144)
+  const fmt = String(j.format?.format_name ?? "").split(",");
+  if (!fmt.some((f) => CONTAINERS.has(f))) return { ok: false, reason: `that is not a plain video container (${fmt.join(",").slice(0, 40) || "unknown"}); playlists and lists of other files are not read` };
+  const videos = (j.streams ?? []).filter((s: any) => s.codec_type === "video");
+  const v = videos[0];
   if (!v) return { ok: false, reason: "the file has no video in it" };
+  // every video stream is held to the limits, not only the first: the decoder takes the largest (A143)
+  if (videos.length > 1) return { ok: false, reason: "the file has more than one picture stream; only a plain single-picture video is read" };
   const seconds = Number(j.format?.duration ?? v.duration ?? 0);
   const width = Number(v.width ?? 0), height = Number(v.height ?? 0);
   if (!Number.isFinite(seconds) || seconds <= 0) return { ok: false, reason: "the file has no usable length" };
@@ -49,7 +58,7 @@ export type FramesResult = { ok: true; frames: string[] } | { ok: false; reason:
 export async function extractFrames(file: string, dir: string, probe: Probe, limits = LIMITS): Promise<FramesResult> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { chmodSync(dir, 0o700); } catch { /* not a filesystem with modes */ }
-  const base = ["-nostdin", "-v", "error", "-protocol_whitelist", "file", "-i", file];
+  const base = ["-nostdin", "-v", "error", "-protocol_whitelist", "file", "-i", file, "-map", "0:v:0", "-threads", "2"];
   const scene = await run("ffmpeg", [...base, "-vf", "select='gt(scene,0.3)',scale='min(640,iw)':-2", "-vsync", "vfr", "-frames:v", String(limits.maxFrames), "-y", join(dir, "scene-%02d.jpg")], limits.timeoutMs);
   if (scene.timedOut) return { ok: false, reason: "reading the frames took too long and was stopped" };
   let frames = readdirSync(dir).filter((f) => /^scene-\d+\.jpg$/.test(f)).sort();

@@ -24,6 +24,10 @@ import { probeVideo, extractFrames, LIMITS } from "../dist/reel/extract.js";
     ["https://www.instagram.com:8443/reel/Cx12_abCD34/", /port/], ["https://www.instagram.com/reel/", /code/], ["https://www.instagram.com/reel/a/", /code/], ["https://www.instagram.com/explore/", /code/]]) {
     const r = canonicalReelUrl(u); assert.ok(!r.ok && why.test(r.reason), u + " " + JSON.stringify(r));
   }
+  // A147: only /<kind>/<code>/ and /<account>/<kind>/<code>/ from the start of the path; reserved words are not codes
+  for (const u of ["https://www.instagram.com/reels/audio/12345/", "https://www.instagram.com/reels/explore/", "https://www.instagram.com/stories/x/reel/ABCDEFG", "https://www.instagram.com/explore/tags/p/ABCDEFG", "https://www.instagram.com/reel/ABCDEFG/extra/more", "https://www.instagram.com/explore/reel/ABCDEFG/"])
+    assert.ok(!canonicalReelUrl(u).ok, `${u} was taken for a reel`);
+  assert.ok(canonicalReelUrl("https://www.instagram.com/someone/reel/ABCDEFG/").ok && canonicalReelUrl("https://www.instagram.com/someone/p/ABCDEFG/").ok, "control: an account's reel link");
   assert.equal(contentKey("text", "hello"), contentKey("text", "hello"));
   assert.notEqual(contentKey("text", "hello"), contentKey("text", "hellO"));
   assert.notEqual(contentKey("text", "hello"), contentKey("file", "hello"));
@@ -58,6 +62,14 @@ const short = mk("short.mp4", ["-f", "lavfi", "-i", "testsrc=duration=4:size=320
   const link = join(dir, "link.mp4"); symlinkSync(short, link);
   const r6 = await probeVideo(link); assert.ok(!r6.ok && /regular file/.test(r6.reason), JSON.stringify(r6));
   const r7 = await probeVideo(join(dir, "nope.mp4")); assert.ok(!r7.ok && /not there/.test(r7.reason), JSON.stringify(r7));
+  // A143: a second, huge picture stream is refused (the decoder would take the largest); A144: a text playlist is not a video, whatever its own EXTINF says
+  const two = join(dir, "two.mkv"); { const r = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=5", "-f", "lavfi", "-i", "testsrc=duration=2:size=5000x64:rate=5", "-map", "0", "-map", "1", "-pix_fmt", "yuv420p", two]); assert.equal(r.status, 0, String(r.stderr)); }
+  const rTwo = await probeVideo(two); assert.ok(!rTwo.ok && /more than one picture stream/.test(rTwo.reason), JSON.stringify(rTwo));
+  const seg = mk("seg.ts", ["-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=5", "-pix_fmt", "yuv420p"]);
+  const lie = join(dir, "lie.m3u8"); writeFileSync(lie, `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\n${seg}\n#EXT-X-ENDLIST\n`);
+  const rLie = await probeVideo(lie); assert.ok(!rLie.ok && /not a plain video container/.test(rLie.reason), JSON.stringify(rLie));
+  // control: the same segment as a file of its own is read
+  const rSeg = await probeVideo(seg); assert.ok(rSeg.ok, JSON.stringify(rSeg));
   // R9: a playlist that points at a URL must not make a request. Listen locally and prove nothing connects.
   // Mutation note: removing `-protocol_whitelist file` from src/reel/extract.js does NOT fail this test on ffmpeg 6.1, because the hls demuxer already refuses network segments for a local playlist. The flag is defense in depth
   // (older or differently built ffmpeg); this test pins the observable behaviour (0 requests), not the flag.
