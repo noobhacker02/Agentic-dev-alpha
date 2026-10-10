@@ -81,9 +81,12 @@ export async function applyCommand(args: ParsedArgs): Promise<CommandResult> {
     if (!allow.ok) return fail(allow.errors.join("\n"));
     if (allow.source === "none") return fail(`there is no allowances file yet (${clean(allow.path)}); without it LIVE mode opens nothing. Use --test against a local board, or create the file (see agent-loop login).`);
     policy = liveBrowserPolicy(allow.value, {});
-    const platform = resolvePlatform(allow.value, applyUrl, site);
-    if (!platform.ok) return fail(platform.reason);
-    site = platform.site;
+    // `--verify` names no page: each ledger row brings its own platform (and `open(row.site)` uses it); deriving from an empty address refused every LIVE verify (found by packet P3's verifier)
+    if (!verify) {
+      const platform = resolvePlatform(allow.value, applyUrl, site);
+      if (!platform.ok) return fail(platform.reason);
+      site = platform.site;
+    }
   }
   /** A browser session for one platform (its own agent-only profile in LIVE mode), the tools it offers, and the way to close it. */
   const open = (forSite: string) => {
