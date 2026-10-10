@@ -30,7 +30,7 @@ export async function startBoard(opts = {}) {
     <form id="f" method="post" enctype="multipart/form-data" action="/jobs/${job.id}/apply${qs}">
       <label for="name">Full name *</label><input id="name" name="name" required>
       <label for="email">Email *</label><input id="email" name="email" type="email" required${c.maxlen ? ' maxlength="5"' : ""}>
-      <label for="phone">Phone</label><input id="phone" name="phone">
+      ${c.longlabel190 ? "" : `<label for="phone">Phone</label><input id="phone" name="phone">`}
       <label for="auth">Are you legally authorised to work in this country? *</label>
       <select id="auth" name="auth" required><option value="">Select</option><option>Yes</option><option>No</option></select>
       <label for="spons">Will you now or in the future require visa sponsorship? *</label>
@@ -81,8 +81,10 @@ export async function startBoard(opts = {}) {
       ${c.alsohiring ? `<aside>Also hiring at Acme: Platform Engineer, Site Reliability Engineer</aside>` : ""}
       ${c.fakebadge ? `<p>Tip: if you have already applied you will see "You have already applied" here.</p>` : ""}
       ${c.late ? `<script>document.getElementById("f").addEventListener("input", () => { if (document.getElementById("late")) return; const d = document.createElement("div"); d.id = "late"; d.innerHTML = '<label for="g2">Gender</label><select id="g2" name="g2"><option value="">Select</option><option selected>Male</option></select><label><input type="checkbox" name="cert2" checked> I certify that all statements are true</label>'; document.getElementById("f").insertBefore(d, document.getElementById("go")); });</script>` : ""}
+      ${c.lateattest ? `<script>document.getElementById("f").addEventListener("input", () => { if (document.getElementById("latetxt")) return; const d = document.createElement("p"); d.id = "latetxt"; d.textContent = "I certify that the information above is true."; document.getElementById("f").insertBefore(d, document.getElementById("go")); });</script>` : ""}
       ${c.hiddenattest ? `<p>I certify under penalty of perjury that the information above is true.</p><input type="checkbox" checked name="agree" aria-label="Confirm">` : ""}
       ${c.idtrick ? `<input id="ssn-disabled" name="ssn2" aria-label="Social Security Number" required>` : ""}
+      ${c.longlabel190 ? `<label for="ph2">Phone${"&shy;".repeat(200)} *</label><input id="ph2" name="ph2" required>` : ""}
       ${c.longlabel ? `<label for="dob">Contact phone number for interview scheduling and other recruiting communication, including your date of birth *</label><input id="dob" name="dob" required>` : ""}
       ${c.ambig ? `<label for="a1">Authorized to work without sponsorship *</label><select id="a1" name="a1" required><option value="">Select</option><option>Yes</option><option>No</option></select><label for="a2">Current salary *</label><input id="a2" name="a2" required><label for="a3">Reference email *</label><input id="a3" name="a3" required><label for="a4">Manager's phone *</label><input id="a4" name="a4" required>` : ""}
       ${c.parens ? `<label for="p1">Phone (also enter your date of birth) *</label><input id="p1" name="p1" required>` : ""}
@@ -126,6 +128,8 @@ export async function startBoard(opts = {}) {
         return html(res, 200, "Application received", `<h1>Application received</h1><p>Thank you for applying to ${job.title}.</p>${c.footer ? `<p>This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply. We watch for unusual activity on our systems; report any to security.</p>` : ""}`);
       }
       if (m[2]) {
+        const h52 = Object.keys(c).find((k) => /^http52\d$/.test(k));
+        if (h52) return html(res, Number(h52.slice(4)), "Busy", "<p>Please come back later.</p>");
         if (c.http999) return html(res, 999, "Denied", "<p>Request denied.</p>");
         if (c.http429) return html(res, 429, "Busy", "<p>Please come back later.</p>");
         if (c.http503) return html(res, 503, "Busy", "<p>Please come back later.</p>");
