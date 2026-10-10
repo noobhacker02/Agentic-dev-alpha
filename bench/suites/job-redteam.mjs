@@ -125,6 +125,14 @@ export const ROWS = [
 const urlOf = (f) => (root) => pathToFileURL(join(root, "dist", f)).href;
 
 /** Drives the real engine of the build in `root` against the local board, one fresh ledger per row. Returns { [rowId]: observation | undefined }. */
+/** Leaves the shared tab on a quiet page: whatever the last row's page was still doing (a form it submitted by script, a timer) has landed before the next row starts. */
+async function settle(tools, board) {
+  await new Promise((r) => setTimeout(r, 200));
+  await tools.call("open", { url: `${board.url}/` }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 200));
+  await tools.call("inspect", {}).catch(() => {});
+}
+
 export async function observe(root = ROOT) {
   const u = urlOf;
   const [{ BrowserSessionManager, __testHandlers }, { testPolicy }, { parseUploads }, { parseFacts }, { Ledger, DEFAULT_CAPS }, { applyToJob }, { EventBus }] = await Promise.all(
@@ -168,7 +176,9 @@ export async function observe(root = ROOT) {
           listing = (await tools.call("inspect", {})).text;
         }
         const args = { tools, facts: factsFor(row.facts), ledger, resume: "resume", job, applyUrl, jobUrl: `${board.url}/jobs/${jobId}` };
-        const r = await applyToJob(args);
+        let r = await applyToJob(args);
+        // the harness shares one tab between rows: a page that submits itself (the rows above) can still be navigating when the next row's `open` starts, and a newer Chromium reports that as "page.goto: Navigation ... interrupted/failed". That is the harness racing itself, not an engine decision: settle and run the row once more (CI on c5b2f02 lost challenge-page and rate-limit-page this way on Linux and macOS)
+        if (r.status === "error" && /page\.goto: Navigation/.test(r.why ?? "")) { await settle(tools, board); for (const k of Object.keys(board.applications)) delete board.applications[k]; board.requests.length = 0; r = await applyToJob(args); }
         const apps = Object.values(board.applications).flat();
         // a second run on the same row and ledger: it must not send again (the board's count is the evidence)
         let second;
@@ -191,6 +201,7 @@ export async function observe(root = ROOT) {
         out[row.id] = undefined;
       } finally {
         ledger.close();
+        if (row.second || /submit|popup|beacon/.test(row.chaos ?? "")) await settle(tools, board); // only after pages that act on their own
       }
     }
   } finally {
