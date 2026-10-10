@@ -23,7 +23,7 @@ let calls = [];
 const good = async (kind, system, prompt, images) => {
   calls.push({ kind, prompt, images: images.length });
   if (kind === "read") return JSON.stringify({ about: "A demo of a git log summariser.", shown: ["a terminal"], idea: "a git log summary command", claims: [{ text: "summarises your git log", kind: "demonstrated", cite: { frame: 1, quote: "summarises your git log" } }, { text: "invented", cite: { quote: "never said" } }] });
-  return JSON.stringify({ relevance: 4, value: 5, feasibility: 4, novelty: 3, risk: 1, cite: { relevance: "A CLI dev tool", value: "for developers", feasibility: "A CLI dev tool", novelty: "for developers" } });
+  return JSON.stringify({ relevance: 4, value: 5, feasibility: 4, novelty: 3, risk: 1, cite: { relevance: "for developers", value: "for developers", feasibility: "for developers", novelty: "for developers" } });
 };
 
 {
@@ -110,5 +110,35 @@ const good = async (kind, system, prompt, images) => {
   const boom = await reelCommand(args([], { text: capFile("caption five") }), { reader: async () => { throw new Error("API 529 overloaded"); }, home });
   assert.equal(boom.code, 1); assert.match(boom.err, /reader failed: API 529/);
   console.log("  fence, one line, evidence, whole-file key, fresh home, reader error ok");
+}
+{
+  // A150: a refusal phrase in the reader's about or shown (not in the idea) refuses the reel
+  const scorer = JSON.stringify({ relevance: 5, value: 5, feasibility: 5, novelty: 5, risk: 1, cite: { relevance: "for developers", value: "for developers", feasibility: "for developers", novelty: "for developers" } });
+  const home = mkdtempSync(join(tmpdir(), "reel-home-"));
+  const byAbout = await reelCommand(args([], { text: capFile("caption a150 about") }), { reader: async (k) => k === "read" ? JSON.stringify({ about: "Tutorial: how to get past the captcha on the login page", idea: "a git log summary command" }) : scorer, home });
+  assert.match(byAbout.out, /Verdict: refuse/, byAbout.out);
+  const byShown = await reelCommand(args([], { text: capFile("caption a150 shown") }), { reader: async (k) => k === "read" ? JSON.stringify({ about: "a demo", shown: ["slip past the login wall"], idea: "a git log summary command" }) : scorer, home });
+  assert.match(byShown.out, /Verdict: refuse/, byShown.out);
+  console.log("  about and shown judged ok");
+}
+{
+  // A157: the frames of a video are removed on every path: a reader error, a bad --text file, an "Already seen" reel, a bad --project, and a success
+  const { readdirSync, existsSync } = await import("node:fs");
+  const frames = (home) => existsSync(join(home, "evidence")) ? readdirSync(join(home, "evidence")).filter((n) => n.startsWith("frames-")).length : 0;
+  const h1 = mkdtempSync(join(tmpdir(), "reel-home-"));
+  const e1 = await reelCommand(args([video], { text: cap }), { reader: async () => { throw new Error("API 529 overloaded"); }, home: h1 });
+  assert.equal(e1.code, 1); assert.equal(frames(h1), 0, "the reader failed: frames left behind");
+  const h2 = mkdtempSync(join(tmpdir(), "reel-home-"));
+  const e2 = await reelCommand(args([video], { text: join(dir, "missing.txt") }), { reader: good, home: h2 });
+  assert.equal(e2.code, 1); assert.equal(frames(h2), 0, "a bad --text file: frames left behind");
+  const h3 = mkdtempSync(join(tmpdir(), "reel-home-"));
+  const s3 = await reelCommand(args([video], { text: cap }), { reader: good, home: h3 });
+  assert.equal(s3.code, 0, s3.err); assert.equal(frames(h3), 0, "a success: frames left behind");
+  const a3 = await reelCommand(args([video], { text: cap }), { reader: good, home: h3 });
+  assert.match(a3.out, /Already seen/); assert.equal(frames(h3), 0, "already seen: frames left behind");
+  const h4 = mkdtempSync(join(tmpdir(), "reel-home-"));
+  const e4 = await reelCommand(args([video], { text: cap, project: dir }), { reader: good, home: h4 });
+  assert.equal(e4.code, 1); assert.equal(frames(h4), 0, "a bad --project: frames left behind");
+  console.log("  frames removed on every path ok");
 }
 console.log("reel-e2e: all passed");

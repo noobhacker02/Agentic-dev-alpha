@@ -12,14 +12,19 @@ const shown = (v: unknown): string => (typeof v === "string" ? `"${clean(v, 20)}
 const USAGE = "Usage: agent-loop ideas [list] | agent-loop ideas decide <id> yes|no | agent-loop ideas purge [--days <n>]\n";
 const SUBCOMMANDS = new Set(["list", "decide", "purge"]);
 
-export function ideasCommand(args: ParsedArgs, deps: { home?: string; clock?: () => number }): CommandResult {
+/** `isTTY`: whether stdin is a terminal (the CLI passes `process.stdin.isTTY === true`). `decide` needs a person there; unset means not a terminal (A158). */
+export interface IdeasDeps { home?: string; clock?: () => number; isTTY?: boolean }
+/** the flag a person gives to say they are at the keyboard when stdin is not a terminal (A158) */
+const YES_HERE = "yes-i-am-here";
+
+export function ideasCommand(args: ParsedArgs, deps: IdeasDeps): CommandResult {
   // any exception (a foreign or damaged ideas.db, a disk error) becomes one printable line and exit 1, never a stack trace
   try { return runIdeas(args, deps); } catch (e) {
     return { out: "", err: `Error: ${clean(`the ideas file cannot be used: ${String((e as Error)?.message ?? e)}`)}\n`, code: 1 };
   }
 }
 
-function runIdeas(args: ParsedArgs, deps: { home?: string; clock?: () => number }): CommandResult {
+function runIdeas(args: ParsedArgs, deps: IdeasDeps): CommandResult {
   const fail = (message: string): CommandResult => ({ out: "", err: `Error: ${clean(message)}\n`, code: 1 });
   const sub = args._[0] ?? "list";
   if (!SUBCOMMANDS.has(sub)) return { out: "", err: USAGE, code: 1 };
@@ -47,7 +52,9 @@ function runIdeas(args: ParsedArgs, deps: { home?: string; clock?: () => number 
     if (!Number.isSafeInteger(n) || n < 1) return fail(`an idea is a whole number from the list, such as 3 (got ${shown(idArg)}).`);
     if (word !== "yes" && word !== "no") return fail(`say yes or no (got ${shown(word)}).`);
     if (args._.length !== 3) return fail("decide takes exactly an id and yes or no.");
-    if (flags.length) return fail(`decide takes no flags (got --${clean(flags[0], 20)}).`);
+    const other = flags.find((k) => k !== YES_HERE);
+    if (other !== undefined) return fail(`decide takes no flags (got --${clean(other, 20)}).`);
+    if (deps.isTTY !== true && args[YES_HERE] !== true) return fail("decide needs a person at a terminal (stdin is not a terminal). Run it in one, or add --yes-i-am-here if you are the person deciding.");
   }
 
   const home = deps.home ?? agentLoopHome();
@@ -57,13 +64,16 @@ function runIdeas(args: ParsedArgs, deps: { home?: string; clock?: () => number 
     if (sub === "list") {
       const rows = ideas.list();
       if (rows.length === 0) return { out: "No ideas yet.\n", err: "", code: 0 };
-      const lines = rows.map((r) => `#${r.id} [${clean(r.decision, 20)}] ${clean(r.verdict, 40)} - ${clean(r.about, 100)}`);
+      // the verdict and the code's reason, then the reader's summary: one line each (A158)
+      const lines = rows.map((r) => `#${r.id} [${clean(r.decision, 20)}] ${clean(r.verdict, 40)} (${clean(r.reason, 70)}) - ${clean(r.about, 100)}`);
       return { out: lines.join("\n") + "\n", err: "", code: 0 };
     }
     if (sub === "decide") {
       const id = Number(idArg);
       const row = ideas.getById(id);
       if (!row) return fail(`there is no idea #${id}.`);
+      // the program's refusal is final for a yes: the user can decline it, not approve it (A158)
+      if (word === "yes" && row.verdict === "refuse") return fail(`idea #${id} was refused by the program (${clean(row.reason, 200)}); it cannot be approved`);
       if (!ideas.decide(id, word as "yes" | "no")) return fail(`idea #${id} is already decided (${clean(row.decision, 20)}); it stays that way.`);
       return { out: word === "yes" ? "Recorded. Nothing has been built; the dev-flow hand-off is a later stage.\n" : "Recorded. Nothing will be built.\n", err: "", code: 0 };
     }

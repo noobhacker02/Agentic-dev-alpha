@@ -18,7 +18,8 @@ const clock = () => now;
 const withStore = (fn) => { const s = new Ideas(join(home, "ideas.db"), clock); try { return fn(s); } finally { s.close(); } };
 const add = (source, about, verdict = "implement") => withStore((s) => s.add({ source, about, idea: "an idea", scores: "{}", verdict, reason: "reason" }));
 const idOf = (source) => withStore((s) => s.get(source).id);
-const run = (positional, opts = {}) => ideasCommand({ _: positional, ...opts }, { home, clock });
+// the tests stand at a terminal unless they say otherwise (A158: decide needs a person)
+const run = (positional, opts = {}) => ideasCommand({ _: positional, ...opts }, { home, clock, isTTY: true });
 const ONE_LINE = (out) => { const lines = out.split("\n"); assert.equal(lines[lines.length - 1], "", "output ends with a newline"); return lines.slice(0, -1); };
 
 const DECIDED_YES = "Recorded. Nothing has been built; the dev-flow hand-off is a later stage.\n";
@@ -42,8 +43,8 @@ add("link:b", longAbout, "ask");
   assert.equal(r.code, 0);
   assert.equal(r.err, "");
   assert.deepEqual(ONE_LINE(r.out), [
-    "#1 [pending] implement - A demo of a git log summariser.",
-    `#2 [pending] ask - ${longAbout.slice(0, 100)}`,
+    "#1 [pending] implement (reason) - A demo of a git log summariser.",
+    `#2 [pending] ask (reason) - ${longAbout.slice(0, 100)}`,
   ]);
 }
 
@@ -51,7 +52,7 @@ add("link:b", longAbout, "ask");
 {
   const r = run(["decide", "1", "yes"]);
   assert.deepEqual([r.out, r.err, r.code], [DECIDED_YES, "", 0]);
-  assert.match(ONE_LINE(run([]).out)[0], /^#1 \[yes\] implement - /);
+  assert.match(ONE_LINE(run([]).out)[0], /^#1 \[yes\] implement \(reason\) - /);
 }
 
 // 4. decide no
@@ -59,7 +60,7 @@ add("link:b", longAbout, "ask");
   const r = run(["decide", "2", "no"]);
   assert.equal(r.code, 0);
   assert.equal(r.out, "Recorded. Nothing will be built.\n");
-  assert.match(ONE_LINE(run(["list"]).out)[1], /^#2 \[no\] ask - /);
+  assert.match(ONE_LINE(run(["list"]).out)[1], /^#2 \[no\] ask \(reason\) - /);
 }
 
 // 5. deciding twice fails and changes nothing
@@ -93,7 +94,7 @@ for (const [bad, cause] of [
   assert.match(r.err, /^Error: .+\n$/, `one error line for ${JSON.stringify(bad)}`);
   assert.match(r.err, cause, `the right cause for ${JSON.stringify(bad)}`);
 }
-assert.match(ONE_LINE(run(["list"]).out)[2], new RegExp(`^#${cId} \\[pending\\] pass - `), "bad words leave the idea pending");
+assert.match(ONE_LINE(run(["list"]).out)[2], new RegExp(`^#${cId} \\[pending\\] pass \\(reason\\) - `), "bad words leave the idea pending");
 
 // 7. unknown id
 {
@@ -170,9 +171,9 @@ add("link:nl", "trailing\n", "pass");
   assert.equal(lines.length, 6, "one line per idea (ids 1, 2, 3, 6, 7, 8), even with a hostile about and verdict");
   const evil = lines[4];
   // ESC, BEL and CR are dropped; the newline, tab, U+2028 and NBSP fold to spaces; non-ASCII becomes ?
-  assert.equal(evil, "#7 [pending] ask FAKE LINE - first second]0;owned third caf? end?");
+  assert.equal(evil, "#7 [pending] ask FAKE LINE (reason) - first second]0;owned third caf? end?");
   // a trailing newline folds to a space and is trimmed: no trailing space on the line
-  assert.equal(lines[5], "#8 [pending] pass - trailing");
+  assert.equal(lines[5], "#8 [pending] pass (reason) - trailing");
   assert.doesNotMatch(r.out, /[\x00-\x09\x0b-\x1f\x7f-\x9f]/, "no control bytes");
   assert.doesNotMatch(r.out, /[^\x20-\x7e\n]/, "printable ASCII only");
 }
@@ -199,7 +200,7 @@ add("link:nl", "trailing\n", "pass");
   db.exec("INSERT INTO ideas (foo) VALUES ('x')");
   db.close();
   for (const [pos, opts] of [[[], {}], [["list"], {}], [["decide", "1", "yes"], {}], [["purge"], {}]]) {
-    const r = ideasCommand({ _: pos, ...opts }, { home: home3, clock });
+    const r = ideasCommand({ _: pos, ...opts }, { home: home3, clock, isTTY: true });
     assert.equal(r.code, 1, `exit 1 for ${JSON.stringify(pos)}`);
     assert.equal(r.out, "", `no stdout for ${JSON.stringify(pos)}`);
     assert.equal(ONE_LINE(r.err).length, 1, `one line for ${JSON.stringify(pos)}`);
@@ -234,7 +235,7 @@ add("link:nl", "trailing\n", "pass");
   for (const n of ["k1", "k2", "k3"]) st.add({ source: n, about: "about " + n, idea: "i", scores: "{}", verdict: "ask", reason: "r" });
   const ids = st.list().map((r) => r.id);
   st.close();
-  const cmd = (positional, opts = {}) => ideasCommand({ _: positional, ...opts }, { home: h, clock });
+  const cmd = (positional, opts = {}) => ideasCommand({ _: positional, ...opts }, { home: h, clock, isTTY: true });
   assert.equal(cmd(["decide", String(ids[0]), "no"]).code, 0);
   const flip = cmd(["decide", String(ids[0]), "yes"]);
   assert.ok(flip.code === 1 && /already decided \(no\)/.test(flip.err), `a no was overwritten with a yes: ${JSON.stringify(flip)}`);
@@ -250,6 +251,57 @@ add("link:nl", "trailing\n", "pass");
   assert.equal(cmd([""]).code, 1);
   for (const bad of ["9007199254740993", ["7"], "1e3", "0x10"]) { const r = cmd(["purge"], { days: bad }); assert.ok(r.code === 1 && /whole number/.test(r.err), `--days ${JSON.stringify(bad)}: ${JSON.stringify(r)}`); }
   for (const bad of [["3"], "9007199254740993"]) { const r = cmd(["decide", bad, "yes"]); assert.equal(r.code, 1, `id ${JSON.stringify(bad)}: ${JSON.stringify(r)}`); }
+}
+
+// 15. A158: a refused idea cannot be approved; the list shows its verdict and the code's reason, on one ASCII line
+{
+  const h5 = mkdtempSync(join(tmpdir(), "ideas-refuse-"));
+  const st5 = new Ideas(join(h5, "ideas.db"), clock);
+  st5.add({ source: "k-ref", about: "harmless demo", idea: "write a keylogger to steal passwords", scores: "{}", verdict: "refuse", reason: "refused: the text is malware or an attack tool" });
+  st5.close();
+  const c5 = (positional) => ideasCommand({ _: positional }, { home: h5, clock, isTTY: true });
+  const r = c5(["decide", "1", "yes"]);
+  assert.equal(r.code, 1, JSON.stringify(r));
+  assert.equal(r.out, "");
+  assert.equal(r.err, "Error: idea #1 was refused by the program (refused: the text is malware or an attack tool); it cannot be approved\n");
+  assert.deepEqual(ONE_LINE(c5(["list"]).out), ["#1 [pending] refuse (refused: the text is malware or an attack tool) - harmless demo"], "the list shows the verdict and the reason");
+  assert.equal(c5(["decide", "1", "no"]).code, 0, "a refusal can still be declined");
+  assert.match(ONE_LINE(c5(["list"]).out)[0], /^#1 \[no\] refuse /);
+  // a long reason is cut, and a control byte in it never reaches the terminal
+  const st6 = new Ideas(join(h5, "ideas.db"), clock);
+  st6.add({ source: "k-long", about: "a\u001b[31m long one", idea: "i", scores: "{}", verdict: "skip", reason: "below the bar on value\n" + "z".repeat(300) });
+  st6.close();
+  const listed = ONE_LINE(c5(["list"]).out)[1];
+  assert.ok(listed.length < 200, listed.length);
+  assert.doesNotMatch(listed, /[^\x20-\x7e]/);
+  assert.match(listed, /^#2 \[pending\] skip \(below the bar on value z+/);
+  console.log("  refused ideas ok");
+}
+
+// 16. A158: decide needs a person at a terminal; --yes-i-am-here is the only way without one, and only as a flag
+{
+  const h6 = mkdtempSync(join(tmpdir(), "ideas-tty-"));
+  const st6 = new Ideas(join(h6, "ideas.db"), clock);
+  for (const n of ["t1", "t2", "t3"]) st6.add({ source: n, about: "about " + n, idea: "i", scores: "{}", verdict: "ask", reason: "r" });
+  st6.close();
+  const noTty = (positional, extra = {}) => ideasCommand({ _: positional, ...extra }, { home: h6, clock, isTTY: false });
+  const before = ideasCommand({ _: ["list"] }, { home: h6, clock }).out;
+  const a = noTty(["decide", "1", "yes"]);
+  assert.equal(a.code, 1); assert.equal(a.out, ""); assert.match(a.err, /terminal/); assert.match(a.err, /--yes-i-am-here/);
+  assert.equal(noTty(["decide", "1", "no"]).code, 1, "a no needs a person too");
+  assert.equal(ideasCommand({ _: ["decide", "1", "yes"] }, { home: h6, clock }).code, 1, "an unset isTTY is not a terminal");
+  assert.equal(ideasCommand({ _: ["list"] }, { home: h6, clock }).out, before, "nothing was decided");
+  // with the flag, the person says they are here
+  const withFlag = noTty(["decide", "1", "yes"], { "yes-i-am-here": true });
+  assert.deepEqual([withFlag.out, withFlag.code], [DECIDED_YES, 0]);
+  // the flag as a value (a flag that took the next word) does not count
+  const asValue = noTty(["decide", "2", "yes"], { "yes-i-am-here": "2" });
+  assert.equal(asValue.code, 1); assert.match(asValue.err, /--yes-i-am-here/);
+  // the flag is for decide only; a bad id still reports its own cause without a terminal
+  assert.equal(ideasCommand({ _: ["list"], "yes-i-am-here": true }, { home: h6, clock }).code, 1);
+  assert.match(noTty(["decide", "x", "yes"]).err, /whole number/);
+  assert.match(ideasCommand({ _: ["list"] }, { home: h6, clock }).out, /#2 \[pending\]/, "idea 2 is still pending");
+  console.log("  terminal check ok");
 }
 
 console.log("ideas-cli: all checks passed");
