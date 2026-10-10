@@ -226,4 +226,30 @@ add("link:nl", "trailing\n", "pass");
   assert.doesNotMatch(left, /Thirty days and twelve hours/);
 }
 
+
+// 14. Survivors from the second verifier (conductor): a decision is final in both directions, an unknown id between existing ids is "no idea", an empty subcommand is not "list", a huge or array-valued number is refused
+{
+  const h = mkdtempSync(join(tmpdir(), "ideas-cli-14-"));
+  const st = new Ideas(join(h, "ideas.db"), clock);
+  for (const n of ["k1", "k2", "k3"]) st.add({ source: n, about: "about " + n, idea: "i", scores: "{}", verdict: "ask", reason: "r" });
+  const ids = st.list().map((r) => r.id);
+  st.close();
+  const cmd = (positional, opts = {}) => ideasCommand({ _: positional, ...opts }, { home: h, clock });
+  assert.equal(cmd(["decide", String(ids[0]), "no"]).code, 0);
+  const flip = cmd(["decide", String(ids[0]), "yes"]);
+  assert.ok(flip.code === 1 && /already decided \(no\)/.test(flip.err), `a no was overwritten with a yes: ${JSON.stringify(flip)}`);
+  assert.match(cmd(["list"]).out, new RegExp(`#${ids[0]} \\[no\\]`));
+  // a gap between ids: remove the middle one's row by purging nothing, then ask for an id that is not there but is smaller than a later one
+  const gone = ids[1] + 1000;
+  assert.ok(cmd(["decide", String(ids[0] - 1 || 999), "yes"]).err.match(/no idea #/), "an unknown id was not reported as unknown");
+  const between = new DatabaseSync(join(h, "ideas.db")); between.prepare("DELETE FROM ideas WHERE id = ?").run(ids[1]); between.close();
+  const miss = cmd(["decide", String(ids[1]), "yes"]);
+  assert.ok(miss.code === 1 && new RegExp(`no idea #${ids[1]}`).test(miss.err), `an id between two others: ${JSON.stringify(miss)}`);
+  void gone;
+  // the empty subcommand is not "list"; numbers must be numbers
+  assert.equal(cmd([""]).code, 1);
+  for (const bad of ["9007199254740993", ["7"], "1e3", "0x10"]) { const r = cmd(["purge"], { days: bad }); assert.ok(r.code === 1 && /whole number/.test(r.err), `--days ${JSON.stringify(bad)}: ${JSON.stringify(r)}`); }
+  for (const bad of [["3"], "9007199254740993"]) { const r = cmd(["decide", bad, "yes"]); assert.equal(r.code, 1, `id ${JSON.stringify(bad)}: ${JSON.stringify(r)}`); }
+}
+
 console.log("ideas-cli: all checks passed");

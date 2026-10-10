@@ -21,6 +21,7 @@ import { rosterCommand, teamCommand, type CommandResult } from "./team/cli-comma
 import { loginCommand } from "./login.js";
 import { applyCommand } from "./apply-command.js";
 import { reelCommand } from "./reel/reel-command.js";
+import { ideasCommand } from "./reel/ideas-command.js";
 import { claudeReader } from "./reel/sdk-reader.js";
 import { resolveTeamOption } from "./team/cli-run.js";
 import { installFatalHandlers } from "./fatal.js";
@@ -265,6 +266,14 @@ async function main() {
     return;
   }
 
+  if (cmd === "ideas") {
+    const r: CommandResult = ideasCommand(parseArgs(argv.slice(1)), {});
+    if (r.out) process.stdout.write(r.out);
+    if (r.err) process.stderr.write(r.err);
+    process.exitCode = r.code;
+    return;
+  }
+
   if (cmd === "reel") {
     const r: CommandResult = await reelCommand(parseArgs(argv.slice(1)), { reader: claudeReader() });
     if (r.out) process.stdout.write(r.out);
@@ -280,6 +289,7 @@ Usage:
   agent-loop run "<task description>" [--dir <workDir>] [--port 4173] [--no-approval] [--max-retries 2] [--max-repairs 8] [--data-dir <path>] [--browser] [--desktop-target "<app>"] [--humor off|dry|dark] [--plain] [--max-cost <usd>]
          [--team auto|fixed5|<plan.json>] [--cap <n>] [--trust-project]
   agent-loop login <site> [--url <login page>]
+  agent-loop ideas [list] | agent-loop ideas decide <id> yes|no | agent-loop ideas purge [--days <n>]
   agent-loop reel <video file | reel link> [--text <caption file>] [--project <description file>]
   agent-loop apply <application page> --site <platform> --company "<company>" --title "<job title>" [--job-id <id>] [--job-url <posting>] [--resume <name>] [--test]
   agent-loop insights [--dir <workDir>] [--data-dir <path>] [--humor off|dry|dark] [--roast off|offline|api]
